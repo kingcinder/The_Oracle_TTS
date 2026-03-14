@@ -1,0 +1,58 @@
+You are doing a narrow product-hardening pass only. Do not do broad refactors.
+
+Repo:
+ /home/oem/Documents/The_Oracle_TTS
+
+Current state:
+- Chatterbox is the sole backend
+- deterministic smoke exists
+- real-engine smoke exists
+- project save/load manifest exists
+- alpha has been pushed
+- manual testing exposed missing GUI usability features
+
+Mission:
+Implement GUI settings persistence, reusable presets/templates, and real render progress feedback.
+
+Tasks:
+1. Add GUI Save Settings / Load Settings support for the current render configuration.
+2. Add a user preset/template system in the GUI for multiple saved setups.
+3. Add a progress dialog during Analyze/Render that shows:
+   - current phase
+   - current segment number / total
+   - current file name or utterance label if available
+   - progress bar
+   - ETA if reasonably derivable
+4. Ensure long-running generation does not look frozen to the OS:
+   - keep UI responsive
+   - update progress during render
+5. Rename "Reference Clip" to "Custom Voice Reference Audio" where appropriate.
+6. Add a dropdown design for voice source selection:
+   - stock/default voices first
+   - then recent custom reference clips
+   - then custom reference audio option
+7. Keep Chatterbox as the only backend.
+8. Do not widen scope into dual CPU/GPU cooperative rendering yet.
+9. Do not break existing CLI, smoke tests, or project manifest behavior.
+
+Verification:
+- pytest
+- launch GUI successfully
+- save settings
+- load settings
+- save a preset/template
+- reload and confirm values persist
+- run one render and confirm visible progress updates during generation
+
+Before finishing, report exactly these sections:
+- Facts confirmed
+- Exact bugs found
+- Files changed
+- What was fixed
+- What remains unresolved
+- Final verification results
+
+In each section, separate:
+- Known
+- Inference
+- Remaining uncertainty

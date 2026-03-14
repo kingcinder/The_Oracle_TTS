@@ -116,3 +116,10 @@ Each render creates:
 ## Demo
 
 Use [examples/demo_dialogue.md](/home/oem/Documents/The_Oracle_TTS/examples/demo_dialogue.md) with two short reference clips to validate the full pipeline before moving to longer material.
+
+## Licensing
+
+This project is publicly visible for inspection and evaluation, but it is not open-source.
+All rights are reserved.
+
+Commercial licensing and leasing inquiries: codysa90@gmail.com
