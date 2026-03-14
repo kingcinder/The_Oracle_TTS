@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=75.8.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dualvoice-studio"
+version = "0.1.0"
+description = "Local desktop app for rendering dual-speaker audiobook conversations to FLAC."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+authors = [
+  { name = "OpenAI Codex" }
+]
+dependencies = [
+  "markdown-it-py==3.0.0",
+  "mutagen==1.47.0",
+  "numpy>=1.24,<1.26",
+  "PySide6==6.8.2.1",
+  "scikit-learn==1.6.1",
+  "scipy==1.15.2",
+  "soundfile==0.13.1",
+  "symspellpy==6.9.0",
+]
+
+[project.optional-dependencies]
+ml = [
+  "deepmultilingualpunctuation==1.0.1",
+  "language-tool-python==2.9.4",
+  "transformers==4.46.3",
+]
+chatterbox = [
+  "chatterbox-tts==0.1.6",
+  "torch==2.6.0",
+  "torchaudio==2.6.0",
+  "torchvision==0.21.0",
+]
+dev = [
+  "pytest==8.3.5",
+]
+
+[project.scripts]
+dualvoice = "dualvoice_studio.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+dualvoice_studio = ["text_repair/data/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
