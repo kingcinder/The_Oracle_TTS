@@ -489,6 +489,8 @@ def _build_next_steps(report: dict[str, Any]) -> list[str]:
 
     if not report["turbo"]["ok"]:
         steps.append("Optional turbo prefetch: ./.venv/bin/python scripts/download_models.py --variant turbo --device cpu")
+    if report["voice_sources"]["primary_source"] != "seashells":
+        steps.append("Add curated local reference clips to ./Seashells so the GUI stops defaulting to smoke/build fallback voices.")
 
     if not steps:
         steps.append("Ready to launch: ./run_oracle_tts.sh")
@@ -498,6 +500,7 @@ def _build_next_steps(report: dict[str, Any]) -> list[str]:
 def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_init: bool) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     _prepend_repo_src(repo_root)
+    from the_oracle.voice_catalog import voice_catalog_audit
 
     chatterbox_probe = _chatterbox_probe(repo_root, timeout=model_timeout, skip_model_init=skip_model_init)
     report: dict[str, Any] = {
@@ -528,6 +531,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         },
         "turbo": _turbo_status(repo_root, timeout=model_timeout),
         "qt": _qt_status(repo_root, timeout=qt_timeout),
+        "voice_sources": voice_catalog_audit(repo_root),
         "deterministic_smoke": _deterministic_smoke_status(repo_root),
         "real_engine_smoke": _real_engine_smoke_status(repo_root),
     }
@@ -592,6 +596,15 @@ def _print_human_report(report: dict[str, Any]) -> None:
         print(f"{_status(True)} Turbo readiness: {detail}")
     else:
         print(f"{_status(False)} Turbo readiness: {turbo['error']}")
+
+    voice_sources = report["voice_sources"]
+    voice_detail = (
+        f"{voice_sources['default_voice_assessment']} "
+        f"Seashells={voice_sources['seashell_clip_count']}, fallback={voice_sources['fallback_clip_count']}"
+    )
+    print(f"{_status(voice_sources['ok'])} Default voice sources: {voice_detail}")
+    print(f"Voice assets: {voice_sources['better_local_assets_detail']}")
+    print(f"Voice mixing: {voice_sources['voice_mixing_detail']}")
 
     qt = report["qt"]
     if qt["ok"]:

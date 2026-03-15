@@ -158,6 +158,9 @@ Each render creates:
 - Multilingual mode requires the multilingual Chatterbox variant and a real language code.
 - Turbo is lower-latency and optional; it is not the default backend.
 - Chatterbox’s Perth watermark is retained in output audio.
+- GUI "default voices" now prefer repo-local clips in `./Seashells`; if that folder is empty the picker falls back to smoke/build reference clips, which are functional but not curated production voices.
+- Better preloadable voice quality within this Chatterbox-only architecture comes from supplying stronger local reference clips, not from switching to a separate packaged voice library.
+- Voice mixing is intentionally deferred; the current pipeline conditions each speaker from one reference payload, so blending multiple voices would require non-trivial pipeline changes.
 - Hybrid CPU+GPU work splitting is not implemented because the current Chatterbox runtime in this repo does not expose a verified, defensible multi-device execution path.
 
 ## Demo
