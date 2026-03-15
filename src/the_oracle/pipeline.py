@@ -66,6 +66,82 @@ class RenderProgress:
     elapsed_seconds: float
     eta_seconds: float | None = None
 
+@dataclass(slots=True)
+class SynthesisTask:
+    utterance_index: int
+    utterance: Utterance
+    speaker: str
+    text: str
+    reference_path: Path
+    reference_audio_hash: str
+    voice_settings: VoiceSettings
+    model_variant: str
+    device_mode: str
+    conditioning: ChatterboxConditioning
+    engine: ChatterboxEngine
+    project_cache: ProjectCache
+    export_stems: bool
+
+
+@dataclass(slots=True)
+class SynthesisResult:
+    utterance_index: int
+    speaker: str
+    stem_path: Path
+    exported_stem_path: str
+    duration_seconds: float
+    chunk_hash: str
+    cache_hit: bool
+    synthesize_seconds: float
+    load_audio_seconds: float
+    segment_total_seconds: float
+    sample_rate: int
+
+
+def synthesize_task(task: SynthesisTask) -> SynthesisResult:
+    utterance = task.utterance
+    utterance.parameters = task.voice_settings.to_dict()
+    chunk_hash = build_chunk_hash(
+        speaker=task.speaker,
+        repaired_text=task.text,
+        engine_key=f"chatterbox:{task.model_variant}",
+        engine_params=task.voice_settings.to_dict(),
+        engine_version=task.engine.engine_version,
+        reference_audio_hash=task.reference_audio_hash,
+    )
+    stem_path = task.project_cache.stem_path(chunk_hash)
+    cache_hit = stem_path.exists()
+    synthesize_seconds = 0.0
+    segment_start = perf_counter()
+    if not cache_hit:
+        synth_start = perf_counter()
+        rendered = task.engine.synthesize(task.text, task.conditioning, task.voice_settings)
+        synthesize_seconds = perf_counter() - synth_start
+        save_wav(stem_path, rendered, task.engine.sample_rate)
+    load_start = perf_counter()
+    audio, sample_rate = load_audio(stem_path)
+    load_audio_seconds = perf_counter() - load_start
+    duration_seconds = len(audio) / sample_rate
+    segment_total_seconds = perf_counter() - segment_start
+    exported_stem_path = ""
+    if task.export_stems:
+        exported_stem_path = str(task.project_cache.export_stem(stem_path, f"stems/{utterance.index:04d}_{task.speaker}.wav"))
+    utterance.chunk_hash = chunk_hash
+    utterance.duration_seconds = duration_seconds
+    return SynthesisResult(
+        utterance_index=task.utterance_index,
+        speaker=task.speaker,
+        stem_path=stem_path,
+        exported_stem_path=exported_stem_path,
+        duration_seconds=duration_seconds,
+        chunk_hash=chunk_hash,
+        cache_hit=cache_hit,
+        synthesize_seconds=round(synthesize_seconds, 6),
+        load_audio_seconds=round(load_audio_seconds, 6),
+        segment_total_seconds=round(segment_total_seconds, 6),
+        sample_rate=sample_rate,
+    )
+
 
 class OraclePipeline:
     def __init__(self) -> None:
@@ -309,16 +385,6 @@ class OraclePipeline:
         render_start = perf_counter()
         for utterance_index, utterance in enumerate(plan.utterances, start=1):
             profile = plan.voice_profiles[utterance.speaker]
-            utterance.parameters = utterance.engine_settings.to_dict()
-            utterance.chunk_hash = build_chunk_hash(
-                speaker=utterance.speaker,
-                repaired_text=utterance.repaired_text,
-                engine_key=f"chatterbox:{variant}",
-                engine_params=utterance.parameters,
-                engine_version=engine.engine_version,
-                reference_audio_hash=profile.reference_audio_hash,
-            )
-            stem_path = project_cache.stem_path(utterance.chunk_hash)
             average_segment_seconds = None
             if utterance_index > 1:
                 average_segment_seconds = (perf_counter() - render_start) / float(utterance_index - 1)
@@ -339,64 +405,64 @@ class OraclePipeline:
                 utterance.index,
                 utterance.speaker,
             )
-            segment_start = perf_counter()
-            synthesize_seconds = 0.0
-            cache_hit = stem_path.exists()
-            if not stem_path.exists():
-                synth_start = perf_counter()
-                rendered = engine.synthesize(utterance.text_for_tts(), conditioning[utterance.speaker], utterance.engine_settings)
-                synthesize_seconds = perf_counter() - synth_start
-                save_wav(stem_path, rendered, engine.sample_rate)
-            load_start = perf_counter()
-            audio, sample_rate = load_audio(stem_path)
-            load_audio_seconds = perf_counter() - load_start
-            utterance.duration_seconds = len(audio) / sample_rate
-            exported_stem_path = ""
+            task = SynthesisTask(
+                utterance_index=utterance_index,
+                utterance=utterance,
+                speaker=utterance.speaker,
+                text=utterance.text_for_tts(),
+                reference_path=profile.primary_reference,
+                reference_audio_hash=profile.reference_audio_hash,
+                voice_settings=profile.engine_params,
+                model_variant=settings.model_variant,
+                device_mode=settings.device_mode,
+                conditioning=conditioning[utterance.speaker],
+                engine=engine,
+                project_cache=project_cache,
+                export_stems=settings.export_stems,
+            )
+            result = synthesize_task(task)
             stem_segments.append(
                 AudioSegment(
-                    path=str(stem_path),
-                    sample_rate=sample_rate,
+                    path=str(result.stem_path),
+                    sample_rate=result.sample_rate,
                     pause_after_ms=utterance.pause_after_ms,
-                    duration_seconds=utterance.duration_seconds,
+                    duration_seconds=result.duration_seconds,
                     segment_index=utterance.index,
                     speaker=utterance.speaker,
-                    chunk_hash=utterance.chunk_hash,
+                    chunk_hash=result.chunk_hash,
+                    exported_path=result.exported_stem_path,
                 )
             )
-            if settings.export_stems:
-                exported_stem_path = str(project_cache.export_stem(stem_path, f"stems/{utterance.index:04d}_{utterance.speaker}.wav"))
-                stem_segments[-1].exported_path = exported_stem_path
-            segment_seconds = perf_counter() - segment_start
             render_trace_lines.append(
                 "segment {current}/{total} | utterance={utterance} | speaker={speaker} | cache_hit={cache_hit} | "
                 "chunk_hash={chunk_hash} | stem={stem} | exported={exported}".format(
-                    current=utterance_index,
+                    current=result.utterance_index,
                     total=total_segments,
                     utterance=utterance.index,
                     speaker=utterance.speaker,
-                    cache_hit=cache_hit,
-                    chunk_hash=utterance.chunk_hash,
-                    stem=stem_path,
-                    exported=exported_stem_path or "-",
+                    cache_hit=result.cache_hit,
+                    chunk_hash=result.chunk_hash,
+                    stem=result.stem_path,
+                    exported=result.exported_stem_path or "-",
                 )
             )
             timing_entries.append(
                 {
                     "type": "utterance",
-                    "segment_number": utterance_index,
+                    "segment_number": result.utterance_index,
                     "index": utterance.index,
                     "speaker": utterance.speaker,
-                    "cache_hit": cache_hit,
-                    "chunk_hash": utterance.chunk_hash,
-                    "cache_stem_path": str(stem_path),
-                    "exported_stem_path": exported_stem_path,
-                    "duration_seconds": round(utterance.duration_seconds, 6),
+                    "cache_hit": result.cache_hit,
+                    "chunk_hash": result.chunk_hash,
+                    "cache_stem_path": str(result.stem_path),
+                    "exported_stem_path": result.exported_stem_path,
+                    "duration_seconds": round(result.duration_seconds, 6),
                     "pause_after_ms": utterance.pause_after_ms,
                     "crossfade_ms": settings.crossfade_ms,
-                    "synthesize_seconds": round(synthesize_seconds, 6),
-                    "load_audio_seconds": round(load_audio_seconds, 6),
-                    "segment_total_seconds": round(segment_seconds, 6),
-                    "inter_segment_overhead_seconds": round(max(0.0, segment_seconds - synthesize_seconds), 6),
+                    "synthesize_seconds": result.synthesize_seconds,
+                    "load_audio_seconds": result.load_audio_seconds,
+                    "segment_total_seconds": result.segment_total_seconds,
+                    "inter_segment_overhead_seconds": round(max(0.0, result.segment_total_seconds - result.synthesize_seconds), 6),
                 }
             )
             completed_steps += 1
