@@ -15,6 +15,8 @@ def test_deterministic_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
     result = run_deterministic_smoke_render(tmp_path, source_format="txt")
 
     assert result.output_path.exists()
+    assert result.second_output_path.exists()
+    assert result.second_output_path.name == "smoke_dialogue (1).flac"
     assert result.render_plan_path.exists()
     assert result.stem_count == 4
     assert result.cache_reused_on_second_pass is True
@@ -36,6 +38,8 @@ def test_deterministic_markdown_smoke_render_runs_end_to_end(tmp_path: Path) -> 
     result = run_deterministic_smoke_render(tmp_path, source_format="md")
 
     assert result.output_path.exists()
+    assert result.second_output_path.exists()
+    assert result.second_output_path.name == "smoke_dialogue (1).flac"
     assert result.render_plan_path.exists()
     assert result.stem_count == 4
     assert result.cache_reused_on_second_pass is True

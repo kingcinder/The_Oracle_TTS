@@ -37,6 +37,7 @@ Speaker B: Render complete.
 class SmokeRenderResult:
     source_format: str
     output_path: Path
+    second_output_path: Path
     project_dir: Path
     cache_reused_on_second_pass: bool
     stem_count: int
@@ -47,6 +48,7 @@ class SmokeRenderResult:
         return {
             "source_format": self.source_format,
             "output_path": str(self.output_path),
+            "second_output_path": str(self.second_output_path),
             "project_dir": str(self.project_dir),
             "cache_reused_on_second_pass": self.cache_reused_on_second_pass,
             "stem_count": self.stem_count,
@@ -172,15 +174,13 @@ def run_deterministic_smoke_render(output_root: str | Path, source_format: str =
         _, output_path = pipeline.render_project(dialogue_path, project_dir, speaker_settings, render_settings)
         _, second_output_path = pipeline.render_project(dialogue_path, project_dir, speaker_settings, render_settings)
 
-    if output_path != second_output_path:
-        raise RuntimeError("Smoke render output path changed between runs.")
-
     render_plan_path = project_dir / "render_plan.json"
     render_plan = json.loads(render_plan_path.read_text(encoding="utf-8"))
     stem_count = len(list((project_dir / "cache" / "utterances").glob("*.wav")))
     return SmokeRenderResult(
         source_format=source_format,
         output_path=output_path,
+        second_output_path=second_output_path,
         project_dir=project_dir,
         cache_reused_on_second_pass=render_plan["metadata"].get("cache_reused_on_second_pass") == "True",
         stem_count=stem_count,

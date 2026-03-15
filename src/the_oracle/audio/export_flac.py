@@ -10,6 +10,21 @@ import numpy as np
 import soundfile as sf
 
 
+def next_available_output_path(path: str | Path) -> Path:
+    destination = Path(path)
+    if not destination.exists():
+        return destination
+    stem = destination.stem
+    suffix = destination.suffix
+    parent = destination.parent
+    index = 1
+    while True:
+        candidate = parent / f"{stem} ({index}){suffix}"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
 def _tag_with_mutagen(path: Path, metadata: dict[str, str]) -> None:
     from mutagen.flac import FLAC
 
@@ -39,7 +54,7 @@ def _ffmpeg_write(path: Path, audio: np.ndarray, sample_rate: int, metadata: dic
 
 
 def write_flac(path: str | Path, audio: np.ndarray, sample_rate: int, metadata: dict[str, str]) -> Path:
-    destination = Path(path)
+    destination = next_available_output_path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
         sf.write(str(destination), np.asarray(audio, dtype=np.float32), sample_rate, format="FLAC")

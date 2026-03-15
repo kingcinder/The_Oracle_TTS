@@ -10,7 +10,7 @@ from time import perf_counter
 from typing import Any
 
 from the_oracle.audio.assemble import AudioSegment, assemble_dialogue, load_audio, save_wav
-from the_oracle.audio.export_flac import write_flac
+from the_oracle.audio.export_flac import next_available_output_path, write_flac
 from the_oracle.device_support import resolve_chatterbox_device
 from the_oracle.emotion.goemotions import GoEmotionsClassifier
 from the_oracle.models.cache import ProjectCache
@@ -391,7 +391,7 @@ class OraclePipeline:
             loudness_preset=settings.loudness_preset,
         )
         completed_steps += 1
-        final_output = Path(plan.output_dir) / f"{Path(plan.source_path).stem}.flac"
+        final_output = next_available_output_path(Path(plan.output_dir) / f"{Path(plan.source_path).stem}.flac")
         emit_progress(
             stage="Writing output",
             detail=f"Writing {final_output.name}",
