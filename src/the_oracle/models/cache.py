@@ -76,12 +76,25 @@ class ProjectCache:
         self.stem_cache_dir = self.cache_dir / "utterances"
         self.reference_cache_dir = self.cache_dir / "references"
         self.conditioning_cache_dir = self.cache_dir / "conditioning"
+        self.preview_dir = self.project_dir / "previews"
         self.log_dir = self.project_dir / "logs"
-        for path in (self.project_dir, self.cache_dir, self.stem_cache_dir, self.reference_cache_dir, self.conditioning_cache_dir, self.log_dir):
+        for path in (
+            self.project_dir,
+            self.cache_dir,
+            self.stem_cache_dir,
+            self.reference_cache_dir,
+            self.conditioning_cache_dir,
+            self.preview_dir,
+            self.log_dir,
+        ):
             path.mkdir(parents=True, exist_ok=True)
 
     def stem_path(self, chunk_hash: str) -> Path:
         return self.stem_cache_dir / f"{chunk_hash}.wav"
+
+    def preview_path(self, speaker: str, utterance_index: int) -> Path:
+        safe_speaker = "".join(character for character in speaker if character.isalnum()) or "speaker"
+        return self.preview_dir / f"preview_{safe_speaker}_{utterance_index:04d}.wav"
 
     def conditioning_path(self, cache_id: str) -> Path:
         return self.conditioning_cache_dir / f"{cache_id}.pkl"

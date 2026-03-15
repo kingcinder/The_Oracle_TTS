@@ -69,10 +69,18 @@ class VoiceProfile:
     @property
     def primary_reference(self) -> Path:
         if self.neutral_reference:
-            return self.neutral_reference
-        if self.reference_audio:
-            return self.reference_audio[0]
-        raise ValueError(f"Voice profile {self.speaker} has no reference audio configured.")
+            candidate = self.neutral_reference.expanduser()
+        elif self.reference_audio:
+            candidate = self.reference_audio[0].expanduser()
+        else:
+            raise ValueError(f"Voice profile {self.speaker} has no reference audio configured.")
+        if str(candidate).strip() in {"", "."}:
+            raise ValueError(f"Voice profile {self.speaker} has no reference audio configured.")
+        if candidate.exists() and candidate.is_dir():
+            raise ValueError(f"Voice profile {self.speaker} reference audio points to a directory: {candidate}")
+        if not candidate.exists():
+            raise ValueError(f"Voice profile {self.speaker} reference audio does not exist: {candidate}")
+        return candidate
 
     def to_dict(self) -> dict[str, Any]:
         return {

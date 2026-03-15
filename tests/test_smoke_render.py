@@ -3,7 +3,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import soundfile as sf
+import pytest
 
+from the_oracle.models.project import VoiceProfile
 from the_oracle.models.project import VoiceSettings
 from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
 from the_oracle.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference, run_deterministic_smoke_render
@@ -87,3 +89,45 @@ def test_render_progress_reports_stage_updates(tmp_path: Path) -> None:
     assert events[-1].stage == "Complete"
     assert events[-1].current_step == events[-1].total_steps
     assert any(event.stage == "Rendering segment" and event.current_segment == 1 for event in events)
+
+
+def test_render_preview_creates_preview_files_for_both_speakers(tmp_path: Path) -> None:
+    dialogue = tmp_path / "dialogue.txt"
+    dialogue.write_text(
+        "Speaker A: First preview.\n"
+        "Speaker B: Second preview.\n",
+        encoding="utf-8",
+    )
+    speaker_a = _write_reference(tmp_path / "speaker_a_ref.wav", 220.0)
+    speaker_b = _write_reference(tmp_path / "speaker_b_ref.wav", 330.0)
+    speaker_settings = {
+        "A": SpeakerSettings(reference_path=str(speaker_a), voice_settings=VoiceSettings()),
+        "B": SpeakerSettings(reference_path=str(speaker_b), voice_settings=VoiceSettings()),
+    }
+    render_settings = RenderSettings(model_variant="standard", language="en", loudness_preset="off")
+
+    with (
+        patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
+        patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
+    ):
+        pipeline = OraclePipeline()
+        plan = pipeline.prepare_plan(dialogue, tmp_path / "output", speaker_settings, render_settings)
+        preview_a = pipeline.render_preview(plan.utterances[0], plan.voice_profiles["A"], "standard")
+        preview_b = pipeline.render_preview(plan.utterances[1], plan.voice_profiles["B"], "standard")
+
+    assert preview_a.exists()
+    assert preview_a.parent.name == "previews"
+    assert preview_a.name == "preview_A_0000.wav"
+    assert preview_b.exists()
+    assert preview_b.parent.name == "previews"
+    assert preview_b.name == "preview_B_0001.wav"
+
+
+def test_render_preview_rejects_blank_reference_path_before_reading_dot(tmp_path: Path) -> None:
+    utterance = type("PreviewUtterance", (), {"speaker": "A", "index": 0, "engine_settings": VoiceSettings(), "text_for_tts": lambda self: "Preview text"})()
+    profile = VoiceProfile(name="Speaker A", speaker="A", neutral_reference=Path(""), engine_params=VoiceSettings())
+
+    pipeline = OraclePipeline()
+
+    with pytest.raises(ValueError, match="has no reference audio configured"):
+        pipeline.render_preview(utterance, profile, "standard")

@@ -409,12 +409,13 @@ class OraclePipeline:
         return plan, output_path
 
     def render_preview(self, utterance: Utterance, profile: VoiceProfile, model_variant: str, device_mode: str = "cpu") -> Path:
-        project_cache = ProjectCache(profile.primary_reference.resolve().parent / ".oracle_preview")
+        reference_path = profile.primary_reference.resolve()
+        project_cache = ProjectCache(reference_path.parent / ".oracle_preview")
         engine = ChatterboxEngine(variant=model_variant, device=resolve_chatterbox_device(device_mode))
-        cached_reference = engine.prepare_reference(project_cache, utterance.speaker, str(profile.primary_reference))
+        cached_reference = engine.prepare_reference(project_cache, utterance.speaker, str(reference_path))
         conditioning = engine.prepare_conditioning(project_cache, utterance.speaker, cached_reference, profile.engine_params)
         rendered = engine.synthesize(utterance.text_for_tts(), conditioning, utterance.engine_settings)
-        preview_path = project_cache.stem_path(f"preview_{utterance.speaker}_{utterance.index}")
+        preview_path = project_cache.preview_path(utterance.speaker, utterance.index)
         save_wav(preview_path, rendered, engine.sample_rate)
         return preview_path
 
