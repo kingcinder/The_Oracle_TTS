@@ -427,18 +427,48 @@ class OraclePipeline:
         output_path = self.render(plan, settings)
         return plan, output_path
 
-    def render_preview(self, utterance: Utterance, profile: VoiceProfile, model_variant: str, device_mode: str = "cpu") -> Path:
+    def render_preview(
+        self,
+        utterance: Utterance,
+        profile: VoiceProfile,
+        model_variant: str,
+        device_mode: str = "cpu",
+        progress_callback=None,
+    ) -> Path:
+        start_time = perf_counter()
+
+        def emit_preview_progress(stage: str, detail: str, current_step: int, total_steps: int = 4) -> None:
+            if progress_callback is None:
+                return
+            progress_callback(
+                RenderProgress(
+                    stage=stage,
+                    detail=detail,
+                    current_step=current_step,
+                    total_steps=total_steps,
+                    current_segment=0,
+                    total_segments=0,
+                    elapsed_seconds=perf_counter() - start_time,
+                    eta_seconds=None,
+                )
+            )
+
         reference_path = profile.primary_reference.resolve()
         project_cache = ProjectCache(reference_path.parent / ".oracle_preview")
         engine = ChatterboxEngine(variant=model_variant, device=resolve_chatterbox_device(device_mode))
+        emit_preview_progress("Loading model", f"Loading Chatterbox {model_variant} on {engine.device}", 0)
         ensure_model_ready = getattr(engine, "ensure_model_ready", None)
         if callable(ensure_model_ready):
             ensure_model_ready()
+        emit_preview_progress("Preparing reference", f"Preparing speaker {utterance.speaker} reference audio", 1)
         cached_reference = engine.prepare_reference(project_cache, utterance.speaker, str(reference_path))
+        emit_preview_progress("Preparing conditioning", f"Preparing speaker {utterance.speaker} conditioning", 2)
         conditioning = engine.prepare_conditioning(project_cache, utterance.speaker, cached_reference, profile.engine_params)
+        emit_preview_progress("Generating preview", f"Generating preview for segment {utterance.index}", 3)
         rendered = engine.synthesize(utterance.text_for_tts(), conditioning, utterance.engine_settings)
         preview_path = project_cache.preview_path(utterance.speaker, utterance.index)
         save_wav(preview_path, rendered, engine.sample_rate)
+        emit_preview_progress("Complete", f"Preview ready: {preview_path.name}", 4)
         return preview_path
 
     def _load_previous_plan(self, project_cache: ProjectCache) -> dict[str, Any]:

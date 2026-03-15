@@ -46,7 +46,7 @@ from the_oracle.gui_settings import (
     save_gui_settings,
     save_template,
 )
-from the_oracle.models.project import RenderPlan, VoiceSettings
+from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings, Utterance
 from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
 from the_oracle.voice_catalog import VoiceChoice, default_voice_choices
@@ -71,11 +71,38 @@ class RenderWorker(QThread):
         self.completed.emit(self.plan.to_dict(), str(output_path))
 
 
+class PreviewWorker(QThread):
+    progress = Signal(object)
+    completed = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, utterance: Utterance, profile: VoiceProfile, model_variant: str, device_mode: str) -> None:
+        super().__init__()
+        self.utterance = Utterance.from_dict(utterance.to_dict())
+        self.profile = VoiceProfile.from_dict(profile.to_dict())
+        self.model_variant = model_variant
+        self.device_mode = device_mode
+
+    def run(self) -> None:
+        try:
+            preview_path = OraclePipeline().render_preview(
+                self.utterance,
+                self.profile,
+                self.model_variant,
+                device_mode=self.device_mode,
+                progress_callback=self.progress.emit,
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.completed.emit(str(preview_path))
+
+
 class RenderProgressDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, title: str = "Rendering") -> None:
         super().__init__(parent)
-        self.setWindowTitle("Rendering")
-        self.setModal(True)
+        self.setWindowTitle(title)
+        self.setModal(False)
         self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
         self.stage_label = QLabel("Starting render...")
@@ -94,6 +121,8 @@ class RenderProgressDialog(QDialog):
         self.stage_label.setText(f"{progress.stage}: {progress.detail}")
         if progress.total_segments > 0:
             self.segment_label.setText(f"Segments: {progress.current_segment}/{progress.total_segments}")
+        elif progress.total_steps > 0:
+            self.segment_label.setText(f"Steps: {progress.current_step}/{progress.total_steps}")
         else:
             self.segment_label.setText("Segments: preparing...")
         if progress.eta_seconds is None:
@@ -215,7 +244,9 @@ class MainWindow(QMainWindow):
         self.plan: RenderPlan | None = None
         self.current_project_path: Path | None = None
         self.render_worker: RenderWorker | None = None
+        self.preview_worker: PreviewWorker | None = None
         self.progress_dialog: RenderProgressDialog | None = None
+        self.preview_dialog: RenderProgressDialog | None = None
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
@@ -686,25 +717,44 @@ class MainWindow(QMainWindow):
     def preview_utterance(self, row: int) -> None:
         if not self.plan:
             return
+        if self.render_worker is not None:
+            self.error_panel.append("Preview is unavailable while a render is in progress.")
+            return
+        if self.preview_worker is not None:
+            self.error_panel.append("Preview is already in progress.")
+            return
         try:
             self._sync_plan_from_table()
             utterance = self.plan.utterances[row]
-            preview_path = self.pipeline.render_preview(
-                utterance,
-                self.plan.voice_profiles[utterance.speaker],
-                self.variant_combo.currentText(),
-                device_mode=self.device_mode_combo.currentData() or "cpu",
-            )
-            self.player.setSource(QUrl.fromLocalFile(str(preview_path)))
-            self.player.play()
         except Exception as exc:
             self.error_panel.append(f"Preview failed: {exc}")
+            QMessageBox.critical(self, "Preview Failed", str(exc))
+            return
+
+        self.preview_dialog = RenderProgressDialog(self, title="Generating Preview")
+        self.preview_dialog.show()
+        self._set_preview_busy(True)
+        self.preview_worker = PreviewWorker(
+            utterance,
+            self.plan.voice_profiles[utterance.speaker],
+            self.variant_combo.currentText(),
+            self.device_mode_combo.currentData() or "cpu",
+        )
+        self.preview_worker.progress.connect(self._update_preview_progress)
+        self.preview_worker.completed.connect(self._finish_preview)
+        self.preview_worker.failed.connect(self._fail_preview)
+        self.preview_worker.finished.connect(self._cleanup_preview_worker)
+        self.preview_worker.start()
 
     def render_project(self) -> None:
+        if self.preview_worker is not None:
+            self.error_panel.append("Wait for the active preview to finish before rendering.")
+            return
         if not self.plan:
-            self.prepare_project()
-            if not self.plan:
-                return
+            message = "Analyze the project before rendering so render work stays off the UI thread."
+            self.error_panel.append(message)
+            QMessageBox.information(self, "Analyze First", message)
+            return
         if self.render_worker is not None:
             self.error_panel.append("Render is already in progress.")
             return
@@ -716,7 +766,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Render Failed", str(exc))
             return
 
-        self.progress_dialog = RenderProgressDialog(self)
+        self.progress_dialog = RenderProgressDialog(self, title="Rendering")
         self.progress_dialog.show()
         self._set_render_busy(True)
         self.render_worker = RenderWorker(self.plan, self._render_settings())
@@ -751,7 +801,37 @@ class MainWindow(QMainWindow):
             self.render_worker.deleteLater()
             self.render_worker = None
 
+    def _update_preview_progress(self, progress: RenderProgress) -> None:
+        if self.preview_dialog is not None:
+            self.preview_dialog.update_progress(progress)
+
+    def _finish_preview(self, preview_path: str) -> None:
+        self.player.setSource(QUrl.fromLocalFile(preview_path))
+        self.player.play()
+        self.error_panel.append(f"Preview ready: {preview_path}")
+        if self.preview_dialog is not None:
+            self.preview_dialog.close()
+            self.preview_dialog = None
+
+    def _fail_preview(self, message: str) -> None:
+        self.error_panel.append(f"Preview failed: {message}")
+        if self.preview_dialog is not None:
+            self.preview_dialog.close()
+            self.preview_dialog = None
+        QMessageBox.critical(self, "Preview Failed", message)
+
+    def _cleanup_preview_worker(self) -> None:
+        self._set_preview_busy(False)
+        if self.preview_worker is not None:
+            self.preview_worker.deleteLater()
+            self.preview_worker = None
+
     def _set_render_busy(self, busy: bool) -> None:
+        self.render_button.setEnabled(not busy)
+        self.analyze_button.setEnabled(not busy)
+        self.table.setEnabled(not busy)
+
+    def _set_preview_busy(self, busy: bool) -> None:
         self.render_button.setEnabled(not busy)
         self.analyze_button.setEnabled(not busy)
         self.table.setEnabled(not busy)

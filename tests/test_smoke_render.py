@@ -131,3 +131,37 @@ def test_render_preview_rejects_blank_reference_path_before_reading_dot(tmp_path
 
     with pytest.raises(ValueError, match="has no reference audio configured"):
         pipeline.render_preview(utterance, profile, "standard")
+
+
+def test_render_preview_reports_honest_stage_progress(tmp_path: Path) -> None:
+    dialogue = tmp_path / "dialogue.txt"
+    dialogue.write_text("Speaker A: First preview.\n", encoding="utf-8")
+    speaker_a = _write_reference(tmp_path / "speaker_a_ref.wav", 220.0)
+    speaker_settings = {
+        "A": SpeakerSettings(reference_path=str(speaker_a), voice_settings=VoiceSettings()),
+        "B": SpeakerSettings(reference_path=str(speaker_a), voice_settings=VoiceSettings()),
+    }
+    events: list[RenderProgress] = []
+
+    with (
+        patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
+        patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
+    ):
+        pipeline = OraclePipeline()
+        plan = pipeline.prepare_plan(dialogue, tmp_path / "output", speaker_settings, RenderSettings(model_variant="standard"))
+        preview_path = pipeline.render_preview(
+            plan.utterances[0],
+            plan.voice_profiles["A"],
+            "standard",
+            progress_callback=events.append,
+        )
+
+    assert preview_path.exists()
+    assert [event.stage for event in events] == [
+        "Loading model",
+        "Preparing reference",
+        "Preparing conditioning",
+        "Generating preview",
+        "Complete",
+    ]
+    assert events[-1].current_step == events[-1].total_steps == 4
