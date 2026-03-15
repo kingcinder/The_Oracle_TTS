@@ -27,11 +27,22 @@ def test_deterministic_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
 
     render_plan = json.loads(result.render_plan_path.read_text(encoding="utf-8"))
     render_timings = json.loads((result.project_dir / "logs" / "render_timings.json").read_text(encoding="utf-8"))
+    render_trace = (result.project_dir / "logs" / "render_trace.log").read_text(encoding="utf-8")
+    utterance_entries = [entry for entry in render_timings["entries"] if entry["type"] == "utterance"]
     assert render_plan["engine"] == "chatterbox"
     assert render_plan["metadata"]["model_variant"] == "standard"
     assert render_plan["metadata"]["cache_reused_on_second_pass"] == "True"
     assert render_plan["metadata"]["watermark"] == "Perth watermark embedded by Chatterbox"
     assert render_timings["summary"]["utterance_count"] == 4
+    assert render_timings["summary"]["segment_count"] == 4
+    assert render_timings["summary"]["join_count"] == 3
+    assert len(render_timings["segments"]) == 4
+    assert len(render_timings["joins"]) == 3
+    assert utterance_entries[0]["cache_stem_path"].endswith(".wav")
+    assert utterance_entries[0]["exported_stem_path"].endswith(".wav")
+    assert render_timings["segments"][0]["content_start_seconds"] == 0.0
+    assert render_timings["output"]["path"].endswith(".flac")
+    assert "segment 1/4" in render_trace
 
 
 def test_deterministic_markdown_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
@@ -50,10 +61,18 @@ def test_deterministic_markdown_smoke_render_runs_end_to_end(tmp_path: Path) -> 
 
     render_plan = json.loads(result.render_plan_path.read_text(encoding="utf-8"))
     render_timings = json.loads((result.project_dir / "logs" / "render_timings.json").read_text(encoding="utf-8"))
+    render_trace = (result.project_dir / "logs" / "render_trace.log").read_text(encoding="utf-8")
     assert render_plan["engine"] == "chatterbox"
     assert render_plan["metadata"]["model_variant"] == "standard"
     assert render_plan["metadata"]["cache_reused_on_second_pass"] == "True"
     assert render_timings["summary"]["utterance_count"] == 4
+    assert render_timings["summary"]["segment_count"] == 4
+    assert render_timings["summary"]["join_count"] == 3
+    assert len(render_timings["segments"]) == 4
+    assert len(render_timings["joins"]) == 3
+    assert render_timings["joins"][0]["left_stem_path"].endswith(".wav")
+    assert render_timings["joins"][0]["right_stem_path"].endswith(".wav")
+    assert "output | path=" in render_trace
 
 
 def test_render_progress_reports_stage_updates(tmp_path: Path) -> None:

@@ -249,6 +249,7 @@ class OraclePipeline:
         conditioning: dict[str, ChatterboxConditioning] = {}
         stem_segments: list[AudioSegment] = []
         timing_entries: list[dict[str, Any]] = []
+        render_trace_lines: list[str] = []
         total_segments = len(plan.utterances)
         total_steps = len(plan.voice_profiles) + total_segments + 3
         completed_steps = 0
@@ -331,6 +332,13 @@ class OraclePipeline:
                 total_segments=total_segments,
                 eta_seconds=eta_seconds,
             )
+            LOGGER.info(
+                "Rendering segment %s/%s | utterance=%s | speaker=%s",
+                utterance_index,
+                total_segments,
+                utterance.index,
+                utterance.speaker,
+            )
             segment_start = perf_counter()
             synthesize_seconds = 0.0
             cache_hit = stem_path.exists()
@@ -343,23 +351,48 @@ class OraclePipeline:
             audio, sample_rate = load_audio(stem_path)
             load_audio_seconds = perf_counter() - load_start
             utterance.duration_seconds = len(audio) / sample_rate
+            exported_stem_path = ""
             stem_segments.append(
                 AudioSegment(
                     path=str(stem_path),
                     sample_rate=sample_rate,
                     pause_after_ms=utterance.pause_after_ms,
                     duration_seconds=utterance.duration_seconds,
+                    segment_index=utterance.index,
+                    speaker=utterance.speaker,
+                    chunk_hash=utterance.chunk_hash,
                 )
             )
             if settings.export_stems:
-                project_cache.export_stem(stem_path, f"stems/{utterance.index:04d}_{utterance.speaker}.wav")
+                exported_stem_path = str(project_cache.export_stem(stem_path, f"stems/{utterance.index:04d}_{utterance.speaker}.wav"))
+                stem_segments[-1].exported_path = exported_stem_path
             segment_seconds = perf_counter() - segment_start
+            render_trace_lines.append(
+                "segment {current}/{total} | utterance={utterance} | speaker={speaker} | cache_hit={cache_hit} | "
+                "chunk_hash={chunk_hash} | stem={stem} | exported={exported}".format(
+                    current=utterance_index,
+                    total=total_segments,
+                    utterance=utterance.index,
+                    speaker=utterance.speaker,
+                    cache_hit=cache_hit,
+                    chunk_hash=utterance.chunk_hash,
+                    stem=stem_path,
+                    exported=exported_stem_path or "-",
+                )
+            )
             timing_entries.append(
                 {
                     "type": "utterance",
+                    "segment_number": utterance_index,
                     "index": utterance.index,
                     "speaker": utterance.speaker,
                     "cache_hit": cache_hit,
+                    "chunk_hash": utterance.chunk_hash,
+                    "cache_stem_path": str(stem_path),
+                    "exported_stem_path": exported_stem_path,
+                    "duration_seconds": round(utterance.duration_seconds, 6),
+                    "pause_after_ms": utterance.pause_after_ms,
+                    "crossfade_ms": settings.crossfade_ms,
                     "synthesize_seconds": round(synthesize_seconds, 6),
                     "load_audio_seconds": round(load_audio_seconds, 6),
                     "segment_total_seconds": round(segment_seconds, 6),
@@ -386,14 +419,20 @@ class OraclePipeline:
             current_segment=total_segments,
             total_segments=total_segments,
         )
+        assembly_diagnostics: dict[str, list[dict[str, Any]]] = {}
         final_audio, sample_rate = assemble_dialogue(
             stem_segments,
             crossfade_ms=settings.crossfade_ms,
             loudness_preset=settings.loudness_preset,
+            diagnostics=assembly_diagnostics,
         )
         completed_steps += 1
         requested_filename = normalize_output_filename(str(settings.metadata.get("output_filename", ""))) or f"{Path(plan.source_path).stem}.flac"
         final_output = next_available_output_path(Path(plan.output_dir) / requested_filename)
+        render_trace_lines.append(
+            f"assemble | segments={len(stem_segments)} | joins={len(assembly_diagnostics.get('joins', []))} | "
+            f"crossfade_ms={settings.crossfade_ms} | loudness={settings.loudness_preset}"
+        )
         emit_progress(
             stage="Writing output",
             detail=f"Writing {final_output.name}",
@@ -403,10 +442,12 @@ class OraclePipeline:
             total_segments=total_segments,
         )
         exported = write_flac(final_output, final_audio, sample_rate, plan.metadata)
+        render_trace_lines.append(f"output | path={exported} | sample_rate={sample_rate}")
         plan.update_hashes()
         project_cache.save_json("render_plan.json", plan.to_dict())
         self._write_correction_log(project_cache, plan)
-        self._write_render_timing_log(project_cache, timing_entries)
+        self._write_render_timing_log(project_cache, timing_entries, assembly_diagnostics, exported)
+        self._write_render_trace_log(project_cache, render_trace_lines)
         emit_progress(
             stage="Complete",
             detail=f"Render complete: {exported.name}",
@@ -500,13 +541,24 @@ class OraclePipeline:
         project_cache.save_json("logs/corrections.json", payload)
         project_cache.write_text("logs/corrections.diff", "\n".join(diff_lines))
 
-    def _write_render_timing_log(self, project_cache: ProjectCache, timing_entries: list[dict[str, Any]]) -> None:
+    def _write_render_timing_log(
+        self,
+        project_cache: ProjectCache,
+        timing_entries: list[dict[str, Any]],
+        assembly_diagnostics: dict[str, list[dict[str, Any]]],
+        final_output_path: Path,
+    ) -> None:
         utterance_entries = [entry for entry in timing_entries if entry.get("type") == "utterance"]
         payload = {
             "count": len(timing_entries),
             "entries": timing_entries,
+            "segments": assembly_diagnostics.get("segments", []),
+            "joins": assembly_diagnostics.get("joins", []),
+            "output": {"path": str(final_output_path)},
             "summary": {
                 "utterance_count": len(utterance_entries),
+                "segment_count": len(assembly_diagnostics.get("segments", [])),
+                "join_count": len(assembly_diagnostics.get("joins", [])),
                 "cache_hits": sum(1 for entry in utterance_entries if entry.get("cache_hit")),
                 "cache_misses": sum(1 for entry in utterance_entries if not entry.get("cache_hit")),
                 "total_synthesize_seconds": round(sum(entry.get("synthesize_seconds", 0.0) for entry in utterance_entries), 6),
@@ -514,6 +566,9 @@ class OraclePipeline:
             },
         }
         project_cache.save_json("logs/render_timings.json", payload)
+
+    def _write_render_trace_log(self, project_cache: ProjectCache, lines: list[str]) -> None:
+        project_cache.write_text("logs/render_trace.log", "\n".join(lines) + ("\n" if lines else ""))
 
 
 def compute_incremental_changes(old_plan: RenderPlan | dict[str, Any], new_plan: RenderPlan | dict[str, Any] | list[Utterance]) -> list[int]:

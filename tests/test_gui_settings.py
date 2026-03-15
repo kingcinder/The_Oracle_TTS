@@ -82,3 +82,16 @@ def test_recent_reference_paths_are_mru_and_capped(tmp_path: Path, monkeypatch: 
 
     assert len(recent) == 10
     assert recent[0] == "/tmp/ref_11.wav"
+
+
+def test_legacy_gui_settings_gain_default_output_location_fields(tmp_path: Path) -> None:
+    path = tmp_path / "legacy_settings.json"
+    payload = _payload()
+    payload["project"].pop("output_dir")
+    payload["project"].pop("output_filename")
+    save_gui_settings(path, payload)
+
+    loaded = load_gui_settings(path)
+
+    assert loaded["project"]["output_dir"] == ""
+    assert loaded["project"]["output_filename"] == ""

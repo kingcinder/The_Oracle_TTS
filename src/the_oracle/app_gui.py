@@ -264,6 +264,7 @@ class MainWindow(QMainWindow):
         self.resize(1320, 900)
         self._build_ui()
         self._build_menu()
+        self._apply_gui_settings_payload(self._default_gui_settings_payload())
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -372,7 +373,7 @@ class MainWindow(QMainWindow):
         self.loudness_combo.setCurrentText(RenderSettings().loudness_preset)
         self.crossfade_spin = QSpinBox()
         self.crossfade_spin.setRange(0, 500)
-        self.crossfade_spin.setValue(20)
+        self.crossfade_spin.setValue(RenderSettings().crossfade_ms)
         form.addRow("Model Variant", self.variant_combo)
         form.addRow("Correction Mode", self.correction_mode_combo)
         form.addRow("Inference Device", self.device_mode_combo)
@@ -472,8 +473,8 @@ class MainWindow(QMainWindow):
         )
 
     def _default_gui_settings_payload(self) -> dict:
-        default_voice = VoiceSettings()
         default_render = RenderSettings()
+        default_voice = VoiceSettings(variant=default_render.model_variant)
         return {
             "version": 1,
             "name": "",

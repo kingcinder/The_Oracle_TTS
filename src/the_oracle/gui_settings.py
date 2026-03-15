@@ -85,10 +85,22 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     speakers = payload["speakers"]
     if not isinstance(speakers, dict) or set(speakers) != {"A", "B"}:
         raise GUISettingsError("GUI settings profile must contain both speakers 'A' and 'B'.")
+    project = dict(payload["project"])
+    normalized_project = {
+        "model_variant": str(project.get("model_variant", "standard")),
+        "correction_mode": str(project.get("correction_mode", "conservative")),
+        "loudness_preset": str(project.get("loudness_preset", "light")),
+        "crossfade_ms": int(project.get("crossfade_ms", 20)),
+        "output_dir": str(project.get("output_dir", "")),
+        "output_filename": str(project.get("output_filename", "")),
+    }
+    for key, value in project.items():
+        if key not in normalized_project:
+            normalized_project[key] = value
     normalized = {
         "version": GUI_SETTINGS_VERSION,
         "name": str(payload.get("name", "")),
-        "project": dict(payload["project"]),
+        "project": normalized_project,
         "device_mode": str(payload.get("device_mode", "cpu")),
         "speakers": {},
     }

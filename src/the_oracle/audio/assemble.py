@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -15,6 +16,10 @@ class AudioSegment:
     sample_rate: int
     pause_after_ms: int
     duration_seconds: float
+    segment_index: int = 0
+    speaker: str = ""
+    chunk_hash: str = ""
+    exported_path: str = ""
 
 
 def remove_dc_offset(audio: np.ndarray) -> np.ndarray:
@@ -60,6 +65,7 @@ def assemble_dialogue(
     segments: list[AudioSegment],
     crossfade_ms: int = 20,
     loudness_preset: str = "light",
+    diagnostics: dict[str, list[dict[str, Any]]] | None = None,
 ) -> tuple[np.ndarray, int]:
     if not segments:
         return np.zeros(1, dtype=np.float32), 24000
@@ -67,28 +73,77 @@ def assemble_dialogue(
     final_audio: np.ndarray | None = None
     final_rate = segments[0].sample_rate
     crossfade_samples = max(0, int(final_rate * crossfade_ms / 1000))
+    segment_diagnostics: list[dict[str, Any]] = []
+    join_diagnostics: list[dict[str, Any]] = []
+    previous_segment: AudioSegment | None = None
 
     for segment in segments:
         audio, sample_rate = load_audio(segment.path)
         if sample_rate != final_rate:
             raise ValueError("All stems must share a sample rate before assembly.")
         audio = apply_fade(remove_dc_offset(audio), sample_rate)
+        applied_crossfade_samples = 0
         if final_audio is None:
+            content_start_sample = 0
             final_audio = audio.copy()
         else:
             if crossfade_samples > 0 and len(final_audio) > crossfade_samples and len(audio) > crossfade_samples:
+                applied_crossfade_samples = crossfade_samples
+                content_start_sample = len(final_audio) - applied_crossfade_samples
                 head = final_audio[:-crossfade_samples]
                 tail = final_audio[-crossfade_samples:]
                 lead = audio[:crossfade_samples]
                 mix = tail * np.linspace(1.0, 0.0, crossfade_samples) + lead * np.linspace(0.0, 1.0, crossfade_samples)
                 final_audio = np.concatenate([head, mix.astype(np.float32), audio[crossfade_samples:]])
             else:
+                content_start_sample = len(final_audio)
                 final_audio = np.concatenate([final_audio, audio])
+        content_end_sample = content_start_sample + len(audio)
         pause_samples = int(final_rate * segment.pause_after_ms / 1000)
         if pause_samples > 0:
             final_audio = np.concatenate([final_audio, np.zeros(pause_samples, dtype=np.float32)])
+        final_end_sample = len(final_audio)
+        segment_diagnostics.append(
+            {
+                "segment_number": len(segment_diagnostics) + 1,
+                "utterance_index": segment.segment_index,
+                "speaker": segment.speaker,
+                "stem_path": str(Path(segment.path)),
+                "exported_stem_path": segment.exported_path,
+                "chunk_hash": segment.chunk_hash,
+                "sample_rate": sample_rate,
+                "processed_duration_seconds": round(len(audio) / sample_rate, 6),
+                "content_start_seconds": round(content_start_sample / sample_rate, 6),
+                "content_end_seconds": round(content_end_sample / sample_rate, 6),
+                "final_end_seconds": round(final_end_sample / sample_rate, 6),
+                "pause_after_ms": segment.pause_after_ms,
+                "pause_after_seconds": round(pause_samples / sample_rate, 6),
+                "crossfade_requested_ms": crossfade_ms,
+                "crossfade_applied_seconds": round(applied_crossfade_samples / sample_rate, 6),
+            }
+        )
+        if previous_segment is not None:
+            join_diagnostics.append(
+                {
+                    "join_number": len(join_diagnostics) + 1,
+                    "left_utterance_index": previous_segment.segment_index,
+                    "right_utterance_index": segment.segment_index,
+                    "left_speaker": previous_segment.speaker,
+                    "right_speaker": segment.speaker,
+                    "left_stem_path": str(Path(previous_segment.path)),
+                    "right_stem_path": str(Path(segment.path)),
+                    "crossfade_requested_ms": crossfade_ms,
+                    "crossfade_applied_seconds": round(applied_crossfade_samples / sample_rate, 6),
+                    "join_start_seconds": round(content_start_sample / sample_rate, 6),
+                    "join_end_seconds": round((content_start_sample + applied_crossfade_samples) / sample_rate, 6),
+                }
+            )
+        previous_segment = segment
 
     final_audio = normalize_loudness(final_audio, preset=loudness_preset)
+    if diagnostics is not None:
+        diagnostics["segments"] = segment_diagnostics
+        diagnostics["joins"] = join_diagnostics
     return np.asarray(final_audio, dtype=np.float32), final_rate
 
 
