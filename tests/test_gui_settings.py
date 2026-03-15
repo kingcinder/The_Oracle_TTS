@@ -26,6 +26,8 @@ def _payload() -> dict:
             "loudness_preset": "light",
             "pause_between_turns_ms": 180,
             "crossfade_ms": 20,
+            "output_dir": "/tmp/output",
+            "output_filename": "oracle_render.flac",
         },
         "speakers": {
             "A": {
@@ -49,6 +51,8 @@ def test_gui_settings_round_trip(tmp_path: Path) -> None:
     loaded = load_gui_settings(path)
 
     assert loaded["project"]["model_variant"] == "standard"
+    assert loaded["project"]["output_dir"] == "/tmp/output"
+    assert loaded["project"]["output_filename"] == "oracle_render.flac"
     assert loaded["speakers"]["A"]["reference_path"] == "/tmp/a.wav"
     assert loaded["speakers"]["B"]["voice_settings"]["cfg_weight"] == 0.6
 

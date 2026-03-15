@@ -331,12 +331,16 @@ class MainWindow(QMainWindow):
             file_menu.addAction(action)
 
         settings_menu = self.menuBar().addMenu("Settings")
+        reset_defaults_action = QAction("Reset to Defaults", self)
+        reset_defaults_action.triggered.connect(self.reset_settings_to_defaults)
         save_settings_action = QAction("Save Settings...", self)
         save_settings_action.triggered.connect(self.save_settings_profile)
         load_settings_action = QAction("Load Settings...", self)
         load_settings_action.triggered.connect(self.load_settings_profile)
         save_template_action = QAction("Save Current as Template...", self)
         save_template_action.triggered.connect(self.save_template_profile)
+        settings_menu.addAction(reset_defaults_action)
+        settings_menu.addSeparator()
         settings_menu.addAction(save_settings_action)
         settings_menu.addAction(load_settings_action)
         settings_menu.addSeparator()
@@ -362,6 +366,7 @@ class MainWindow(QMainWindow):
                 model_item.setToolTip(option.reason)
         self.loudness_combo = QComboBox()
         self.loudness_combo.addItems(["off", "light", "medium"])
+        self.loudness_combo.setCurrentText(RenderSettings().loudness_preset)
         self.crossfade_spin = QSpinBox()
         self.crossfade_spin.setRange(0, 500)
         self.crossfade_spin.setValue(20)
@@ -453,6 +458,31 @@ class MainWindow(QMainWindow):
             metadata={"output_filename": normalize_output_filename(self.output_name.text())},
         )
 
+    def _default_gui_settings_payload(self) -> dict:
+        default_voice = VoiceSettings()
+        default_render = RenderSettings()
+        return {
+            "version": 1,
+            "name": "",
+            "device_mode": default_render.device_mode,
+            "project": {
+                "model_variant": default_render.model_variant,
+                "correction_mode": default_render.correction_mode,
+                "loudness_preset": default_render.loudness_preset,
+                "crossfade_ms": default_render.crossfade_ms,
+                "output_dir": str(self.paths.output_dir),
+                "output_filename": "",
+            },
+            "speakers": {
+                speaker: {
+                    "reference_path": "",
+                    "voice_settings": default_voice.to_dict(),
+                    "emotion_reference_paths": {},
+                }
+                for speaker in ("A", "B")
+            },
+        }
+
     def _apply_speaker_group(self, group: SpeakerGroup, settings: SpeakerSettings) -> None:
         voice = VoiceSettings.from_mapping(settings.voice_settings)
         group.reference_path.setText(settings.reference_path)
@@ -503,6 +533,8 @@ class MainWindow(QMainWindow):
                 "correction_mode": self.correction_mode_combo.currentText(),
                 "loudness_preset": self.loudness_combo.currentText(),
                 "crossfade_ms": self.crossfade_spin.value(),
+                "output_dir": self.outdir_path.text() or str(self.paths.output_dir),
+                "output_filename": normalize_output_filename(self.output_name.text()),
             },
             "speakers": {
                 speaker: {
@@ -515,17 +547,20 @@ class MainWindow(QMainWindow):
         }
 
     def _apply_gui_settings_payload(self, payload: dict) -> None:
-        project = payload["project"]
+        defaults = self._default_gui_settings_payload()
+        project = {**defaults["project"], **payload["project"]}
         self.variant_combo.setCurrentText(project.get("model_variant", "standard"))
         self._refresh_language_options()
         device_index = self.device_mode_combo.findData(payload.get("device_mode", "cpu"))
         if device_index >= 0 and self.device_mode_combo.model().item(device_index).isEnabled():
             self.device_mode_combo.setCurrentIndex(device_index)
         self.correction_mode_combo.setCurrentText(project.get("correction_mode", "conservative"))
-        self.loudness_combo.setCurrentText(project.get("loudness_preset", "light"))
+        self.loudness_combo.setCurrentText(project.get("loudness_preset", RenderSettings().loudness_preset))
         self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
+        self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
+        self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
         for speaker, group in (("A", self.speaker_a), ("B", self.speaker_b)):
-            config = payload["speakers"][speaker]
+            config = {**defaults["speakers"][speaker], **payload["speakers"][speaker]}
             voice = VoiceSettings.from_mapping(config.get("voice_settings"))
             group.reference_path.setText(config.get("reference_path", ""))
             language_index = group.language_combo.findData(voice.language)
@@ -538,6 +573,10 @@ class MainWindow(QMainWindow):
             group.naturalness.setValue(voice.naturalness)
             group.pause_spin.setValue(voice.pause_ms)
         self._refresh_reference_pickers()
+
+    def reset_settings_to_defaults(self) -> None:
+        self._apply_gui_settings_payload(self._default_gui_settings_payload())
+        self.error_panel.append("Settings reset to defaults.")
 
     def save_settings_profile(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -616,10 +655,6 @@ class MainWindow(QMainWindow):
         self.current_project_path = None
         self.plan = None
         self.input_path.clear()
-        self.outdir_path.setText(str(self.paths.output_dir))
-        self.output_name.clear()
-        self.speaker_a.reference_path.clear()
-        self.speaker_b.reference_path.clear()
         self.error_panel.clear()
         self.table.setRowCount(0)
         self._refresh_reference_pickers()
