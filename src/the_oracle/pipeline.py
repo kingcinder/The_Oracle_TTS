@@ -9,6 +9,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from the_oracle.app_paths import normalize_output_filename
 from the_oracle.audio.assemble import AudioSegment, assemble_dialogue, load_audio, save_wav
 from the_oracle.audio.export_flac import next_available_output_path, write_flac
 from the_oracle.device_support import resolve_chatterbox_device
@@ -391,7 +392,8 @@ class OraclePipeline:
             loudness_preset=settings.loudness_preset,
         )
         completed_steps += 1
-        final_output = next_available_output_path(Path(plan.output_dir) / f"{Path(plan.source_path).stem}.flac")
+        requested_filename = normalize_output_filename(str(settings.metadata.get("output_filename", ""))) or f"{Path(plan.source_path).stem}.flac"
+        final_output = next_available_output_path(Path(plan.output_dir) / requested_filename)
         emit_progress(
             stage="Writing output",
             detail=f"Writing {final_output.name}",

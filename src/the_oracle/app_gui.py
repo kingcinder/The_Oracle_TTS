@@ -35,6 +35,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from the_oracle.app_paths import (
+    OraclePaths,
+    ensure_repo_default_paths,
+    normalize_output_filename,
+    resolve_output_filename,
+)
 from the_oracle.device_support import available_device_modes
 from the_oracle.gui_settings import (
     GUISettingsError,
@@ -142,8 +148,9 @@ class RenderProgressDialog(QDialog):
 
 
 class SpeakerGroup(QGroupBox):
-    def __init__(self, speaker: str) -> None:
+    def __init__(self, speaker: str, custom_reference_dir: Path) -> None:
         super().__init__(f"Speaker {speaker}")
+        self.custom_reference_dir = custom_reference_dir
         self.reference_path = QLineEdit()
         self.reference_picker = QComboBox()
         self.reference_picker.currentIndexChanged.connect(self._handle_reference_selection)
@@ -178,7 +185,9 @@ class SpeakerGroup(QGroupBox):
         return box
 
     def _pick_audio(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Choose Reference Audio", "", "Audio Files (*.wav *.flac *.mp3)")
+        current_reference = Path(self.reference_path.text()).expanduser()
+        start_dir = current_reference.parent if current_reference.exists() else self.custom_reference_dir
+        path, _ = QFileDialog.getOpenFileName(self, "Choose Reference Audio", str(start_dir), "Audio Files (*.wav *.flac *.mp3)")
         if path:
             self.reference_path.setText(path)
 
@@ -240,6 +249,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.repo_root = Path(__file__).resolve().parents[2]
+        self.paths: OraclePaths = ensure_repo_default_paths(self.repo_root)
         self.pipeline = OraclePipeline()
         self.plan: RenderPlan | None = None
         self.current_project_path: Path | None = None
@@ -262,14 +272,18 @@ class MainWindow(QMainWindow):
         controls = QGridLayout()
         self.input_path = QLineEdit()
         self.outdir_path = QLineEdit()
+        self.output_name = QLineEdit()
+        self.output_name.setPlaceholderText("Auto-derived from the input file when using the default Output folder")
         self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
         self._add_path_row(controls, 1, "Output Folder", self.outdir_path, self._pick_outdir)
+        controls.addWidget(QLabel("Output Filename"), 2, 0)
+        controls.addWidget(self.output_name, 2, 1, 1, 2)
         layout.addLayout(controls)
 
         settings_row = QHBoxLayout()
         settings_row.addWidget(self._build_project_settings())
-        self.speaker_a = SpeakerGroup("A")
-        self.speaker_b = SpeakerGroup("B")
+        self.speaker_a = SpeakerGroup("A", self.paths.voice_dir)
+        self.speaker_b = SpeakerGroup("B", self.paths.voice_dir)
         settings_row.addWidget(self.speaker_a)
         settings_row.addWidget(self.speaker_b)
         layout.addLayout(settings_row)
@@ -299,6 +313,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.error_panel)
 
         self.setCentralWidget(root)
+        self.outdir_path.setText(str(self.paths.output_dir))
         self._refresh_language_options()
         self._refresh_reference_pickers()
 
@@ -365,14 +380,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(button, row, 2)
 
     def _pick_input(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Choose Input", "", "Text Files (*.txt *.md)")
+        current_input = Path(self.input_path.text()).expanduser()
+        start_dir = current_input.parent if current_input.exists() else self.paths.input_dir
+        path, _ = QFileDialog.getOpenFileName(self, "Choose Input", str(start_dir), "Text Files (*.txt *.md)")
         if path:
             self.input_path.setText(path)
-            if not self.outdir_path.text():
-                self.outdir_path.setText(str(Path(path).with_suffix("")))
 
     def _pick_outdir(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Choose Output Directory")
+        current_outdir = Path(self.outdir_path.text()).expanduser()
+        start_dir = current_outdir if current_outdir.exists() else self.paths.output_dir
+        path = QFileDialog.getExistingDirectory(self, "Choose Output Directory", str(start_dir))
         if path:
             self.outdir_path.setText(path)
 
@@ -433,6 +450,7 @@ class MainWindow(QMainWindow):
             pause_between_turns_ms=self.speaker_a.pause_spin.value(),
             crossfade_ms=self.crossfade_spin.value(),
             device_mode=self.device_mode_combo.currentData() or "cpu",
+            metadata={"output_filename": normalize_output_filename(self.output_name.text())},
         )
 
     def _apply_speaker_group(self, group: SpeakerGroup, settings: SpeakerSettings) -> None:
@@ -454,6 +472,7 @@ class MainWindow(QMainWindow):
         self.plan = saved_project.plan
         self.input_path.setText(saved_project.input_path)
         self.outdir_path.setText(saved_project.output_path)
+        self.output_name.setText(str(saved_project.render_settings.metadata.get("output_filename", "")))
         self.variant_combo.setCurrentText(saved_project.render_settings.model_variant)
         self._refresh_language_options()
         self.correction_mode_combo.setCurrentText(saved_project.render_settings.correction_mode)
@@ -521,7 +540,12 @@ class MainWindow(QMainWindow):
         self._refresh_reference_pickers()
 
     def save_settings_profile(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Save Settings", "", "Settings Files (*.json)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Settings",
+            str(self.paths.profile_dir / "oracle_profile.json"),
+            "Settings Files (*.json)",
+        )
         if not path:
             return
         destination = Path(path)
@@ -536,7 +560,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Settings Failed", str(exc))
 
     def load_settings_profile(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Load Settings", "", "Settings Files (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "Load Settings", str(self.paths.profile_dir), "Settings Files (*.json)")
         if not path:
             return
         try:
@@ -592,7 +616,8 @@ class MainWindow(QMainWindow):
         self.current_project_path = None
         self.plan = None
         self.input_path.clear()
-        self.outdir_path.clear()
+        self.outdir_path.setText(str(self.paths.output_dir))
+        self.output_name.clear()
         self.speaker_a.reference_path.clear()
         self.speaker_b.reference_path.clear()
         self.error_panel.clear()
@@ -760,7 +785,15 @@ class MainWindow(QMainWindow):
             return
         try:
             self._sync_plan_from_table()
-            self.plan.output_dir = self.outdir_path.text()
+            output_filename = resolve_output_filename(
+                self.input_path.text(),
+                self.outdir_path.text(),
+                self.paths.output_dir,
+                self.output_name.text(),
+            )
+            if not output_filename:
+                raise ValueError("Choose an output filename before rendering outside the default Output folder.")
+            self.plan.output_dir = self.outdir_path.text() or str(self.paths.output_dir)
         except Exception as exc:
             self.error_panel.append(f"Render failed: {exc}")
             QMessageBox.critical(self, "Render Failed", str(exc))
@@ -769,7 +802,9 @@ class MainWindow(QMainWindow):
         self.progress_dialog = RenderProgressDialog(self, title="Rendering")
         self.progress_dialog.show()
         self._set_render_busy(True)
-        self.render_worker = RenderWorker(self.plan, self._render_settings())
+        render_settings = self._render_settings()
+        render_settings.metadata["output_filename"] = output_filename
+        self.render_worker = RenderWorker(self.plan, render_settings)
         self.render_worker.progress.connect(self._update_render_progress)
         self.render_worker.completed.connect(self._finish_render)
         self.render_worker.failed.connect(self._fail_render)
