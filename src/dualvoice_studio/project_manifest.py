@@ -56,6 +56,7 @@ def _render_settings_to_dict(settings: RenderSettings) -> dict[str, Any]:
         "loudness_preset": settings.loudness_preset,
         "pause_between_turns_ms": settings.pause_between_turns_ms,
         "crossfade_ms": settings.crossfade_ms,
+        "device_mode": settings.device_mode,
         "metadata": dict(settings.metadata),
     }
 

@@ -1,9 +1,12 @@
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import soundfile as sf
 
-from dualvoice_studio.smoke import run_deterministic_smoke_render
+from dualvoice_studio.models.project import VoiceSettings
+from dualvoice_studio.pipeline import DualVoicePipeline, RenderProgress, RenderSettings, SpeakerSettings
+from dualvoice_studio.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference, run_deterministic_smoke_render
 
 
 def test_deterministic_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
@@ -19,10 +22,12 @@ def test_deterministic_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
     assert len(audio) > 1000
 
     render_plan = json.loads(result.render_plan_path.read_text(encoding="utf-8"))
+    render_timings = json.loads((result.project_dir / "logs" / "render_timings.json").read_text(encoding="utf-8"))
     assert render_plan["engine"] == "chatterbox"
     assert render_plan["metadata"]["model_variant"] == "standard"
     assert render_plan["metadata"]["cache_reused_on_second_pass"] == "True"
     assert render_plan["metadata"]["watermark"] == "Perth watermark embedded by Chatterbox"
+    assert render_timings["summary"]["utterance_count"] == 4
 
 
 def test_deterministic_markdown_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
@@ -38,6 +43,47 @@ def test_deterministic_markdown_smoke_render_runs_end_to_end(tmp_path: Path) -> 
     assert len(audio) > 1000
 
     render_plan = json.loads(result.render_plan_path.read_text(encoding="utf-8"))
+    render_timings = json.loads((result.project_dir / "logs" / "render_timings.json").read_text(encoding="utf-8"))
     assert render_plan["engine"] == "chatterbox"
     assert render_plan["metadata"]["model_variant"] == "standard"
     assert render_plan["metadata"]["cache_reused_on_second_pass"] == "True"
+    assert render_timings["summary"]["utterance_count"] == 4
+
+
+def test_render_progress_reports_stage_updates(tmp_path: Path) -> None:
+    dialogue = tmp_path / "dialogue.txt"
+    dialogue.write_text(
+        "Speaker A: The Oracle is online.\n"
+        "Speaker B: Confirm the signal path.\n",
+        encoding="utf-8",
+    )
+    speaker_a = _write_reference(tmp_path / "speaker_a_ref.wav", 220.0)
+    speaker_b = _write_reference(tmp_path / "speaker_b_ref.wav", 330.0)
+    speaker_settings = {
+        "A": SpeakerSettings(reference_path=str(speaker_a), voice_settings=VoiceSettings()),
+        "B": SpeakerSettings(reference_path=str(speaker_b), voice_settings=VoiceSettings()),
+    }
+    render_settings = RenderSettings(
+        correction_mode="conservative",
+        model_variant="standard",
+        language="en",
+        export_stems=True,
+        loudness_preset="off",
+        pause_between_turns_ms=120,
+        crossfade_ms=10,
+    )
+    events: list[RenderProgress] = []
+
+    with (
+        patch("dualvoice_studio.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
+        patch("dualvoice_studio.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
+    ):
+        pipeline = DualVoicePipeline()
+        plan = pipeline.prepare_plan(dialogue, tmp_path / "output", speaker_settings, render_settings)
+        output_path = pipeline.render(plan, render_settings, progress_callback=events.append)
+
+    assert output_path.exists()
+    assert events
+    assert events[-1].stage == "Complete"
+    assert events[-1].current_step == events[-1].total_steps
+    assert any(event.stage == "Rendering segment" and event.current_segment == 1 for event in events)

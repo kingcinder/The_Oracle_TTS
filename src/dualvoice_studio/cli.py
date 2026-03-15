@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--speakerA-ref", dest="speaker_a_ref", help="Reference audio for Speaker A.")
     render.add_argument("--speakerB-ref", dest="speaker_b_ref", help="Reference audio for Speaker B.")
     render.add_argument("--model-variant", choices=["standard", "multilingual", "turbo"], default="standard")
+    render.add_argument("--device-mode", choices=["cpu", "vulkan"], default="cpu")
     render.add_argument("--language", default="en", help="Language code for multilingual mode. Ignored for standard/turbo.")
     render.add_argument("--cfg-weight", type=float, default=0.5)
     render.add_argument("--exaggeration", type=float, default=0.5)
@@ -71,6 +72,7 @@ def handle_render(args: argparse.Namespace) -> int:
             language=args.language if args.model_variant == "multilingual" else "en",
             export_stems=not args.no_stems,
             loudness_preset=args.loudness,
+            device_mode=args.device_mode,
             metadata={"title": args.title} if args.title else {},
         )
         voice_settings = _voice_settings_from_args(args)

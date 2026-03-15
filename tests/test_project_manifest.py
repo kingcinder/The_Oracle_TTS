@@ -52,10 +52,12 @@ def test_project_manifest_round_trip_preserves_key_fields(tmp_path: Path) -> Non
     assert loaded.engine == "chatterbox"
     assert loaded.model_variant == "standard"
     assert loaded.render_settings.correction_mode == settings.correction_mode
+    assert loaded.render_settings.device_mode == "cpu"
     assert loaded.render_settings.loudness_preset == settings.loudness_preset
     assert loaded.speaker_settings["A"].reference_path == speakers["A"].reference_path
     assert loaded.speaker_settings["B"].reference_path == speakers["B"].reference_path
     assert loaded.speaker_settings["A"].voice_settings["cfg_weight"] == speakers["A"].voice_settings.cfg_weight
+    assert loaded.speaker_settings["A"].voice_settings["pause_ms"] == speakers["A"].voice_settings.pause_ms
 
 
 def test_modified_utterance_state_survives_round_trip(tmp_path: Path) -> None:

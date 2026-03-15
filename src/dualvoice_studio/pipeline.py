@@ -6,10 +6,12 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from dualvoice_studio.audio.assemble import AudioSegment, assemble_dialogue, load_audio, save_wav
 from dualvoice_studio.audio.export_flac import write_flac
+from dualvoice_studio.device_support import resolve_chatterbox_device
 from dualvoice_studio.emotion.goemotions import GoEmotionsClassifier
 from dualvoice_studio.models.cache import ProjectCache
 from dualvoice_studio.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings
@@ -47,8 +49,21 @@ class RenderSettings:
     loudness_preset: str = "light"
     pause_between_turns_ms: int = 180
     crossfade_ms: int = 20
+    device_mode: str = "cpu"
     metadata: dict[str, str] = field(default_factory=dict)
     anchors: AnchorAssignments | None = None
+
+
+@dataclass(slots=True)
+class RenderProgress:
+    stage: str
+    detail: str
+    current_step: int
+    total_steps: int
+    current_segment: int
+    total_segments: int
+    elapsed_seconds: float
+    eta_seconds: float | None = None
 
 
 class DualVoicePipeline:
@@ -73,6 +88,28 @@ class DualVoicePipeline:
     def _coerce_voice_settings(value: VoiceSettings | dict[str, Any]) -> VoiceSettings:
         return VoiceSettings.from_mapping(value)
 
+    @staticmethod
+    def _blend_control(base_value: float | int, target_value: float | int, intensity: float) -> float:
+        return float(base_value) + ((float(target_value) - float(base_value)) * intensity)
+
+    def _apply_emotion_and_naturalness(self, base: VoiceSettings, emotion_label: str) -> VoiceSettings:
+        merged = VoiceSettings.from_mapping(base)
+        intensity = max(0.0, min(2.0, merged.emotion_intensity))
+        for key, value in self.emotions.controls_for_emotion(emotion_label).items():
+            if not hasattr(merged, key):
+                continue
+            blended = self._blend_control(getattr(base, key), value, intensity)
+            setattr(merged, key, int(round(blended)) if isinstance(getattr(base, key), int) else blended)
+
+        naturalness = max(0.0, min(1.0, merged.naturalness))
+        if naturalness > 0.0:
+            merged.cfg_weight = max(0.2, merged.cfg_weight - (0.12 * naturalness))
+            merged.temperature = min(1.5, merged.temperature + (0.18 * naturalness))
+            merged.repetition_penalty = max(1.0, merged.repetition_penalty - (0.25 * naturalness))
+            merged.min_p = min(0.2, merged.min_p + (0.03 * naturalness))
+            merged.pause_ms = int(round(merged.pause_ms * (1.0 + (0.12 * naturalness))))
+        return merged
+
     def prepare_plan(
         self,
         input_path: str | Path,
@@ -89,23 +126,18 @@ class DualVoicePipeline:
         )
 
         variant = settings.model_variant
-        language = settings.language if variant == "multilingual" else "en"
 
         utterances: list[Utterance] = []
         for segment, repaired, decision in zip(document.segments, repaired_segments, decisions, strict=True):
             base = self._coerce_voice_settings(speaker_settings[decision.speaker].voice_settings)
             base.variant = variant
-            base.language = language
-            base.pause_ms = settings.pause_between_turns_ms
+            base.language = base.language if variant == "multilingual" else "en"
             base.crossfade_ms = settings.crossfade_ms
             emotion = self.emotions.classify(repaired.text)
-            merged = VoiceSettings.from_mapping(base)
-            for key, value in self.emotions.controls_for_emotion(emotion.label).items():
-                if hasattr(merged, key):
-                    setattr(merged, key, value)
+            merged = self._apply_emotion_and_naturalness(base, emotion.label)
             merged.variant = variant
-            merged.language = language
-            merged.pause_ms = settings.pause_between_turns_ms
+            merged.language = base.language if variant == "multilingual" else "en"
+            merged.pause_ms = max(0, int(round(merged.pause_ms)))
             merged.crossfade_ms = settings.crossfade_ms
 
             utterances.append(
@@ -135,10 +167,17 @@ class DualVoicePipeline:
                 reference_audio=[Path(config.reference_path)],
                 neutral_reference=Path(config.reference_path),
                 emotion_references={key: Path(value) for key, value in config.emotion_reference_paths.items()},
-                engine_params=replace(self._coerce_voice_settings(config.voice_settings), variant=variant, language=language),
+                engine_params=replace(
+                    self._coerce_voice_settings(config.voice_settings),
+                    variant=variant,
+                    language=self._coerce_voice_settings(config.voice_settings).language if variant == "multilingual" else "en",
+                ),
             )
             for speaker, config in speaker_settings.items()
         }
+
+        speaker_languages = {profile.engine_params.language for profile in voice_profiles.values()}
+        project_language = next(iter(speaker_languages)) if len(speaker_languages) == 1 else "mixed"
 
         metadata = {
             "title": document.title,
@@ -149,11 +188,12 @@ class DualVoicePipeline:
             "engine": "chatterbox",
             "chatterbox_version": chatterbox_version(),
             "model_variant": variant,
-            "language": language,
+            "language": project_language,
             "cfg_weight": str(voice_profiles["A"].engine_params.cfg_weight),
             "exaggeration": str(voice_profiles["A"].engine_params.exaggeration),
             "reference_clips_used": "true",
             "watermark": "Perth watermark embedded by Chatterbox",
+            "device_mode": settings.device_mode,
             **settings.metadata,
         }
         plan = RenderPlan(
@@ -169,14 +209,58 @@ class DualVoicePipeline:
         plan.update_hashes()
         return plan
 
-    def render(self, plan: RenderPlan, settings: RenderSettings) -> Path:
+    def render(
+        self,
+        plan: RenderPlan,
+        settings: RenderSettings,
+        progress_callback=None,
+    ) -> Path:
+        start_time = perf_counter()
+
+        def emit_progress(
+            *,
+            stage: str,
+            detail: str,
+            current_step: int,
+            total_steps: int,
+            current_segment: int = 0,
+            total_segments: int = 0,
+            eta_seconds: float | None = None,
+        ) -> None:
+            if progress_callback is None:
+                return
+            progress_callback(
+                RenderProgress(
+                    stage=stage,
+                    detail=detail,
+                    current_step=current_step,
+                    total_steps=total_steps,
+                    current_segment=current_segment,
+                    total_segments=total_segments,
+                    elapsed_seconds=perf_counter() - start_time,
+                    eta_seconds=eta_seconds,
+                )
+            )
+
         variant = settings.model_variant
         project_cache = ProjectCache(plan.output_dir)
-        engine = ChatterboxEngine(variant=variant)
+        engine = ChatterboxEngine(variant=variant, device=resolve_chatterbox_device(settings.device_mode))
         conditioning: dict[str, ChatterboxConditioning] = {}
         stem_segments: list[AudioSegment] = []
+        timing_entries: list[dict[str, Any]] = []
+        total_segments = len(plan.utterances)
+        total_steps = len(plan.voice_profiles) + total_segments + 2
+        completed_steps = 0
 
         for speaker, profile in plan.voice_profiles.items():
+            emit_progress(
+                stage="Preparing speaker",
+                detail=f"Preparing speaker {speaker} reference audio and conditioning",
+                current_step=completed_steps,
+                total_steps=total_steps,
+                total_segments=total_segments,
+            )
+            speaker_start = perf_counter()
             cached_reference = engine.prepare_reference(project_cache, speaker, str(profile.primary_reference))
             profile.normalized_reference_audio = [Path(cached_reference.normalized_path)]
             profile.reference_audio_hash = cached_reference.original_hash
@@ -184,9 +268,25 @@ class DualVoicePipeline:
             profile.conditioning_cache_id = conditioning_payload.cache_id
             conditioning[speaker] = conditioning_payload
             project_cache.save_json(f"profiles/{speaker.lower()}_voice_profile.json", profile.to_dict())
+            timing_entries.append(
+                {
+                    "type": "speaker_prep",
+                    "speaker": speaker,
+                    "seconds": round(perf_counter() - speaker_start, 6),
+                }
+            )
+            completed_steps += 1
+            emit_progress(
+                stage="Preparing speaker",
+                detail=f"Speaker {speaker} is ready",
+                current_step=completed_steps,
+                total_steps=total_steps,
+                total_segments=total_segments,
+            )
 
         previous_plan = self._load_previous_plan(project_cache)
-        for utterance in plan.utterances:
+        render_start = perf_counter()
+        for utterance_index, utterance in enumerate(plan.utterances, start=1):
             profile = plan.voice_profiles[utterance.speaker]
             utterance.parameters = utterance.engine_settings.to_dict()
             utterance.chunk_hash = build_chunk_hash(
@@ -198,10 +298,30 @@ class DualVoicePipeline:
                 reference_audio_hash=profile.reference_audio_hash,
             )
             stem_path = project_cache.stem_path(utterance.chunk_hash)
+            average_segment_seconds = None
+            if utterance_index > 1:
+                average_segment_seconds = (perf_counter() - render_start) / float(utterance_index - 1)
+            eta_seconds = None if average_segment_seconds is None else average_segment_seconds * (total_segments - utterance_index + 1)
+            emit_progress(
+                stage="Rendering segment",
+                detail=f"Rendering segment {utterance_index}/{total_segments} for speaker {utterance.speaker}",
+                current_step=completed_steps,
+                total_steps=total_steps,
+                current_segment=utterance_index,
+                total_segments=total_segments,
+                eta_seconds=eta_seconds,
+            )
+            segment_start = perf_counter()
+            synthesize_seconds = 0.0
+            cache_hit = stem_path.exists()
             if not stem_path.exists():
+                synth_start = perf_counter()
                 rendered = engine.synthesize(utterance.text_for_tts(), conditioning[utterance.speaker], utterance.engine_settings)
+                synthesize_seconds = perf_counter() - synth_start
                 save_wav(stem_path, rendered, engine.sample_rate)
+            load_start = perf_counter()
             audio, sample_rate = load_audio(stem_path)
+            load_audio_seconds = perf_counter() - load_start
             utterance.duration_seconds = len(audio) / sample_rate
             stem_segments.append(
                 AudioSegment(
@@ -213,18 +333,68 @@ class DualVoicePipeline:
             )
             if settings.export_stems:
                 project_cache.export_stem(stem_path, f"stems/{utterance.index:04d}_{utterance.speaker}.wav")
+            segment_seconds = perf_counter() - segment_start
+            timing_entries.append(
+                {
+                    "type": "utterance",
+                    "index": utterance.index,
+                    "speaker": utterance.speaker,
+                    "cache_hit": cache_hit,
+                    "synthesize_seconds": round(synthesize_seconds, 6),
+                    "load_audio_seconds": round(load_audio_seconds, 6),
+                    "segment_total_seconds": round(segment_seconds, 6),
+                    "inter_segment_overhead_seconds": round(max(0.0, segment_seconds - synthesize_seconds), 6),
+                }
+            )
+            completed_steps += 1
+            emit_progress(
+                stage="Rendering segment",
+                detail=f"Segment {utterance_index}/{total_segments} ready",
+                current_step=completed_steps,
+                total_steps=total_steps,
+                current_segment=utterance_index,
+                total_segments=total_segments,
+                eta_seconds=None if utterance_index >= total_segments else average_segment_seconds * (total_segments - utterance_index) if average_segment_seconds is not None else None,
+            )
 
         plan.metadata["cache_reused_on_second_pass"] = str(not compute_incremental_changes(previous_plan, plan))
+        emit_progress(
+            stage="Assembling audio",
+            detail="Applying pauses, crossfades, and loudness settings",
+            current_step=completed_steps,
+            total_steps=total_steps,
+            current_segment=total_segments,
+            total_segments=total_segments,
+        )
         final_audio, sample_rate = assemble_dialogue(
             stem_segments,
             crossfade_ms=settings.crossfade_ms,
             loudness_preset=settings.loudness_preset,
         )
+        completed_steps += 1
         final_output = Path(plan.output_dir) / f"{Path(plan.source_path).stem}.flac"
+        emit_progress(
+            stage="Writing output",
+            detail=f"Writing {final_output.name}",
+            current_step=completed_steps,
+            total_steps=total_steps,
+            current_segment=total_segments,
+            total_segments=total_segments,
+        )
         exported = write_flac(final_output, final_audio, sample_rate, plan.metadata)
         plan.update_hashes()
         project_cache.save_json("render_plan.json", plan.to_dict())
         self._write_correction_log(project_cache, plan)
+        self._write_render_timing_log(project_cache, timing_entries)
+        emit_progress(
+            stage="Complete",
+            detail=f"Render complete: {exported.name}",
+            current_step=total_steps,
+            total_steps=total_steps,
+            current_segment=total_segments,
+            total_segments=total_segments,
+            eta_seconds=0.0,
+        )
         return exported
 
     def render_project(
@@ -238,9 +408,9 @@ class DualVoicePipeline:
         output_path = self.render(plan, settings)
         return plan, output_path
 
-    def render_preview(self, utterance: Utterance, profile: VoiceProfile, model_variant: str) -> Path:
+    def render_preview(self, utterance: Utterance, profile: VoiceProfile, model_variant: str, device_mode: str = "cpu") -> Path:
         project_cache = ProjectCache(profile.primary_reference.resolve().parent / ".dualvoice_preview")
-        engine = ChatterboxEngine(variant=model_variant)
+        engine = ChatterboxEngine(variant=model_variant, device=resolve_chatterbox_device(device_mode))
         cached_reference = engine.prepare_reference(project_cache, utterance.speaker, str(profile.primary_reference))
         conditioning = engine.prepare_conditioning(project_cache, utterance.speaker, cached_reference, profile.engine_params)
         rendered = engine.synthesize(utterance.text_for_tts(), conditioning, utterance.engine_settings)
@@ -274,6 +444,21 @@ class DualVoicePipeline:
         project_cache.save_json("logs/text_corrections.json", payload)
         project_cache.save_json("logs/corrections.json", payload)
         project_cache.write_text("logs/corrections.diff", "\n".join(diff_lines))
+
+    def _write_render_timing_log(self, project_cache: ProjectCache, timing_entries: list[dict[str, Any]]) -> None:
+        utterance_entries = [entry for entry in timing_entries if entry.get("type") == "utterance"]
+        payload = {
+            "count": len(timing_entries),
+            "entries": timing_entries,
+            "summary": {
+                "utterance_count": len(utterance_entries),
+                "cache_hits": sum(1 for entry in utterance_entries if entry.get("cache_hit")),
+                "cache_misses": sum(1 for entry in utterance_entries if not entry.get("cache_hit")),
+                "total_synthesize_seconds": round(sum(entry.get("synthesize_seconds", 0.0) for entry in utterance_entries), 6),
+                "total_overhead_seconds": round(sum(entry.get("inter_segment_overhead_seconds", 0.0) for entry in utterance_entries), 6),
+            },
+        }
+        project_cache.save_json("logs/render_timings.json", payload)
 
 
 def compute_incremental_changes(old_plan: RenderPlan | dict[str, Any], new_plan: RenderPlan | dict[str, Any] | list[Utterance]) -> list[int]:

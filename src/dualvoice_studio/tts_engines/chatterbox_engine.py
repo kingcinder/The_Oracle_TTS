@@ -37,6 +37,7 @@ class ChatterboxEngine:
         self._model = None
         self._condition_cls = None
         self._languages = {"en": "English"}
+        self._loaded_conditioning: dict[str, Any] = {}
 
     @property
     def engine_version(self) -> str:
@@ -122,11 +123,16 @@ class ChatterboxEngine:
         )
 
     def synthesize(self, text: str, conditioning: ChatterboxConditioning, settings: VoiceSettings) -> np.ndarray:
-        try:
-            conds = self._condition_cls.load(conditioning.path, map_location=self.device)
-        except TypeError:
-            conds = self._condition_cls.load(conditioning.path)
-        self.model.conds = conds.to(self.device)
+        cache_key = str(conditioning.path)
+        conds = self._loaded_conditioning.get(cache_key)
+        if conds is None:
+            try:
+                conds = self._condition_cls.load(conditioning.path, map_location=self.device)
+            except TypeError:
+                conds = self._condition_cls.load(conditioning.path)
+            conds = conds.to(self.device)
+            self._loaded_conditioning[cache_key] = conds
+        self.model.conds = conds
 
         kwargs: dict[str, Any] = {
             "text": text,

@@ -9,10 +9,15 @@ Chatterbox outputs include built-in Perth watermarking by design. This project d
 - Chatterbox-only render path with `standard`, `multilingual`, and `turbo` variants
 - Voice cloning via per-speaker reference clips passed through `audio_prompt_path`
 - GUI review table for `[index | speaker | original text | repaired text | emotion | duration | preview]`
+- Background FLAC rendering with a live progress dialog, segment counter, stage text, and ETA when enough timing data exists
+- Save/load GUI settings profiles plus reusable local templates for recurring setups
+- Reference voice picker with repo-local default clips, recent custom clips, and a custom file chooser path
 - Automatic normalization, punctuation restoration, spelling correction, and grammar cleanup
 - Dual-speaker attribution with explicit markers, alternating-line fallback, clustering fallback, and anchor-ready plumbing
-- Emotion inference mapped into live Chatterbox controls such as `cfg_weight`, `exaggeration`, and `temperature`
+- Emotion inference mapped into live Chatterbox controls such as `cfg_weight`, `exaggeration`, and `temperature`, with per-speaker emotion intensity scaling
+- Per-speaker language, pause-after-turn, and voice tuning controls, plus a clearly heuristic naturalness control
 - Incremental stem caching keyed by repaired text, speaker, model variant, language, Chatterbox parameters, reference hash, and Chatterbox version
+- Render timing audit logs under `logs/render_timings.json` for investigating dead time between speaker segments
 - FLAC export with metadata tags plus render plans and correction logs
 
 ## Install
@@ -87,6 +92,17 @@ dualvoice render --project output/oracle_project.json
 
 The desktop app also supports `File > New Project`, `Open Project`, `Save Project`, and `Save Project As` for round-tripping long review/edit sessions without losing repaired text, speaker overrides, emotion edits, or Chatterbox voice settings.
 
+Recurring setup workflow:
+
+```bash
+# In the GUI:
+# Settings > Save Settings...
+# Settings > Save Current as Template...
+# Settings > Load Template
+```
+
+Templates and recent custom reference clips are stored in the user config directory under `~/.config/dualvoice_studio/` unless `XDG_CONFIG_HOME` overrides it.
+
 ## Output Layout
 
 Each render creates:
@@ -104,7 +120,8 @@ Each render creates:
 
 - Linux and Windows are both supported at the code level.
 - CPU-only mode works, but first-load and long-form renders are slow.
-- A CUDA GPU is strongly recommended for production-length jobs.
+- The current verified runtime path in this repository is CPU.
+- Vulkan GPU mode is surfaced in the GUI only as an availability check; it is not claimed as a working execution path unless the installed runtime is explicitly verified.
 
 ## Product Notes
 
@@ -112,6 +129,7 @@ Each render creates:
 - Multilingual mode requires the multilingual Chatterbox variant and a real language code.
 - Turbo is lower-latency and optional; it is not the default backend.
 - Chatterbox’s Perth watermark is retained in output audio.
+- Hybrid CPU+GPU work splitting is not implemented because the current Chatterbox runtime in this repo does not expose a verified, defensible multi-device execution path.
 
 ## Demo
 

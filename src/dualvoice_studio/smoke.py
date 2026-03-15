@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
@@ -145,6 +146,8 @@ def run_deterministic_smoke_render(output_root: str | Path, source_format: str =
     speaker_a = _write_reference(output_root / "speaker_a_ref.wav", 220.0)
     speaker_b = _write_reference(output_root / "speaker_b_ref.wav", 330.0)
     project_dir = output_root / f"render_project_{source_format}"
+    if project_dir.exists():
+        shutil.rmtree(project_dir)
 
     with (
         patch("dualvoice_studio.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),

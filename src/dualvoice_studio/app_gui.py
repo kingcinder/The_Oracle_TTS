@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QThread, Qt, QUrl, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -22,6 +24,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QInputDialog,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -31,31 +35,110 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dualvoice_studio.device_support import available_device_modes
+from dualvoice_studio.gui_settings import (
+    GUISettingsError,
+    list_templates,
+    load_gui_settings,
+    load_recent_reference_paths,
+    load_template,
+    remember_recent_reference_path,
+    save_gui_settings,
+    save_template,
+)
 from dualvoice_studio.models.project import RenderPlan, VoiceSettings
-from dualvoice_studio.pipeline import DualVoicePipeline, RenderSettings, SpeakerSettings
+from dualvoice_studio.pipeline import DualVoicePipeline, RenderProgress, RenderSettings, SpeakerSettings
 from dualvoice_studio.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
+from dualvoice_studio.voice_catalog import VoiceChoice, default_voice_choices
+
+
+class RenderWorker(QThread):
+    progress = Signal(object)
+    completed = Signal(object, str)
+    failed = Signal(str)
+
+    def __init__(self, plan: RenderPlan, settings: RenderSettings) -> None:
+        super().__init__()
+        self.plan = RenderPlan.from_dict(plan.to_dict())
+        self.settings = deepcopy(settings)
+
+    def run(self) -> None:
+        try:
+            output_path = DualVoicePipeline().render(self.plan, self.settings, progress_callback=self.progress.emit)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.completed.emit(self.plan.to_dict(), str(output_path))
+
+
+class RenderProgressDialog(QDialog):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Rendering")
+        self.setModal(True)
+        self.setMinimumWidth(440)
+        layout = QVBoxLayout(self)
+        self.stage_label = QLabel("Starting render...")
+        self.segment_label = QLabel("Segments: 0/0")
+        self.eta_label = QLabel("ETA: calculating...")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        layout.addWidget(self.stage_label)
+        layout.addWidget(self.segment_label)
+        layout.addWidget(self.eta_label)
+        layout.addWidget(self.progress_bar)
+
+    def update_progress(self, progress: RenderProgress) -> None:
+        percent = 0 if progress.total_steps <= 0 else int(round((progress.current_step / progress.total_steps) * 100))
+        self.progress_bar.setValue(max(0, min(100, percent)))
+        self.stage_label.setText(f"{progress.stage}: {progress.detail}")
+        if progress.total_segments > 0:
+            self.segment_label.setText(f"Segments: {progress.current_segment}/{progress.total_segments}")
+        else:
+            self.segment_label.setText("Segments: preparing...")
+        if progress.eta_seconds is None:
+            self.eta_label.setText(f"Elapsed: {self._format_seconds(progress.elapsed_seconds)} | ETA: calculating...")
+        else:
+            self.eta_label.setText(
+                f"Elapsed: {self._format_seconds(progress.elapsed_seconds)} | ETA: {self._format_seconds(progress.eta_seconds)}"
+            )
+
+    @staticmethod
+    def _format_seconds(value: float) -> str:
+        seconds = max(0, int(round(value)))
+        minutes, seconds = divmod(seconds, 60)
+        if minutes:
+            return f"{minutes}m {seconds:02d}s"
+        return f"{seconds}s"
 
 
 class SpeakerGroup(QGroupBox):
     def __init__(self, speaker: str) -> None:
         super().__init__(f"Speaker {speaker}")
         self.reference_path = QLineEdit()
-        browse = QPushButton("Browse")
-        browse.clicked.connect(self._pick_audio)
+        self.reference_picker = QComboBox()
+        self.reference_picker.currentIndexChanged.connect(self._handle_reference_selection)
+        self._available_reference_paths: set[str] = set()
 
+        self.language_combo = QComboBox()
         self.cfg_weight = self._double_box(0.0, 1.5, 0.5, 0.05)
         self.exaggeration = self._double_box(0.0, 1.5, 0.5, 0.05)
         self.temperature = self._double_box(0.1, 1.5, 0.8, 0.05)
-
-        path_row = QHBoxLayout()
-        path_row.addWidget(self.reference_path)
-        path_row.addWidget(browse)
+        self.emotion_intensity = self._double_box(0.0, 2.0, 1.0, 0.1)
+        self.naturalness = self._double_box(0.0, 1.0, 0.0, 0.05)
+        self.pause_spin = QSpinBox()
+        self.pause_spin.setRange(0, 2000)
+        self.pause_spin.setValue(180)
 
         form = QFormLayout(self)
-        form.addRow("Reference Clip", self._wrap(path_row))
+        form.addRow("Custom Voice Reference Audio", self.reference_picker)
+        form.addRow("Language", self.language_combo)
         form.addRow("CFG Weight", self.cfg_weight)
         form.addRow("Exaggeration", self.exaggeration)
         form.addRow("Temperature", self.temperature)
+        form.addRow("Emotion Intensity", self.emotion_intensity)
+        form.addRow("Naturalness (Heuristic)", self.naturalness)
+        form.addRow("Pause After Speaker Turn (ms)", self.pause_spin)
 
     def _double_box(self, minimum: float, maximum: float, value: float, step: float) -> QDoubleSpinBox:
         box = QDoubleSpinBox()
@@ -65,23 +148,74 @@ class SpeakerGroup(QGroupBox):
         box.setValue(value)
         return box
 
-    def _wrap(self, layout: QHBoxLayout) -> QWidget:
-        widget = QWidget()
-        widget.setLayout(layout)
-        return widget
-
     def _pick_audio(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Choose Reference Audio", "", "Audio Files (*.wav *.flac *.mp3)")
         if path:
             self.reference_path.setText(path)
 
+    def set_language_options(self, languages: dict[str, str], enabled: bool) -> None:
+        selected = self.language_combo.currentData() or "en"
+        self.language_combo.clear()
+        for code, name in languages.items():
+            self.language_combo.addItem(f"{code} - {name}", code)
+        index = self.language_combo.findData(selected if enabled else "en")
+        if index < 0:
+            index = self.language_combo.findData("en")
+        if index >= 0:
+            self.language_combo.setCurrentIndex(index)
+        self.language_combo.setEnabled(enabled)
+
+    def set_reference_choices(self, defaults: list[VoiceChoice], recents: list[str], selected_path: str = "") -> None:
+        current_path = selected_path or self.reference_path.text()
+        self.reference_picker.blockSignals(True)
+        self.reference_picker.clear()
+        self._available_reference_paths = set()
+        if defaults:
+            header_index = self.reference_picker.count()
+            self.reference_picker.addItem("Default Voices")
+            header_item = self.reference_picker.model().item(header_index)
+            if header_item is not None:
+                header_item.setEnabled(False)
+            for voice in defaults[:10]:
+                self.reference_picker.addItem(f"  {voice.label}", voice.path)
+                self._available_reference_paths.add(voice.path)
+        if recents:
+            header_index = self.reference_picker.count()
+            self.reference_picker.addItem("Recent Custom Clips")
+            header_item = self.reference_picker.model().item(header_index)
+            if header_item is not None:
+                header_item.setEnabled(False)
+            for path in recents[:10]:
+                resolved = str(Path(path).expanduser())
+                self.reference_picker.addItem(f"  {Path(resolved).name}", resolved)
+                self._available_reference_paths.add(resolved)
+        self.reference_picker.addItem("Custom Voice Reference Audio...", "__custom__")
+        target_index = self.reference_picker.findData(current_path)
+        if target_index < 0:
+            target_index = self.reference_picker.findData("__custom__")
+        self.reference_picker.setCurrentIndex(target_index)
+        self.reference_picker.blockSignals(False)
+        if current_path in self._available_reference_paths:
+            self.reference_path.setText(current_path)
+
+    def _handle_reference_selection(self) -> None:
+        data = self.reference_picker.currentData()
+        if data == "__custom__":
+            self._pick_audio()
+            return
+        if isinstance(data, str) and data:
+            self.reference_path.setText(data)
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.repo_root = Path(__file__).resolve().parents[2]
         self.pipeline = DualVoicePipeline()
         self.plan: RenderPlan | None = None
         self.current_project_path: Path | None = None
+        self.render_worker: RenderWorker | None = None
+        self.progress_dialog: RenderProgressDialog | None = None
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
@@ -110,12 +244,12 @@ class MainWindow(QMainWindow):
         layout.addLayout(settings_row)
 
         actions = QHBoxLayout()
-        analyze = QPushButton("Analyze")
-        analyze.clicked.connect(self.prepare_project)
-        render = QPushButton("Render FLAC")
-        render.clicked.connect(self.render_project)
-        actions.addWidget(analyze)
-        actions.addWidget(render)
+        self.analyze_button = QPushButton("Analyze")
+        self.analyze_button.clicked.connect(self.prepare_project)
+        self.render_button = QPushButton("Render FLAC")
+        self.render_button.clicked.connect(self.render_project)
+        actions.addWidget(self.analyze_button)
+        actions.addWidget(self.render_button)
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -135,6 +269,7 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(root)
         self._refresh_language_options()
+        self._refresh_reference_pickers()
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -149,28 +284,45 @@ class MainWindow(QMainWindow):
         for action in (new_action, open_action, save_action, save_as_action):
             file_menu.addAction(action)
 
+        settings_menu = self.menuBar().addMenu("Settings")
+        save_settings_action = QAction("Save Settings...", self)
+        save_settings_action.triggered.connect(self.save_settings_profile)
+        load_settings_action = QAction("Load Settings...", self)
+        load_settings_action.triggered.connect(self.load_settings_profile)
+        save_template_action = QAction("Save Current as Template...", self)
+        save_template_action.triggered.connect(self.save_template_profile)
+        settings_menu.addAction(save_settings_action)
+        settings_menu.addAction(load_settings_action)
+        settings_menu.addSeparator()
+        settings_menu.addAction(save_template_action)
+
+        self.templates_menu = settings_menu.addMenu("Load Template")
+        self.templates_menu.aboutToShow.connect(self._rebuild_templates_menu)
+
     def _build_project_settings(self) -> QGroupBox:
-        box = QGroupBox("Project Settings")
+        box = QGroupBox("Shared Render Settings")
         form = QFormLayout(box)
         self.variant_combo = QComboBox()
         self.variant_combo.addItems(self.pipeline.available_model_variants())
         self.variant_combo.currentTextChanged.connect(self._refresh_language_options)
-        self.language_combo = QComboBox()
         self.correction_mode_combo = QComboBox()
         self.correction_mode_combo.addItems(["conservative", "aggressive"])
+        self.device_mode_combo = QComboBox()
+        for option in available_device_modes():
+            self.device_mode_combo.addItem(option.label, option.key)
+            model_item = self.device_mode_combo.model().item(self.device_mode_combo.count() - 1)
+            if model_item is not None and not option.available:
+                model_item.setEnabled(False)
+                model_item.setToolTip(option.reason)
         self.loudness_combo = QComboBox()
         self.loudness_combo.addItems(["off", "light", "medium"])
-        self.pause_spin = QSpinBox()
-        self.pause_spin.setRange(0, 2000)
-        self.pause_spin.setValue(180)
         self.crossfade_spin = QSpinBox()
         self.crossfade_spin.setRange(0, 500)
         self.crossfade_spin.setValue(20)
         form.addRow("Model Variant", self.variant_combo)
-        form.addRow("Language", self.language_combo)
         form.addRow("Correction Mode", self.correction_mode_combo)
+        form.addRow("Inference Device", self.device_mode_combo)
         form.addRow("Loudness", self.loudness_combo)
-        form.addRow("Pause Between Turns (ms)", self.pause_spin)
         form.addRow("Crossfade (ms)", self.crossfade_spin)
         return box
 
@@ -196,32 +348,30 @@ class MainWindow(QMainWindow):
     def _refresh_language_options(self) -> None:
         variant = self.variant_combo.currentText() if hasattr(self, "variant_combo") else "standard"
         languages = self.pipeline.supported_languages(variant)
-        self.language_combo.clear()
-        for code, name in languages.items():
-            self.language_combo.addItem(f"{code} - {name}", code)
         is_multilingual = variant == "multilingual"
-        self.language_combo.setEnabled(is_multilingual)
-        if not is_multilingual:
-            index = self.language_combo.findData("en")
-            if index >= 0:
-                self.language_combo.setCurrentIndex(index)
+        self.speaker_a.set_language_options(languages, is_multilingual)
+        self.speaker_b.set_language_options(languages, is_multilingual)
 
-    def _current_language(self) -> str:
-        return self.language_combo.currentData() or "en"
+    def _refresh_reference_pickers(self) -> None:
+        defaults = default_voice_choices(self.repo_root)
+        recents = [path for path in load_recent_reference_paths() if Path(path).exists()]
+        self.speaker_a.set_reference_choices(defaults, recents, self.speaker_a.reference_path.text())
+        self.speaker_b.set_reference_choices(defaults, recents, self.speaker_b.reference_path.text())
 
     def _speaker_settings(self) -> dict[str, SpeakerSettings]:
         variant = self.variant_combo.currentText()
-        language = self._current_language() if variant == "multilingual" else "en"
         return {
             "A": SpeakerSettings(
                 reference_path=self.speaker_a.reference_path.text(),
                 voice_settings=VoiceSettings(
                     variant=variant,
-                    language=language,
+                    language=self.speaker_a.language_combo.currentData() or "en",
                     cfg_weight=self.speaker_a.cfg_weight.value(),
                     exaggeration=self.speaker_a.exaggeration.value(),
                     temperature=self.speaker_a.temperature.value(),
-                    pause_ms=self.pause_spin.value(),
+                    emotion_intensity=self.speaker_a.emotion_intensity.value(),
+                    naturalness=self.speaker_a.naturalness.value(),
+                    pause_ms=self.speaker_a.pause_spin.value(),
                     crossfade_ms=self.crossfade_spin.value(),
                 ),
             ),
@@ -229,11 +379,13 @@ class MainWindow(QMainWindow):
                 reference_path=self.speaker_b.reference_path.text(),
                 voice_settings=VoiceSettings(
                     variant=variant,
-                    language=language,
+                    language=self.speaker_b.language_combo.currentData() or "en",
                     cfg_weight=self.speaker_b.cfg_weight.value(),
                     exaggeration=self.speaker_b.exaggeration.value(),
                     temperature=self.speaker_b.temperature.value(),
-                    pause_ms=self.pause_spin.value(),
+                    emotion_intensity=self.speaker_b.emotion_intensity.value(),
+                    naturalness=self.speaker_b.naturalness.value(),
+                    pause_ms=self.speaker_b.pause_spin.value(),
                     crossfade_ms=self.crossfade_spin.value(),
                 ),
             ),
@@ -244,19 +396,27 @@ class MainWindow(QMainWindow):
         return RenderSettings(
             correction_mode=self.correction_mode_combo.currentText(),
             model_variant=variant,
-            language=self._current_language() if variant == "multilingual" else "en",
+            language=self.speaker_a.language_combo.currentData() or "en",
             export_stems=True,
             loudness_preset=self.loudness_combo.currentText(),
-            pause_between_turns_ms=self.pause_spin.value(),
+            pause_between_turns_ms=self.speaker_a.pause_spin.value(),
             crossfade_ms=self.crossfade_spin.value(),
+            device_mode=self.device_mode_combo.currentData() or "cpu",
         )
 
     def _apply_speaker_group(self, group: SpeakerGroup, settings: SpeakerSettings) -> None:
         voice = VoiceSettings.from_mapping(settings.voice_settings)
         group.reference_path.setText(settings.reference_path)
+        language_index = group.language_combo.findData(voice.language)
+        if language_index >= 0:
+            group.language_combo.setCurrentIndex(language_index)
         group.cfg_weight.setValue(voice.cfg_weight)
         group.exaggeration.setValue(voice.exaggeration)
         group.temperature.setValue(voice.temperature)
+        group.emotion_intensity.setValue(voice.emotion_intensity)
+        group.naturalness.setValue(voice.naturalness)
+        group.pause_spin.setValue(voice.pause_ms)
+        self._refresh_reference_pickers()
 
     def _load_project_into_ui(self, saved_project) -> None:
         self.current_project_path = None
@@ -265,12 +425,11 @@ class MainWindow(QMainWindow):
         self.outdir_path.setText(saved_project.output_path)
         self.variant_combo.setCurrentText(saved_project.render_settings.model_variant)
         self._refresh_language_options()
-        language_index = self.language_combo.findData(saved_project.render_settings.language)
-        if language_index >= 0:
-            self.language_combo.setCurrentIndex(language_index)
         self.correction_mode_combo.setCurrentText(saved_project.render_settings.correction_mode)
+        device_index = self.device_mode_combo.findData(saved_project.render_settings.device_mode)
+        if device_index >= 0 and self.device_mode_combo.model().item(device_index).isEnabled():
+            self.device_mode_combo.setCurrentIndex(device_index)
         self.loudness_combo.setCurrentText(saved_project.render_settings.loudness_preset)
-        self.pause_spin.setValue(saved_project.render_settings.pause_between_turns_ms)
         self.crossfade_spin.setValue(saved_project.render_settings.crossfade_ms)
         self._apply_speaker_group(self.speaker_a, saved_project.speaker_settings["A"])
         self._apply_speaker_group(self.speaker_b, saved_project.speaker_settings["B"])
@@ -284,6 +443,120 @@ class MainWindow(QMainWindow):
         self._sync_plan_from_table()
         return build_saved_project(self.plan, self._render_settings(), self._speaker_settings())
 
+    def _current_gui_settings_payload(self) -> dict:
+        return {
+            "version": 1,
+            "name": "",
+            "device_mode": self.device_mode_combo.currentData() or "cpu",
+            "project": {
+                "model_variant": self.variant_combo.currentText(),
+                "correction_mode": self.correction_mode_combo.currentText(),
+                "loudness_preset": self.loudness_combo.currentText(),
+                "crossfade_ms": self.crossfade_spin.value(),
+            },
+            "speakers": {
+                speaker: {
+                    "reference_path": settings.reference_path,
+                    "voice_settings": VoiceSettings.from_mapping(settings.voice_settings).to_dict(),
+                    "emotion_reference_paths": dict(settings.emotion_reference_paths),
+                }
+                for speaker, settings in self._speaker_settings().items()
+            },
+        }
+
+    def _apply_gui_settings_payload(self, payload: dict) -> None:
+        project = payload["project"]
+        self.variant_combo.setCurrentText(project.get("model_variant", "standard"))
+        self._refresh_language_options()
+        device_index = self.device_mode_combo.findData(payload.get("device_mode", "cpu"))
+        if device_index >= 0 and self.device_mode_combo.model().item(device_index).isEnabled():
+            self.device_mode_combo.setCurrentIndex(device_index)
+        self.correction_mode_combo.setCurrentText(project.get("correction_mode", "conservative"))
+        self.loudness_combo.setCurrentText(project.get("loudness_preset", "light"))
+        self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
+        for speaker, group in (("A", self.speaker_a), ("B", self.speaker_b)):
+            config = payload["speakers"][speaker]
+            voice = VoiceSettings.from_mapping(config.get("voice_settings"))
+            group.reference_path.setText(config.get("reference_path", ""))
+            language_index = group.language_combo.findData(voice.language)
+            if language_index >= 0:
+                group.language_combo.setCurrentIndex(language_index)
+            group.cfg_weight.setValue(voice.cfg_weight)
+            group.exaggeration.setValue(voice.exaggeration)
+            group.temperature.setValue(voice.temperature)
+            group.emotion_intensity.setValue(voice.emotion_intensity)
+            group.naturalness.setValue(voice.naturalness)
+            group.pause_spin.setValue(voice.pause_ms)
+        self._refresh_reference_pickers()
+
+    def save_settings_profile(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Save Settings", "", "Settings Files (*.json)")
+        if not path:
+            return
+        destination = Path(path)
+        if destination.suffix.lower() != ".json":
+            destination = destination.with_suffix(".json")
+        payload = self._current_gui_settings_payload()
+        try:
+            save_gui_settings(destination, payload)
+            self.error_panel.append(f"Saved settings: {destination}")
+        except Exception as exc:
+            self.error_panel.append(f"Save settings failed: {exc}")
+            QMessageBox.critical(self, "Save Settings Failed", str(exc))
+
+    def load_settings_profile(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Load Settings", "", "Settings Files (*.json)")
+        if not path:
+            return
+        try:
+            self._apply_gui_settings_payload(load_gui_settings(path))
+            for speaker in self._speaker_settings().values():
+                if speaker.reference_path:
+                    remember_recent_reference_path(speaker.reference_path)
+            self._refresh_reference_pickers()
+            self.error_panel.append(f"Loaded settings: {path}")
+        except Exception as exc:
+            self.error_panel.append(f"Load settings failed: {exc}")
+            QMessageBox.critical(self, "Load Settings Failed", str(exc))
+
+    def save_template_profile(self) -> None:
+        name, ok = QInputDialog.getText(self, "Save Template", "Template name")
+        if not ok or not name.strip():
+            return
+        payload = self._current_gui_settings_payload()
+        payload["name"] = name.strip()
+        try:
+            destination = save_template(name.strip(), payload)
+            self.error_panel.append(f"Saved template: {destination}")
+        except Exception as exc:
+            self.error_panel.append(f"Save template failed: {exc}")
+            QMessageBox.critical(self, "Save Template Failed", str(exc))
+
+    def _rebuild_templates_menu(self) -> None:
+        self.templates_menu.clear()
+        names = list_templates()
+        if not names:
+            empty = QAction("No Templates Saved", self)
+            empty.setEnabled(False)
+            self.templates_menu.addAction(empty)
+            return
+        for name in names:
+            action = QAction(name, self)
+            action.triggered.connect(lambda _checked=False, current=name: self._load_template_by_name(current))
+            self.templates_menu.addAction(action)
+
+    def _load_template_by_name(self, name: str) -> None:
+        try:
+            self._apply_gui_settings_payload(load_template(name))
+            for speaker in self._speaker_settings().values():
+                if speaker.reference_path:
+                    remember_recent_reference_path(speaker.reference_path)
+            self._refresh_reference_pickers()
+            self.error_panel.append(f"Loaded template: {name}")
+        except GUISettingsError as exc:
+            self.error_panel.append(f"Load template failed: {exc}")
+            QMessageBox.critical(self, "Load Template Failed", str(exc))
+
     def new_project(self) -> None:
         self.current_project_path = None
         self.plan = None
@@ -293,6 +566,7 @@ class MainWindow(QMainWindow):
         self.speaker_b.reference_path.clear()
         self.error_panel.clear()
         self.table.setRowCount(0)
+        self._refresh_reference_pickers()
 
     def open_project(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "Project Files (*.json)")
@@ -302,6 +576,10 @@ class MainWindow(QMainWindow):
             saved_project = load_project_manifest(path)
             self._load_project_into_ui(saved_project)
             self.current_project_path = Path(path)
+            for speaker in saved_project.speaker_settings.values():
+                if speaker.reference_path:
+                    remember_recent_reference_path(speaker.reference_path)
+            self._refresh_reference_pickers()
             self.error_panel.append(f"Loaded project: {path}")
         except Exception as exc:
             self.error_panel.append(f"Open failed: {exc}")
@@ -340,6 +618,10 @@ class MainWindow(QMainWindow):
                 self._speaker_settings(),
                 self._render_settings(),
             )
+            for speaker in self._speaker_settings().values():
+                if speaker.reference_path:
+                    remember_recent_reference_path(speaker.reference_path)
+            self._refresh_reference_pickers()
             self._populate_table(self.plan)
             self.error_panel.append("Analysis complete.")
         except Exception as exc:
@@ -394,7 +676,11 @@ class MainWindow(QMainWindow):
         self.plan.source_path = self.input_path.text()
         self.plan.output_dir = self.outdir_path.text()
         self.plan.metadata["model_variant"] = self.variant_combo.currentText()
-        self.plan.metadata["language"] = self._current_language() if self.variant_combo.currentText() == "multilingual" else "en"
+        speaker_languages = {
+            speaker: VoiceSettings.from_mapping(config.voice_settings).language
+            for speaker, config in speaker_settings.items()
+        }
+        self.plan.metadata["language"] = speaker_languages["A"] if len(set(speaker_languages.values())) == 1 else "mixed"
         self.plan.update_hashes()
 
     def preview_utterance(self, row: int) -> None:
@@ -403,7 +689,12 @@ class MainWindow(QMainWindow):
         try:
             self._sync_plan_from_table()
             utterance = self.plan.utterances[row]
-            preview_path = self.pipeline.render_preview(utterance, self.plan.voice_profiles[utterance.speaker], self.variant_combo.currentText())
+            preview_path = self.pipeline.render_preview(
+                utterance,
+                self.plan.voice_profiles[utterance.speaker],
+                self.variant_combo.currentText(),
+                device_mode=self.device_mode_combo.currentData() or "cpu",
+            )
             self.player.setSource(QUrl.fromLocalFile(str(preview_path)))
             self.player.play()
         except Exception as exc:
@@ -414,15 +705,56 @@ class MainWindow(QMainWindow):
             self.prepare_project()
             if not self.plan:
                 return
+        if self.render_worker is not None:
+            self.error_panel.append("Render is already in progress.")
+            return
         try:
             self._sync_plan_from_table()
             self.plan.output_dir = self.outdir_path.text()
-            self.pipeline.render(self.plan, self._render_settings())
-            self._populate_table(self.plan)
-            self.error_panel.append("Render complete.")
         except Exception as exc:
             self.error_panel.append(f"Render failed: {exc}")
             QMessageBox.critical(self, "Render Failed", str(exc))
+            return
+
+        self.progress_dialog = RenderProgressDialog(self)
+        self.progress_dialog.show()
+        self._set_render_busy(True)
+        self.render_worker = RenderWorker(self.plan, self._render_settings())
+        self.render_worker.progress.connect(self._update_render_progress)
+        self.render_worker.completed.connect(self._finish_render)
+        self.render_worker.failed.connect(self._fail_render)
+        self.render_worker.finished.connect(self._cleanup_render_worker)
+        self.render_worker.start()
+
+    def _update_render_progress(self, progress: RenderProgress) -> None:
+        if self.progress_dialog is not None:
+            self.progress_dialog.update_progress(progress)
+
+    def _finish_render(self, plan_payload: dict, output_path: str) -> None:
+        self.plan = RenderPlan.from_dict(plan_payload)
+        self._populate_table(self.plan)
+        self.error_panel.append(f"Render complete: {output_path}")
+        if self.progress_dialog is not None:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+
+    def _fail_render(self, message: str) -> None:
+        self.error_panel.append(f"Render failed: {message}")
+        if self.progress_dialog is not None:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+        QMessageBox.critical(self, "Render Failed", message)
+
+    def _cleanup_render_worker(self) -> None:
+        self._set_render_busy(False)
+        if self.render_worker is not None:
+            self.render_worker.deleteLater()
+            self.render_worker = None
+
+    def _set_render_busy(self, busy: bool) -> None:
+        self.render_button.setEnabled(not busy)
+        self.analyze_button.setEnabled(not busy)
+        self.table.setEnabled(not busy)
 
 
 def launch_gui() -> None:

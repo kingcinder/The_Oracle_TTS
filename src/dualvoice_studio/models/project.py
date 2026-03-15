@@ -28,6 +28,8 @@ class VoiceSettings:
     norm_loudness: bool = True
     pause_ms: int = 180
     crossfade_ms: int = 20
+    emotion_intensity: float = 1.0
+    naturalness: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
