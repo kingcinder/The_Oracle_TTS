@@ -22,41 +22,70 @@ Chatterbox outputs include built-in Perth watermarking by design. This project d
 
 ## Install
 
-Recommended engine setup:
+Exact Linux Mint 22.1 install flow:
 
 ```bash
-./bootstrap_chatterbox_only.sh
-source .engine-setup/chatterbox_env.sh
-python scripts/doctor.py
+sudo apt update
+sudo apt install python3.12 python3.12-venv ffmpeg \
+  libasound2t64 libdbus-1-3 libegl1 libfontconfig1 libglib2.0-0t64 \
+  libnss3 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+  libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+  libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0
+
+git clone git@github.com:kingcinder/The_Oracle_TTS.git
+cd The_Oracle_TTS
+./bootstrap_oracle_tts.sh
 ```
 
-If you want a project-local editable install in your own venv:
+`./bootstrap_oracle_tts.sh` creates or reuses `.venv`, installs the project plus `.[ml]`, installs CPU PyTorch and the Chatterbox runtime bundle explicitly, installs a managed `~/.local/bin/dualvoice` wrapper, checks Qt/XCB runtime dependencies, verifies `from chatterbox.tts import ChatterboxTTS`, warms the CPU model with `ChatterboxTTS.from_pretrained(device="cpu")`, and prints exact PASS/FAIL next steps.
+
+Fresh-shell CLI verification:
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -e .
-pip install -e ".[ml,chatterbox]"
+dualvoice --help
+```
+
+Full diagnostics:
+
+```bash
+./doctor_oracle_tts.sh
+```
+
+Launch the GUI:
+
+```bash
+./run_oracle_tts.sh
+```
+
+If `dualvoice` is not found in a fresh shell after bootstrap, add `~/.local/bin` to `PATH`, open a new shell, and retry:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Optional model prefetch:
 
 ```bash
-python scripts/download_models.py --variant all --device cpu
+./.venv/bin/python scripts/download_models.py --variant all --device cpu
 ```
 
 Deterministic repo smoke render:
 
 ```bash
-python scripts/smoke_render.py
+./.venv/bin/python scripts/smoke_render.py
 ```
 
-This smoke path is intentionally deterministic and uses a patched in-repo test engine so you can verify ingest, repair, caching, assembly, and FLAC export without depending on live Chatterbox generation. The real Chatterbox model smoke remains part of `./bootstrap_chatterbox_only.sh`.
+This smoke path is intentionally deterministic and uses a patched in-repo test engine so you can verify ingest, repair, caching, assembly, and FLAC export without depending on live Chatterbox generation. The real Chatterbox model smoke readiness is reported by `./doctor_oracle_tts.sh`.
 
 ## Run
 
 GUI:
+
+```bash
+./run_oracle_tts.sh
+```
+
+Direct CLI launch after bootstrap:
 
 ```bash
 dualvoice gui
