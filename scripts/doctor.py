@@ -440,6 +440,26 @@ def _real_engine_smoke_status(repo_root: Path) -> dict[str, Any]:
     return {"ok": bool(readiness.get("ready")), **readiness}
 
 
+def _turbo_status(repo_root: Path, timeout: float) -> dict[str, Any]:
+    code = f"""
+from __future__ import annotations
+import json
+
+from the_oracle.tts_engines.chatterbox_engine import turbo_readiness_report
+
+payload = turbo_readiness_report(device="cpu")
+print({JSON_PREFIX!r} + json.dumps(payload))
+"""
+    probe = _run_python_probe(repo_root, code, timeout=timeout, extra_env={"PYTHONWARNINGS": "ignore"})
+    return {
+        "ok": bool(probe.get("ok")),
+        "cached": bool(probe.get("cached")),
+        "checkpoint_dir": probe.get("checkpoint_dir", ""),
+        "sample_rate": probe.get("sample_rate"),
+        "error": probe.get("error") or probe.get("stderr_tail", "") or probe.get("stdout_tail", ""),
+    }
+
+
 def _build_next_steps(report: dict[str, Any]) -> list[str]:
     steps: list[str] = []
     if not report["python"]["ok"]:
@@ -466,6 +486,9 @@ def _build_next_steps(report: dict[str, Any]) -> list[str]:
 
     if not report["real_engine_smoke"]["ok"]:
         steps.append("Real-engine smoke becomes ready after the Chatterbox import/init and Perth checks pass.")
+
+    if not report["turbo"]["ok"]:
+        steps.append("Optional turbo prefetch: ./.venv/bin/python scripts/download_models.py --variant turbo --device cpu")
 
     if not steps:
         steps.append("Ready to launch: ./run_oracle_tts.sh")
@@ -503,6 +526,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
             "watermarker_symbol": chatterbox_probe.get("watermarker_symbol", ""),
             "error": chatterbox_probe.get("perth_error", ""),
         },
+        "turbo": _turbo_status(repo_root, timeout=model_timeout),
         "qt": _qt_status(repo_root, timeout=qt_timeout),
         "deterministic_smoke": _deterministic_smoke_status(repo_root),
         "real_engine_smoke": _real_engine_smoke_status(repo_root),
@@ -561,6 +585,13 @@ def _print_human_report(report: dict[str, Any]) -> None:
     else:
         detail = perth["error"] or "PerthImplicitWatermarker is unavailable"
         print(f"{_status(False)} Perth watermarker: {detail}")
+
+    turbo = report["turbo"]
+    if turbo["ok"]:
+        detail = turbo["checkpoint_dir"] or "cached checkpoint available"
+        print(f"{_status(True)} Turbo readiness: {detail}")
+    else:
+        print(f"{_status(False)} Turbo readiness: {turbo['error']}")
 
     qt = report["qt"]
     if qt["ok"]:

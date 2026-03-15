@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from huggingface_hub import snapshot_download
+
+try:
+    from huggingface_hub.errors import LocalEntryNotFoundError
+except Exception:  # pragma: no cover - fallback for older huggingface_hub versions
+    LocalEntryNotFoundError = tuple()  # type: ignore[assignment]
+
+try:
+    from huggingface_hub.utils import LocalTokenNotFoundError
+except Exception:  # pragma: no cover - fallback for older huggingface_hub versions
+    LocalTokenNotFoundError = tuple()  # type: ignore[assignment]
 
 from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.project import VoiceSettings
@@ -15,6 +27,12 @@ from the_oracle.utils.hashing import hash_payload
 
 
 SUPPORTED_VARIANTS = ("standard", "multilingual", "turbo")
+TURBO_REPO_ID = "ResembleAI/chatterbox-turbo"
+TURBO_ALLOW_PATTERNS = ["*.safetensors", "*.json", "*.txt", "*.pt", "*.model"]
+
+
+class TurboModelError(RuntimeError):
+    """Raised when the turbo checkpoint cannot be prepared or initialized."""
 
 
 @dataclass(slots=True)
@@ -24,6 +42,71 @@ class ChatterboxConditioning:
     reference_hash: str
     speaker: str
     variant: str
+
+
+def _hf_token() -> str | None:
+    return os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN")
+
+
+def _format_turbo_error(exc: Exception, *, cached_only: bool = False) -> str:
+    prefix = "Turbo checkpoint is not cached locally." if cached_only else "Turbo model initialization failed."
+    if isinstance(exc, LocalTokenNotFoundError) or "Token is required (`token=True`)" in str(exc):
+        return (
+            f"{prefix} chatterbox-tts 0.1.6 forces HF auth for the public turbo checkpoint. "
+            "The Oracle bypasses that broken loader, but this environment still does not have a usable turbo checkpoint. "
+            "Connect to the internet and run ./.venv/bin/python scripts/download_models.py --variant turbo --device cpu "
+            "or set HF_TOKEN if your HF environment requires auth. "
+            f"Original error: {type(exc).__name__}: {exc}"
+        )
+    if isinstance(exc, LocalEntryNotFoundError):
+        return (
+            f"{prefix} Connect to the internet and run ./.venv/bin/python scripts/download_models.py --variant turbo --device cpu "
+            "to prefetch the public turbo checkpoint."
+        )
+    return (
+        f"{prefix} Run ./.venv/bin/python scripts/download_models.py --variant turbo --device cpu while online. "
+        f"Original error: {type(exc).__name__}: {exc}"
+    )
+
+
+def download_turbo_checkpoint(*, local_files_only: bool = False) -> Path:
+    return Path(
+        snapshot_download(
+            repo_id=TURBO_REPO_ID,
+            token=_hf_token(),
+            local_files_only=local_files_only,
+            allow_patterns=TURBO_ALLOW_PATTERNS,
+        )
+    )
+
+
+def turbo_readiness_report(device: str = "cpu") -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": False,
+        "cached": False,
+        "checkpoint_dir": "",
+        "device": device,
+        "error": "",
+    }
+    try:
+        checkpoint_dir = download_turbo_checkpoint(local_files_only=True)
+    except Exception as exc:
+        payload["error"] = _format_turbo_error(exc, cached_only=True)
+        return payload
+
+    payload["cached"] = True
+    payload["checkpoint_dir"] = str(checkpoint_dir)
+    try:
+        from chatterbox.tts_turbo import ChatterboxTurboTTS
+
+        model = ChatterboxTurboTTS.from_local(checkpoint_dir, device)
+    except Exception as exc:
+        payload["error"] = _format_turbo_error(exc)
+        return payload
+
+    payload["ok"] = True
+    payload["sample_rate"] = int(getattr(model, "sr", 0) or 0)
+    return payload
 
 
 class ChatterboxEngine:
@@ -69,15 +152,22 @@ class ChatterboxEngine:
         _ = self.model
         return dict(self._languages)
 
+    def ensure_model_ready(self) -> None:
+        _ = self.model
+
     def _load_variant(self):
         if self.variant == "multilingual":
             from chatterbox.mtl_tts import ChatterboxMultilingualTTS, Conditionals, SUPPORTED_LANGUAGES
 
             return ChatterboxMultilingualTTS.from_pretrained(device=self.device), Conditionals, SUPPORTED_LANGUAGES
         if self.variant == "turbo":
-            from chatterbox.tts_turbo import ChatterboxTurboTTS, Conditionals
+            try:
+                from chatterbox.tts_turbo import ChatterboxTurboTTS, Conditionals
 
-            return ChatterboxTurboTTS.from_pretrained(device=self.device), Conditionals, {"en": "English"}
+                checkpoint_dir = download_turbo_checkpoint()
+                return ChatterboxTurboTTS.from_local(checkpoint_dir, self.device), Conditionals, {"en": "English"}
+            except Exception as exc:
+                raise TurboModelError(_format_turbo_error(exc)) from exc
         from chatterbox.tts import ChatterboxTTS, Conditionals
 
         return ChatterboxTTS.from_pretrained(device=self.device), Conditionals, {"en": "English"}

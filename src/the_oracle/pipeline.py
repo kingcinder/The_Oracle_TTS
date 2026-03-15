@@ -249,8 +249,27 @@ class OraclePipeline:
         stem_segments: list[AudioSegment] = []
         timing_entries: list[dict[str, Any]] = []
         total_segments = len(plan.utterances)
-        total_steps = len(plan.voice_profiles) + total_segments + 2
+        total_steps = len(plan.voice_profiles) + total_segments + 3
         completed_steps = 0
+
+        emit_progress(
+            stage="Loading model",
+            detail=f"Loading Chatterbox {variant} on {engine.device}",
+            current_step=completed_steps,
+            total_steps=total_steps,
+            total_segments=total_segments,
+        )
+        ensure_model_ready = getattr(engine, "ensure_model_ready", None)
+        if callable(ensure_model_ready):
+            ensure_model_ready()
+        completed_steps += 1
+        emit_progress(
+            stage="Loading model",
+            detail=f"Chatterbox {variant} is ready",
+            current_step=completed_steps,
+            total_steps=total_steps,
+            total_segments=total_segments,
+        )
 
         for speaker, profile in plan.voice_profiles.items():
             emit_progress(
@@ -412,6 +431,9 @@ class OraclePipeline:
         reference_path = profile.primary_reference.resolve()
         project_cache = ProjectCache(reference_path.parent / ".oracle_preview")
         engine = ChatterboxEngine(variant=model_variant, device=resolve_chatterbox_device(device_mode))
+        ensure_model_ready = getattr(engine, "ensure_model_ready", None)
+        if callable(ensure_model_ready):
+            ensure_model_ready()
         cached_reference = engine.prepare_reference(project_cache, utterance.speaker, str(reference_path))
         conditioning = engine.prepare_conditioning(project_cache, utterance.speaker, cached_reference, profile.engine_params)
         rendered = engine.synthesize(utterance.text_for_tts(), conditioning, utterance.engine_settings)
