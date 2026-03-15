@@ -1,0 +1,2 @@
+[console_scripts]
+the-oracle = the_oracle.cli:main

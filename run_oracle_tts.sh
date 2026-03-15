@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$REPO_ROOT/.venv"
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-  printf 'Oracle TTS is not bootstrapped yet.\nRun %s/bootstrap_oracle_tts.sh first.\n' "$REPO_ROOT" >&2
+  printf 'The Oracle is not bootstrapped yet.\nRun %s/bootstrap_oracle_tts.sh first.\n' "$REPO_ROOT" >&2
   exit 1
 fi
 
@@ -21,8 +21,8 @@ if [[ -z "${QT_QPA_PLATFORM:-}" && -n "${DISPLAY:-}" ]]; then
   export QT_QPA_PLATFORM=xcb
 fi
 
-if command -v dualvoice >/dev/null 2>&1; then
-  exec dualvoice gui
+if command -v the-oracle >/dev/null 2>&1; then
+  exec the-oracle gui
 fi
 
-exec python -m dualvoice_studio gui
+exec python -m the_oracle gui

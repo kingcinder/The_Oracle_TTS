@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from dualvoice_studio.smoke import run_deterministic_smoke_render
+from the_oracle.smoke import run_deterministic_smoke_render
 
 
 if __name__ == "__main__":

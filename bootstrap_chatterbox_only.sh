@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Chatterbox-only bootstrap for The Oracle TTS / DualVoice Studio style repos.
+# Chatterbox-only bootstrap for The Oracle TTS / The Oracle style repos.
 # Creates a dedicated Python 3.11 environment, installs GPU or CPU PyTorch,
 # installs chatterbox-tts, warms the model cache, runs a smoke test, clones the
 # upstream repo for reference/examples, and writes activation + report files for Codex.

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from dualvoice_studio.text_ingest import ingest_text_file
+from the_oracle.text_ingest import ingest_text_file
 
 
 def test_markdown_ingest_preserves_readable_text(tmp_path: Path) -> None:

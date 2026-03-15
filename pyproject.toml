@@ -3,9 +3,9 @@ requires = ["setuptools>=75.8.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dualvoice-studio"
+name = "the-oracle"
 version = "0.1.0"
-description = "Local desktop app for rendering dual-speaker audiobook conversations to FLAC."
+description = "The Oracle is a local desktop app for rendering two-speaker dialogue to FLAC with Chatterbox."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
@@ -40,7 +40,7 @@ dev = [
 ]
 
 [project.scripts]
-dualvoice = "dualvoice_studio.cli:main"
+the-oracle = "the_oracle.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -50,7 +50,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-dualvoice_studio = ["text_repair/data/*.txt"]
+the_oracle = ["text_repair/data/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

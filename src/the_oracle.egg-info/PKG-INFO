@@ -1,3 +1,33 @@
+Metadata-Version: 2.4
+Name: the-oracle
+Version: 0.1.0
+Summary: The Oracle is a local desktop app for rendering two-speaker dialogue to FLAC with Chatterbox.
+Author: OpenAI Codex
+License: MIT
+Requires-Python: <3.13,>=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: markdown-it-py==3.0.0
+Requires-Dist: mutagen==1.47.0
+Requires-Dist: numpy<2,>=1.26
+Requires-Dist: PySide6==6.8.2.1
+Requires-Dist: scikit-learn==1.6.1
+Requires-Dist: scipy==1.15.2
+Requires-Dist: soundfile==0.13.1
+Requires-Dist: symspellpy==6.9.0
+Provides-Extra: ml
+Requires-Dist: deepmultilingualpunctuation==1.0.1; extra == "ml"
+Requires-Dist: language-tool-python==2.9.4; extra == "ml"
+Requires-Dist: transformers==4.46.3; extra == "ml"
+Provides-Extra: chatterbox
+Requires-Dist: chatterbox-tts==0.1.6; extra == "chatterbox"
+Requires-Dist: torch==2.6.0; extra == "chatterbox"
+Requires-Dist: torchaudio==2.6.0; extra == "chatterbox"
+Requires-Dist: torchvision==0.21.0; extra == "chatterbox"
+Provides-Extra: dev
+Requires-Dist: pytest==8.3.5; extra == "dev"
+Dynamic: license-file
+
 # The Oracle
 
 The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The product is now Chatterbox-exclusive: the standard Chatterbox model is the default quality-first backend, with multilingual and turbo variants available inside the same engine family.

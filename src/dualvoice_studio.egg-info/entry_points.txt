@@ -1,2 +1,0 @@
-[console_scripts]
-dualvoice = dualvoice_studio.cli:main

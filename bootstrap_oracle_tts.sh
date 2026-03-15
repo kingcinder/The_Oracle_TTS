@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$REPO_ROOT/.venv"
-WRAPPER_PATH="$HOME/.local/bin/dualvoice"
+WRAPPER_PATH="$HOME/.local/bin/the-oracle"
+LEGACY_WRAPPER_PATH="$HOME/.local/bin/dualvoice"
 WRAPPER_BACKUP_SUFFIX="$(date +%Y%m%d_%H%M%S)"
 PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
 
@@ -37,7 +38,29 @@ PY
   return 1
 }
 
-install_dualvoice_wrapper() {
+cleanup_legacy_wrapper() {
+  if [[ ! -f "$LEGACY_WRAPPER_PATH" ]]; then
+    return 0
+  fi
+
+  if grep -q "ORACLE_TTS_WRAPPER" "$LEGACY_WRAPPER_PATH"; then
+    rm -f "$LEGACY_WRAPPER_PATH"
+    pass "Removed legacy managed wrapper at $LEGACY_WRAPPER_PATH"
+    return 0
+  fi
+
+  info "Leaving non-managed legacy wrapper in place at $LEGACY_WRAPPER_PATH"
+}
+
+cleanup_legacy_venv_entrypoint() {
+  local legacy_entrypoint="$VENV_DIR/bin/dualvoice"
+  if [[ -e "$legacy_entrypoint" ]]; then
+    rm -f "$legacy_entrypoint"
+    pass "Removed legacy venv entrypoint at $legacy_entrypoint"
+  fi
+}
+
+install_oracle_wrapper() {
   mkdir -p "$(dirname "$WRAPPER_PATH")"
   if [[ -f "$WRAPPER_PATH" ]] && ! grep -q "ORACLE_TTS_WRAPPER" "$WRAPPER_PATH"; then
     mv "$WRAPPER_PATH" "${WRAPPER_PATH}.pre_oracle_tts.${WRAPPER_BACKUP_SUFFIX}"
@@ -50,10 +73,10 @@ install_dualvoice_wrapper() {
 set -Eeuo pipefail
 
 REPO_ROOT="$REPO_ROOT"
-VENV_ENTRYPOINT="\$REPO_ROOT/.venv/bin/dualvoice"
+VENV_ENTRYPOINT="\$REPO_ROOT/.venv/bin/the-oracle"
 
 if [[ ! -x "\$VENV_ENTRYPOINT" ]]; then
-  printf 'dualvoice is not installed in %s\nRun %s/bootstrap_oracle_tts.sh first.\n' "\$REPO_ROOT/.venv" "\$REPO_ROOT" >&2
+  printf 'the-oracle is not installed in %s\nRun %s/bootstrap_oracle_tts.sh first.\n' "\$REPO_ROOT/.venv" "\$REPO_ROOT" >&2
   exit 1
 fi
 
@@ -102,10 +125,12 @@ main() {
 
   "$VENV_DIR/bin/python" -m pip install --upgrade pip "setuptools<81" wheel
   install_python_dependencies
-  pass "Installed Oracle TTS, CPU PyTorch, and the Chatterbox runtime bundle into $VENV_DIR"
+  cleanup_legacy_venv_entrypoint
+  pass "Installed The Oracle, CPU PyTorch, and the Chatterbox runtime bundle into $VENV_DIR"
 
-  install_dualvoice_wrapper
-  pass "Installed managed dualvoice wrapper at $WRAPPER_PATH"
+  cleanup_legacy_wrapper
+  install_oracle_wrapper
+  pass "Installed managed the-oracle wrapper at $WRAPPER_PATH"
 
   if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     info "Note: ~/.local/bin is not on this shell PATH. The doctor will print the exact export command if fresh-shell detection fails."
@@ -123,7 +148,7 @@ main() {
     exit "$doctor_status"
   fi
 
-  pass "Bootstrap complete. Launch the GUI with ./run_oracle_tts.sh"
+  pass "Bootstrap complete. Launch The Oracle GUI with ./run_oracle_tts.sh"
 }
 
 main "$@"

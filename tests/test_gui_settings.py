@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from dualvoice_studio.gui_settings import (
+from the_oracle.gui_settings import (
     GUISettingsError,
     list_templates,
     load_gui_settings,

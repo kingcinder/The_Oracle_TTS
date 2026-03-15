@@ -1,4 +1,4 @@
-from dualvoice_studio.device_support import available_device_modes, resolve_chatterbox_device
+from the_oracle.device_support import available_device_modes, resolve_chatterbox_device
 
 
 def test_cpu_device_mode_is_available() -> None:

@@ -1,9 +1,9 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from dualvoice_studio.models.project import VoiceSettings
-from dualvoice_studio.pipeline import DualVoicePipeline, RenderSettings, SpeakerSettings
-from dualvoice_studio.smoke import _write_reference
+from the_oracle.models.project import VoiceSettings
+from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
+from the_oracle.smoke import _write_reference
 
 
 class _JoyClassifier:
@@ -22,8 +22,8 @@ def test_emotion_intensity_scales_emotion_mapping(tmp_path: Path) -> None:
     high = VoiceSettings(emotion_intensity=1.5, naturalness=0.0, pause_ms=180)
     settings = RenderSettings(model_variant="standard", language="en")
 
-    with patch("dualvoice_studio.pipeline.GoEmotionsClassifier", _JoyClassifier):
-        pipeline = DualVoicePipeline()
+    with patch("the_oracle.pipeline.GoEmotionsClassifier", _JoyClassifier):
+        pipeline = OraclePipeline()
         low_plan = pipeline.prepare_plan(
             dialogue,
             tmp_path / "out_low",
@@ -49,8 +49,8 @@ def test_naturalness_heuristic_changes_sampling_controls(tmp_path: Path) -> None
     loose = VoiceSettings(emotion_intensity=1.0, naturalness=1.0)
     settings = RenderSettings(model_variant="standard", language="en")
 
-    with patch("dualvoice_studio.pipeline.GoEmotionsClassifier", _JoyClassifier):
-        pipeline = DualVoicePipeline()
+    with patch("the_oracle.pipeline.GoEmotionsClassifier", _JoyClassifier):
+        pipeline = OraclePipeline()
         plain_plan = pipeline.prepare_plan(
             dialogue,
             tmp_path / "out_plain",

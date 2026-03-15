@@ -4,9 +4,9 @@ from unittest.mock import patch
 
 import soundfile as sf
 
-from dualvoice_studio.models.project import VoiceSettings
-from dualvoice_studio.pipeline import DualVoicePipeline, RenderProgress, RenderSettings, SpeakerSettings
-from dualvoice_studio.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference, run_deterministic_smoke_render
+from the_oracle.models.project import VoiceSettings
+from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
+from the_oracle.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference, run_deterministic_smoke_render
 
 
 def test_deterministic_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
@@ -75,10 +75,10 @@ def test_render_progress_reports_stage_updates(tmp_path: Path) -> None:
     events: list[RenderProgress] = []
 
     with (
-        patch("dualvoice_studio.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
-        patch("dualvoice_studio.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
+        patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
+        patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
     ):
-        pipeline = DualVoicePipeline()
+        pipeline = OraclePipeline()
         plan = pipeline.prepare_plan(dialogue, tmp_path / "output", speaker_settings, render_settings)
         output_path = pipeline.render(plan, render_settings, progress_callback=events.append)
 

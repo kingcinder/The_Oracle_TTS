@@ -1,5 +1,5 @@
-from dualvoice_studio.models.project import Utterance
-from dualvoice_studio.speaker_attribution.assign import SpeakerAttributor
+from the_oracle.models.project import Utterance
+from the_oracle.speaker_attribution.assign import SpeakerAttributor
 
 
 def test_explicit_speaker_markers_map_to_a_and_b() -> None:

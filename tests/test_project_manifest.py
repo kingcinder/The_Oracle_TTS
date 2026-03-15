@@ -2,10 +2,10 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from dualvoice_studio.project_manifest import ProjectManifestError, build_saved_project, load_project_manifest, save_project_manifest
-from dualvoice_studio.pipeline import DualVoicePipeline, RenderSettings, SpeakerSettings
-from dualvoice_studio.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference
-from dualvoice_studio.models.project import VoiceSettings
+from the_oracle.project_manifest import ProjectManifestError, build_saved_project, load_project_manifest, save_project_manifest
+from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
+from the_oracle.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference
+from the_oracle.models.project import VoiceSettings
 
 
 def _sample_project(tmp_path: Path):
@@ -31,8 +31,8 @@ def _sample_project(tmp_path: Path):
         "A": SpeakerSettings(reference_path=str(speaker_a), voice_settings=voice),
         "B": SpeakerSettings(reference_path=str(speaker_b), voice_settings=voice),
     }
-    with patch("dualvoice_studio.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier):
-        pipeline = DualVoicePipeline()
+    with patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier):
+        pipeline = OraclePipeline()
         plan = pipeline.prepare_plan(source, tmp_path / "output", speakers, settings)
     plan.metadata["artist"] = "Oracle QA"
     return pipeline, plan, settings, speakers
@@ -101,8 +101,8 @@ def test_loaded_project_renders_with_deterministic_engine(tmp_path: Path) -> Non
     loaded = load_project_manifest(manifest_path)
 
     with (
-        patch("dualvoice_studio.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
-        patch("dualvoice_studio.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
+        patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
+        patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
     ):
         output_path = pipeline.render(loaded.plan, loaded.render_settings)
 

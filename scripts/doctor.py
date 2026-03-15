@@ -199,9 +199,9 @@ def _ffmpeg_status() -> dict[str, Any]:
 
 
 def _entrypoint_status(repo_root: Path) -> dict[str, Any]:
-    venv_entrypoint = repo_root / ".venv" / "bin" / "dualvoice"
-    wrapper_path = Path.home() / ".local" / "bin" / "dualvoice"
-    path_entrypoint = shutil.which("dualvoice")
+    venv_entrypoint = repo_root / ".venv" / "bin" / "the-oracle"
+    wrapper_path = Path.home() / ".local" / "bin" / "the-oracle"
+    path_entrypoint = shutil.which("the-oracle")
     managed_wrapper = False
     if wrapper_path.exists():
         try:
@@ -220,7 +220,7 @@ def _entrypoint_status(repo_root: Path) -> dict[str, Any]:
         help_result = _run_command([help_target, "--help"], cwd=repo_root, timeout=30)
 
     fresh_shell = _run_command(
-        ["bash", "-lc", "command -v dualvoice && dualvoice --help >/dev/null"],
+        ["bash", "-lc", "command -v the-oracle && the-oracle --help >/dev/null"],
         cwd=repo_root,
         timeout=30,
     )
@@ -397,7 +397,7 @@ def _deterministic_smoke_status(repo_root: Path) -> dict[str, Any]:
     try:
         from unittest.mock import patch
 
-        from dualvoice_studio.smoke import run_deterministic_smoke_render
+        from the_oracle.smoke import run_deterministic_smoke_render
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
@@ -407,8 +407,8 @@ def _deterministic_smoke_status(repo_root: Path) -> dict[str, Any]:
         # Keep the doctor smoke deterministic and lightweight by forcing the
         # text-repair helpers onto their built-in fallback paths.
         with (
-            patch("dualvoice_studio.text_repair.grammar.GrammarCorrector._try_load_language_tool", return_value=None),
-            patch("dualvoice_studio.text_repair.punctuation.PunctuationRestorer._try_load_punctuator", return_value=None),
+            patch("the_oracle.text_repair.grammar.GrammarCorrector._try_load_language_tool", return_value=None),
+            patch("the_oracle.text_repair.punctuation.PunctuationRestorer._try_load_punctuator", return_value=None),
         ):
             result = run_deterministic_smoke_render(output_root, source_format="txt")
     except Exception as exc:
@@ -426,7 +426,7 @@ def _deterministic_smoke_status(repo_root: Path) -> dict[str, Any]:
 def _real_engine_smoke_status(repo_root: Path) -> dict[str, Any]:
     _prepend_repo_src(repo_root)
     try:
-        from dualvoice_studio.real_engine_smoke import ensure_real_engine_inputs, real_engine_smoke_prerequisites
+        from the_oracle.real_engine_smoke import ensure_real_engine_inputs, real_engine_smoke_prerequisites
     except Exception as exc:
         return {"ok": False, "ready": False, "error": f"{type(exc).__name__}: {exc}"}
 
@@ -454,7 +454,7 @@ def _build_next_steps(report: dict[str, Any]) -> list[str]:
         steps.append(f"Install the missing Linux Mint runtime packages: sudo apt install {unique_packages}")
 
     if not report["entrypoint"]["ok"]:
-        steps.append("Re-run ./bootstrap_oracle_tts.sh to refresh the project venv and install the managed ~/.local/bin/dualvoice wrapper.")
+        steps.append("Re-run ./bootstrap_oracle_tts.sh to refresh the project venv and install the managed ~/.local/bin/the-oracle wrapper.")
         if not report["entrypoint"]["path_has_local_bin"]:
             steps.append('Add ~/.local/bin to PATH, open a fresh shell, and retry: export PATH="$HOME/.local/bin:$PATH"')
 
@@ -534,10 +534,10 @@ def _print_human_report(report: dict[str, Any]) -> None:
     entrypoint = report["entrypoint"]
     entrypoint_detail = entrypoint["fresh_shell_path"] or entrypoint["path_entrypoint"] or entrypoint["venv_entrypoint"]
     if entrypoint["ok"]:
-        print(f"{_status(True)} dualvoice entrypoint: {entrypoint_detail}")
+        print(f"{_status(True)} the-oracle entrypoint: {entrypoint_detail}")
     else:
-        detail = entrypoint["fresh_shell_error"] or entrypoint["help_error"] or "dualvoice --help failed"
-        print(f"{_status(False)} dualvoice entrypoint: {detail}")
+        detail = entrypoint["fresh_shell_error"] or entrypoint["help_error"] or "the-oracle --help failed"
+        print(f"{_status(False)} the-oracle entrypoint: {detail}")
 
     chatterbox_import = report["chatterbox_import"]
     if chatterbox_import["ok"]:
@@ -593,7 +593,7 @@ def _print_human_report(report: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Install and launch diagnostics for Oracle TTS on Linux Mint.")
+    parser = argparse.ArgumentParser(description="Install and launch diagnostics for The Oracle on Linux Mint.")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT_DEFAULT)
     parser.add_argument("--model-timeout", type=float, default=1800.0)

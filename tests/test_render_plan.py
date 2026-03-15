@@ -1,6 +1,6 @@
-from dualvoice_studio.models.project import Utterance
-from dualvoice_studio.pipeline import compute_incremental_changes
-from dualvoice_studio.utils.hashing import build_chunk_hash
+from the_oracle.models.project import Utterance
+from the_oracle.pipeline import compute_incremental_changes
+from the_oracle.utils.hashing import build_chunk_hash
 
 
 def test_chunk_hash_changes_when_text_changes() -> None:
