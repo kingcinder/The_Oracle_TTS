@@ -395,6 +395,8 @@ print({JSON_PREFIX!r} + json.dumps(payload))
 def _deterministic_smoke_status(repo_root: Path) -> dict[str, Any]:
     _prepend_repo_src(repo_root)
     try:
+        from unittest.mock import patch
+
         from dualvoice_studio.smoke import run_deterministic_smoke_render
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
@@ -402,7 +404,13 @@ def _deterministic_smoke_status(repo_root: Path) -> dict[str, Any]:
     output_root = repo_root / "build" / "doctor_deterministic_smoke"
     started = time.perf_counter()
     try:
-        result = run_deterministic_smoke_render(output_root, source_format="txt")
+        # Keep the doctor smoke deterministic and lightweight by forcing the
+        # text-repair helpers onto their built-in fallback paths.
+        with (
+            patch("dualvoice_studio.text_repair.grammar.GrammarCorrector._try_load_language_tool", return_value=None),
+            patch("dualvoice_studio.text_repair.punctuation.PunctuationRestorer._try_load_punctuator", return_value=None),
+        ):
+            result = run_deterministic_smoke_render(output_root, source_format="txt")
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
