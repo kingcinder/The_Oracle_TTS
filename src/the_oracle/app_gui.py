@@ -289,13 +289,16 @@ class MainWindow(QMainWindow):
         layout.addLayout(settings_row)
 
         actions = QHBoxLayout()
+        actions.setSpacing(12)
+        actions.addStretch(1)
         self.analyze_button = QPushButton("Analyze")
         self.analyze_button.clicked.connect(self.prepare_project)
+        self._style_action_button(self.analyze_button)
         self.render_button = QPushButton("Render FLAC")
         self.render_button.clicked.connect(self.render_project)
+        self._style_action_button(self.render_button, accent=True)
         actions.addWidget(self.analyze_button)
         actions.addWidget(self.render_button)
-        actions.addStretch(1)
         layout.addLayout(actions)
 
         self.table = QTableWidget(0, 7)
@@ -383,6 +386,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel(label), row, 0)
         layout.addWidget(field, row, 1)
         layout.addWidget(button, row, 2)
+
+    def _style_action_button(self, button: QPushButton, accent: bool = False) -> None:
+        button.setMinimumHeight(48)
+        button.setMinimumWidth(170 if not accent else 210)
+        palette = (
+            "background-color: #19466d; color: white; border: 1px solid #133652;"
+            if accent
+            else "background-color: #f4f7fa; color: #12263a; border: 1px solid #9fb0c0;"
+        )
+        button.setStyleSheet(f"font-size: 15px; font-weight: 600; padding: 8px 18px; border-radius: 6px; {palette}")
 
     def _pick_input(self) -> None:
         current_input = Path(self.input_path.text()).expanduser()
