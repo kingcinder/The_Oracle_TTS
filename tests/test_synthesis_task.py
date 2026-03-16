@@ -17,6 +17,7 @@ def _prepare_synthesis_task_helpers(
 ) -> Tuple[
     ProjectCache,
     _DeterministicChatterboxEngine,
+    ChatterboxConditioning,
     Callable[[int, str | None, bool], SynthesisTask],
 ]:
     project_cache = ProjectCache(tmp_path / "project")
@@ -28,6 +29,7 @@ def _prepare_synthesis_task_helpers(
 
     def build_task(
         utterance_index: int,
+        source_index: int | None = None,
         text: str | None = None,
         export_stems: bool = True,
     ) -> SynthesisTask:
@@ -40,34 +42,30 @@ def _prepare_synthesis_task_helpers(
         )
         return SynthesisTask(
             utterance_index=utterance_index,
-            utterance=utterance,
+            source_index=source_index if source_index is not None else utterance_index,
             speaker=speaker,
             text=actual_text,
-            reference_path=Path(reference),
             reference_audio_hash=cached_reference.original_hash,
             voice_settings=voice_settings,
             model_variant="standard",
             device_mode="cpu",
-            conditioning=conditioning,
-            engine=engine,
-            project_cache=project_cache,
             export_stems=export_stems,
         )
 
-    return project_cache, engine, build_task
+    return project_cache, engine, conditioning, build_task
 
 
 def test_synthesize_task_cache_behavior(tmp_path: Path) -> None:
-    _, engine, build_task = _prepare_synthesis_task_helpers(tmp_path)
+    project_cache, engine, conditioning, build_task = _prepare_synthesis_task_helpers(tmp_path)
 
     first_task = build_task(utterance_index=1, export_stems=True)
-    first_result = synthesize_task(first_task)
+    first_result = synthesize_task(first_task, engine, conditioning, project_cache)
     expected_chunk = build_chunk_hash(
         speaker=first_task.speaker,
         repaired_text=first_task.text,
         engine_key=f"chatterbox:{first_task.model_variant}",
         engine_params=first_task.voice_settings.to_dict(),
-        engine_version=first_task.engine.engine_version,
+        engine_version=engine.engine_version,
         reference_audio_hash=first_task.reference_audio_hash,
     )
 
@@ -81,7 +79,7 @@ def test_synthesize_task_cache_behavior(tmp_path: Path) -> None:
     assert first_result.duration_seconds > 0.0
 
     second_task = build_task(utterance_index=2, export_stems=True)
-    second_result = synthesize_task(second_task)
+    second_result = synthesize_task(second_task, engine, conditioning, project_cache)
 
     assert second_result.cache_hit is True
     assert second_result.chunk_hash == first_result.chunk_hash
@@ -90,10 +88,10 @@ def test_synthesize_task_cache_behavior(tmp_path: Path) -> None:
 
 
 def test_synthesize_task_chunk_changes_with_text(tmp_path: Path) -> None:
-    _, _, build_task = _prepare_synthesis_task_helpers(tmp_path)
+    project_cache, engine, conditioning, build_task = _prepare_synthesis_task_helpers(tmp_path)
 
-    base_result = synthesize_task(build_task(utterance_index=1, text="First line.", export_stems=False))
-    alternate_result = synthesize_task(build_task(utterance_index=2, text="Different line.", export_stems=False))
+    base_result = synthesize_task(build_task(utterance_index=1, text="First line.", export_stems=False), engine, conditioning, project_cache)
+    alternate_result = synthesize_task(build_task(utterance_index=2, text="Different line.", export_stems=False), engine, conditioning, project_cache)
 
     assert base_result.chunk_hash != alternate_result.chunk_hash
     assert base_result.stem_path != alternate_result.stem_path

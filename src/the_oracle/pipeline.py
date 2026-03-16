@@ -69,17 +69,13 @@ class RenderProgress:
 @dataclass(slots=True)
 class SynthesisTask:
     utterance_index: int
-    utterance: Utterance
+    source_index: int
     speaker: str
     text: str
-    reference_path: Path
     reference_audio_hash: str
     voice_settings: VoiceSettings
     model_variant: str
     device_mode: str
-    conditioning: ChatterboxConditioning
-    engine: ChatterboxEngine
-    project_cache: ProjectCache
     export_stems: bool
 
 
@@ -98,26 +94,29 @@ class SynthesisResult:
     sample_rate: int
 
 
-def synthesize_task(task: SynthesisTask) -> SynthesisResult:
-    utterance = task.utterance
-    utterance.parameters = task.voice_settings.to_dict()
+def synthesize_task(
+    task: SynthesisTask,
+    engine: ChatterboxEngine,
+    conditioning: ChatterboxConditioning,
+    project_cache: ProjectCache,
+) -> SynthesisResult:
     chunk_hash = build_chunk_hash(
         speaker=task.speaker,
         repaired_text=task.text,
         engine_key=f"chatterbox:{task.model_variant}",
         engine_params=task.voice_settings.to_dict(),
-        engine_version=task.engine.engine_version,
+        engine_version=engine.engine_version,
         reference_audio_hash=task.reference_audio_hash,
     )
-    stem_path = task.project_cache.stem_path(chunk_hash)
+    stem_path = project_cache.stem_path(chunk_hash)
     cache_hit = stem_path.exists()
     synthesize_seconds = 0.0
     segment_start = perf_counter()
     if not cache_hit:
         synth_start = perf_counter()
-        rendered = task.engine.synthesize(task.text, task.conditioning, task.voice_settings)
+        rendered = engine.synthesize(task.text, conditioning, task.voice_settings)
         synthesize_seconds = perf_counter() - synth_start
-        save_wav(stem_path, rendered, task.engine.sample_rate)
+        save_wav(stem_path, rendered, engine.sample_rate)
     load_start = perf_counter()
     audio, sample_rate = load_audio(stem_path)
     load_audio_seconds = perf_counter() - load_start
@@ -125,9 +124,9 @@ def synthesize_task(task: SynthesisTask) -> SynthesisResult:
     segment_total_seconds = perf_counter() - segment_start
     exported_stem_path = ""
     if task.export_stems:
-        exported_stem_path = str(task.project_cache.export_stem(stem_path, f"stems/{utterance.index:04d}_{task.speaker}.wav"))
-    utterance.chunk_hash = chunk_hash
-    utterance.duration_seconds = duration_seconds
+        exported_stem_path = str(
+            project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{task.speaker}.wav")
+        )
     return SynthesisResult(
         utterance_index=task.utterance_index,
         speaker=task.speaker,
