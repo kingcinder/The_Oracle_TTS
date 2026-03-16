@@ -24,6 +24,7 @@ from the_oracle.text_repair.repairer import TextRepairPipeline
 from the_oracle.tts_engines.chatterbox_engine import ChatterboxEngine, ChatterboxConditioning, SUPPORTED_VARIANTS
 from the_oracle.utils.hashing import build_chunk_hash
 from the_oracle.utils.logging import get_logger
+from the_oracle.correction_modes import normalize_correction_mode
 
 
 LOGGER = get_logger(__name__)
@@ -45,7 +46,7 @@ class SpeakerSettings:
 
 @dataclass(slots=True)
 class RenderSettings:
-    correction_mode: str = "conservative"
+    correction_mode: str = normalize_correction_mode("moderate")
     model_variant: str = "standard"
     language: str = "en"
     export_stems: bool = True
@@ -55,6 +56,9 @@ class RenderSettings:
     device_mode: str = "cpu"
     metadata: dict[str, str] = field(default_factory=dict)
     anchors: AnchorAssignments | None = None
+
+    def __post_init__(self) -> None:
+        self.correction_mode = normalize_correction_mode(self.correction_mode)
 
 
 @dataclass(slots=True)

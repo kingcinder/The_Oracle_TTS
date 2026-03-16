@@ -37,7 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--repetition-penalty", type=float, default=1.2)
     render.add_argument("--min-p", type=float, default=0.05)
     render.add_argument("--top-p", type=float, default=1.0)
-    render.add_argument("--correction-mode", choices=["conservative", "aggressive"], default="conservative")
+    render.add_argument(
+        "--correction-mode",
+        choices=["aggressive", "moderate", "mild", "off", "conservative"],
+        default="moderate",
+        help="Text repair strength. 'conservative' is kept as an alias for 'moderate'.",
+    )
     render.add_argument("--loudness", choices=["off", "light", "medium"], default="light")
     render.add_argument("--no-stems", action="store_true", help="Skip exporting stems into the project folder.")
     render.add_argument("--title", default="", help="Override exported title metadata.")

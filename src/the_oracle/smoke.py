@@ -162,7 +162,7 @@ def run_deterministic_smoke_render(output_root: str | Path, source_format: str =
             "B": SpeakerSettings(reference_path=str(speaker_b), voice_settings=shared_voice),
         }
         render_settings = RenderSettings(
-            correction_mode="conservative",
+            correction_mode="moderate",
             model_variant="standard",
             language="en",
             export_stems=True,

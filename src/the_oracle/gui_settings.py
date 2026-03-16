@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from the_oracle.correction_modes import normalize_correction_mode
+
 
 GUI_SETTINGS_VERSION = 1
 
@@ -88,7 +90,7 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     project = dict(payload["project"])
     normalized_project = {
         "model_variant": str(project.get("model_variant", "standard")),
-        "correction_mode": str(project.get("correction_mode", "conservative")),
+        "correction_mode": normalize_correction_mode(str(project.get("correction_mode", "moderate"))),
         "loudness_preset": str(project.get("loudness_preset", "light")),
         "crossfade_ms": int(project.get("crossfade_ms", 20)),
         "output_dir": str(project.get("output_dir", "")),

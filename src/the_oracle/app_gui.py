@@ -43,6 +43,7 @@ from the_oracle.app_paths import (
     default_output_filename,
     resolve_output_filename,
 )
+from the_oracle.correction_modes import CORRECTION_MODE_OPTIONS, correction_mode_label, normalize_correction_mode
 from the_oracle.gui_settings import (
     GUISettingsError,
     list_templates,
@@ -377,7 +378,9 @@ class MainWindow(QMainWindow):
         self.variant_combo.addItems(self.pipeline.available_model_variants())
         self.variant_combo.currentTextChanged.connect(self._refresh_language_options)
         self.correction_mode_combo = QComboBox()
-        self.correction_mode_combo.addItems(["conservative", "aggressive"])
+        for label, value in CORRECTION_MODE_OPTIONS:
+            self.correction_mode_combo.addItem(label, value)
+        self._set_correction_mode(RenderSettings().correction_mode)
         self.loudness_combo = QComboBox()
         self.loudness_combo.addItems(["off", "light", "medium"])
         self.loudness_combo.setCurrentText(RenderSettings().loudness_preset)
@@ -389,6 +392,14 @@ class MainWindow(QMainWindow):
         form.addRow("Loudness", self.loudness_combo)
         form.addRow("Crossfade (ms)", self.crossfade_spin)
         return box
+
+    def _set_correction_mode(self, value: str) -> None:
+        normalized = normalize_correction_mode(value)
+        idx = self.correction_mode_combo.findData(normalized)
+        if idx < 0:
+            idx = self.correction_mode_combo.findData(normalize_correction_mode("moderate"))
+        if idx >= 0:
+            self.correction_mode_combo.setCurrentIndex(idx)
 
     def _add_path_row(self, layout: QGridLayout, row: int, label: str, field: QLineEdit, callback) -> None:
         button = QPushButton("Browse")
@@ -480,8 +491,9 @@ class MainWindow(QMainWindow):
 
     def _render_settings(self) -> RenderSettings:
         variant = self.variant_combo.currentText()
+        mode_value = self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText()
         return RenderSettings(
-            correction_mode=self.correction_mode_combo.currentText(),
+            correction_mode=mode_value,
             model_variant=variant,
             language=self.speaker_a.language_combo.currentData() or "en",
             export_stems=True,
@@ -539,7 +551,7 @@ class MainWindow(QMainWindow):
         self.output_name.setText(str(saved_project.render_settings.metadata.get("output_filename", "")))
         self.variant_combo.setCurrentText(saved_project.render_settings.model_variant)
         self._refresh_language_options()
-        self.correction_mode_combo.setCurrentText(saved_project.render_settings.correction_mode)
+        self._set_correction_mode(saved_project.render_settings.correction_mode)
         self.loudness_combo.setCurrentText(saved_project.render_settings.loudness_preset)
         self.crossfade_spin.setValue(saved_project.render_settings.crossfade_ms)
         self._apply_speaker_group(self.speaker_a, saved_project.speaker_settings["A"])
@@ -561,7 +573,7 @@ class MainWindow(QMainWindow):
             "device_mode": "cpu",
             "project": {
                 "model_variant": self.variant_combo.currentText(),
-                "correction_mode": self.correction_mode_combo.currentText(),
+                "correction_mode": normalize_correction_mode(self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText()),
                 "loudness_preset": self.loudness_combo.currentText(),
                 "crossfade_ms": self.crossfade_spin.value(),
                 "output_dir": self.outdir_path.text() or str(self.paths.output_dir),
@@ -583,7 +595,7 @@ class MainWindow(QMainWindow):
         project = {**defaults["project"], **payload["project"]}
         self.variant_combo.setCurrentText(project.get("model_variant", "standard"))
         self._refresh_language_options()
-        self.correction_mode_combo.setCurrentText(project.get("correction_mode", "conservative"))
+        self._set_correction_mode(project.get("correction_mode", "moderate"))
         self.loudness_combo.setCurrentText(project.get("loudness_preset", RenderSettings().loudness_preset))
         self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
         self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))

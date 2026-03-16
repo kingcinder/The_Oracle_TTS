@@ -18,7 +18,7 @@ def _sample_project(tmp_path: Path):
     speaker_a = _write_reference(tmp_path / "speaker_a_ref.wav", 220.0)
     speaker_b = _write_reference(tmp_path / "speaker_b_ref.wav", 330.0)
     settings = RenderSettings(
-        correction_mode="conservative",
+        correction_mode="moderate",
         model_variant="standard",
         language="en",
         export_stems=True,

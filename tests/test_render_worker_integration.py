@@ -20,7 +20,7 @@ import the_oracle.pipeline as pipeline_module
 
 
 class _StubTextRepairPipeline:
-    def repair(self, text: str, mode: str = "conservative") -> RepairResult:
+    def repair(self, text: str, mode: str = "moderate") -> RepairResult:
         return RepairResult(text=text, corrections=[])
 
 
@@ -54,7 +54,7 @@ def _build_render_plan(tmp_path: Path, render_settings: RenderSettings) -> Rende
         source_path=str(tmp_path / "dialogue.txt"),
         output_dir=str(project_dir),
         engine="chatterbox",
-        correction_mode="conservative",
+        correction_mode="moderate",
         metadata={"model_variant": render_settings.model_variant},
         utterances=utterances,
         voice_profiles=voice_profiles,

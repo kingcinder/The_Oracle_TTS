@@ -22,7 +22,7 @@ def _payload() -> dict:
         "project": {
             "model_variant": "standard",
             "language": "en",
-            "correction_mode": "conservative",
+            "correction_mode": "moderate",
             "loudness_preset": "light",
             "pause_between_turns_ms": 180,
             "crossfade_ms": 20,

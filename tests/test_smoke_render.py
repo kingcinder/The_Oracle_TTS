@@ -89,7 +89,7 @@ def test_render_progress_reports_stage_updates(tmp_path: Path) -> None:
         "B": SpeakerSettings(reference_path=str(speaker_b), voice_settings=VoiceSettings()),
     }
     render_settings = RenderSettings(
-        correction_mode="conservative",
+        correction_mode="moderate",
         model_variant="standard",
         language="en",
         export_stems=True,

@@ -56,7 +56,7 @@ def _minimal_plan(paths: OraclePaths | None) -> RenderPlan:
         source_path="",
         output_dir=str(paths.output_dir) if paths else "",
         engine="chatterbox",
-        correction_mode="conservative",
+        correction_mode="moderate",
         metadata={"model_variant": "standard"},
         voice_profiles={"A": profile_a, "B": profile_b},
     )
@@ -83,7 +83,7 @@ def test_loading_profile_payload_replaces_current_settings(qt_app, monkeypatch: 
 
     try:
         window.variant_combo.setCurrentText("multilingual")
-        window.correction_mode_combo.setCurrentText("aggressive")
+        window.correction_mode_combo.setCurrentText("Aggressive")
         window.loudness_combo.setCurrentText("medium")
         window.crossfade_spin.setValue(75)
         window.outdir_path.setText(str(custom_output))
@@ -95,7 +95,7 @@ def test_loading_profile_payload_replaces_current_settings(qt_app, monkeypatch: 
         payload = window._current_gui_settings_payload()
 
         window.variant_combo.setCurrentText("standard")
-        window.correction_mode_combo.setCurrentText("conservative")
+        window.correction_mode_combo.setCurrentText("Moderate")
         window.loudness_combo.setCurrentText("off")
         window.crossfade_spin.setValue(20)
         window.outdir_path.setText(str(paths.output_dir))
@@ -108,7 +108,7 @@ def test_loading_profile_payload_replaces_current_settings(qt_app, monkeypatch: 
         window._apply_gui_settings_payload(payload)
 
         assert window.variant_combo.currentText() == "multilingual"
-        assert window.correction_mode_combo.currentText() == "aggressive"
+        assert window.correction_mode_combo.currentData() == "aggressive"
         assert window.loudness_combo.currentText() == "medium"
         assert window.crossfade_spin.value() == 75
         assert window.outdir_path.text() == str(custom_output)
@@ -155,7 +155,7 @@ def test_reset_to_defaults_restores_profile_baseline(qt_app, monkeypatch: pytest
 
     try:
         window.variant_combo.setCurrentText("multilingual")
-        window.correction_mode_combo.setCurrentText("aggressive")
+        window.correction_mode_combo.setCurrentText("Aggressive")
         window.loudness_combo.setCurrentText("medium")
         window.crossfade_spin.setValue(60)
         window.outdir_path.setText(str(tmp_path / "custom_output"))
@@ -168,7 +168,7 @@ def test_reset_to_defaults_restores_profile_baseline(qt_app, monkeypatch: pytest
         window.reset_settings_to_defaults()
 
         assert window.variant_combo.currentText() == render_defaults.model_variant
-        assert window.correction_mode_combo.currentText() == render_defaults.correction_mode
+        assert window.correction_mode_combo.currentData() == render_defaults.correction_mode
         assert window.loudness_combo.currentText() == render_defaults.loudness_preset
         assert window.crossfade_spin.value() == render_defaults.crossfade_ms
         assert window.outdir_path.text() == str(paths.output_dir)
