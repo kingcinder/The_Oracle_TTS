@@ -43,7 +43,6 @@ from the_oracle.app_paths import (
     default_output_filename,
     resolve_output_filename,
 )
-from the_oracle.device_support import available_device_modes
 from the_oracle.gui_settings import (
     GUISettingsError,
     list_templates,
@@ -379,13 +378,6 @@ class MainWindow(QMainWindow):
         self.variant_combo.currentTextChanged.connect(self._refresh_language_options)
         self.correction_mode_combo = QComboBox()
         self.correction_mode_combo.addItems(["conservative", "aggressive"])
-        self.device_mode_combo = QComboBox()
-        for option in available_device_modes():
-            self.device_mode_combo.addItem(option.label, option.key)
-            model_item = self.device_mode_combo.model().item(self.device_mode_combo.count() - 1)
-            if model_item is not None and not option.available:
-                model_item.setEnabled(False)
-                model_item.setToolTip(option.reason)
         self.loudness_combo = QComboBox()
         self.loudness_combo.addItems(["off", "light", "medium"])
         self.loudness_combo.setCurrentText(RenderSettings().loudness_preset)
@@ -394,7 +386,6 @@ class MainWindow(QMainWindow):
         self.crossfade_spin.setValue(RenderSettings().crossfade_ms)
         form.addRow("Model Variant", self.variant_combo)
         form.addRow("Correction Mode", self.correction_mode_combo)
-        form.addRow("Inference Device", self.device_mode_combo)
         form.addRow("Loudness", self.loudness_combo)
         form.addRow("Crossfade (ms)", self.crossfade_spin)
         return box
@@ -497,7 +488,7 @@ class MainWindow(QMainWindow):
             loudness_preset=self.loudness_combo.currentText(),
             pause_between_turns_ms=self.speaker_a.pause_spin.value(),
             crossfade_ms=self.crossfade_spin.value(),
-            device_mode=self.device_mode_combo.currentData() or "cpu",
+            device_mode="cpu",
             metadata={"output_filename": normalize_output_filename(self.output_name.text())},
         )
 
@@ -549,9 +540,6 @@ class MainWindow(QMainWindow):
         self.variant_combo.setCurrentText(saved_project.render_settings.model_variant)
         self._refresh_language_options()
         self.correction_mode_combo.setCurrentText(saved_project.render_settings.correction_mode)
-        device_index = self.device_mode_combo.findData(saved_project.render_settings.device_mode)
-        if device_index >= 0 and self.device_mode_combo.model().item(device_index).isEnabled():
-            self.device_mode_combo.setCurrentIndex(device_index)
         self.loudness_combo.setCurrentText(saved_project.render_settings.loudness_preset)
         self.crossfade_spin.setValue(saved_project.render_settings.crossfade_ms)
         self._apply_speaker_group(self.speaker_a, saved_project.speaker_settings["A"])
@@ -570,7 +558,7 @@ class MainWindow(QMainWindow):
         return {
             "version": 1,
             "name": "",
-            "device_mode": self.device_mode_combo.currentData() or "cpu",
+            "device_mode": "cpu",
             "project": {
                 "model_variant": self.variant_combo.currentText(),
                 "correction_mode": self.correction_mode_combo.currentText(),
@@ -595,9 +583,6 @@ class MainWindow(QMainWindow):
         project = {**defaults["project"], **payload["project"]}
         self.variant_combo.setCurrentText(project.get("model_variant", "standard"))
         self._refresh_language_options()
-        device_index = self.device_mode_combo.findData(payload.get("device_mode", "cpu"))
-        if device_index >= 0 and self.device_mode_combo.model().item(device_index).isEnabled():
-            self.device_mode_combo.setCurrentIndex(device_index)
         self.correction_mode_combo.setCurrentText(project.get("correction_mode", "conservative"))
         self.loudness_combo.setCurrentText(project.get("loudness_preset", RenderSettings().loudness_preset))
         self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
