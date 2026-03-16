@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import os
 from dataclasses import dataclass, field, replace
 from datetime import date
 from importlib.metadata import PackageNotFoundError, version
@@ -160,6 +161,10 @@ def _run_tasks_with_worker_pool(
         mode = "parallel"
     sorted_results = sorted(results, key=lambda entry: entry.utterance_index)
     return sorted_results, mode
+
+
+def _should_use_worker_pool(settings: RenderSettings, resolved_device: str) -> bool:
+    return settings.model_variant == "standard" and resolved_device == "cpu"
 
 
 @dataclass(slots=True)
@@ -465,6 +470,9 @@ class OraclePipeline:
 
         previous_plan = self._load_previous_plan(project_cache)
         render_start = perf_counter()
+        should_parallelize = _should_use_worker_pool(settings, resolve_chatterbox_device(settings.device_mode))
+        raw_tasks: list[SynthesisTask] = []
+        adjusted_device = resolve_chatterbox_device(settings.device_mode)
         for utterance_index, utterance in enumerate(plan.utterances, start=1):
             profile = plan.voice_profiles[utterance.speaker]
             average_segment_seconds = None
@@ -487,22 +495,45 @@ class OraclePipeline:
                 utterance.index,
                 utterance.speaker,
             )
-            task = SynthesisTask(
-                utterance_index=utterance_index,
-                utterance=utterance,
-                speaker=utterance.speaker,
-                text=utterance.text_for_tts(),
-                reference_path=profile.primary_reference,
-                reference_audio_hash=profile.reference_audio_hash,
-                voice_settings=profile.engine_params,
-                model_variant=settings.model_variant,
-                device_mode=settings.device_mode,
-                conditioning=conditioning[utterance.speaker],
-                engine=engine,
-                project_cache=project_cache,
-                export_stems=settings.export_stems,
+            raw_tasks.append(
+                SynthesisTask(
+                    utterance_index=utterance_index,
+                    source_index=utterance.index,
+                    speaker=utterance.speaker,
+                    text=utterance.text_for_tts(),
+                    reference_path=profile.primary_reference,
+                    reference_audio_hash=profile.reference_audio_hash,
+                    voice_settings=profile.engine_params,
+                    model_variant=settings.model_variant,
+                    device_mode=settings.device_mode,
+                    export_stems=settings.export_stems,
+                )
             )
-            result = synthesize_task(task)
+        project_dir = str(project_cache.project_dir)
+        results: list[SynthesisResult]
+        mode_metadata = "sequential"
+        if should_parallelize:
+            results, mode_metadata = _run_tasks_with_worker_pool(
+                raw_tasks,
+                ChatterboxEngine,
+                variant,
+                adjusted_device,
+                project_dir,
+            )
+        else:
+            results = _sequential_worker_execution(
+                raw_tasks,
+                ChatterboxEngine,
+                variant,
+                adjusted_device,
+                project_dir,
+            )
+        plan.metadata["synthesis_mode"] = mode_metadata
+        for result, utterance in zip(results, plan.utterances):
+            average_segment_seconds = None
+            if result.utterance_index > 1:
+                average_segment_seconds = (perf_counter() - render_start) / float(result.utterance_index - 1)
+            eta_seconds = None if average_segment_seconds is None else average_segment_seconds * (total_segments - result.utterance_index + 1)
             stem_segments.append(
                 AudioSegment(
                     path=str(result.stem_path),
@@ -550,12 +581,12 @@ class OraclePipeline:
             completed_steps += 1
             emit_progress(
                 stage="Rendering segment",
-                detail=f"Segment {utterance_index}/{total_segments} ready",
+                detail=f"Segment {result.utterance_index}/{total_segments} ready",
                 current_step=completed_steps,
                 total_steps=total_steps,
-                current_segment=utterance_index,
+                current_segment=result.utterance_index,
                 total_segments=total_segments,
-                eta_seconds=None if utterance_index >= total_segments else average_segment_seconds * (total_segments - utterance_index) if average_segment_seconds is not None else None,
+                eta_seconds=None if result.utterance_index >= total_segments else average_segment_seconds * (total_segments - result.utterance_index) if average_segment_seconds is not None else None,
             )
 
         plan.metadata["cache_reused_on_second_pass"] = str(not compute_incremental_changes(previous_plan, plan))
