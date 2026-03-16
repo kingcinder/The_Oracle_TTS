@@ -39,6 +39,7 @@ from the_oracle.app_paths import (
     OraclePaths,
     ensure_repo_default_paths,
     normalize_output_filename,
+    default_output_filename,
     resolve_output_filename,
 )
 from the_oracle.device_support import available_device_modes
@@ -275,6 +276,8 @@ class MainWindow(QMainWindow):
         self.outdir_path = QLineEdit()
         self.output_name = QLineEdit()
         self.output_name.setPlaceholderText("Auto-derived from the input file when using the default Output folder")
+        self.input_path.textChanged.connect(self._handle_outdir_changed)
+        self.outdir_path.textChanged.connect(self._handle_outdir_changed)
         self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
         self._add_path_row(controls, 1, "Output Folder", self.outdir_path, self._pick_outdir)
         controls.addWidget(QLabel("Output Filename"), 2, 0)
@@ -302,8 +305,17 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.render_button)
         layout.addLayout(actions)
 
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(["Index", "Speaker", "Original Text", "Repaired Text", "Emotion", "Duration", "Preview"])
+        self.table = QTableWidget(0, 8)
+        self.table.setHorizontalHeaderLabels([
+            "Index",
+            "Speaker",
+            "Original Text",
+            "Repaired Text",
+            "Emotion",
+            "Duration",
+            "Preview",
+            "+/-",
+        ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -404,6 +416,17 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Choose Input", str(start_dir), "Text Files (*.txt *.md)")
         if path:
             self.input_path.setText(path)
+
+    def _handle_outdir_changed(self) -> None:
+        folder = Path(self.outdir_path.text() or self.paths.output_dir).expanduser()
+        default_folder = Path(self.paths.output_dir)
+        if folder == default_folder:
+            return
+        if not folder.exists():
+            folder.mkdir(parents=True, exist_ok=True)
+        if not self.output_name.text().strip():
+            default_name = default_output_filename(self.input_path.text() or "")
+            self.output_name.setText(default_name)
 
     def _pick_outdir(self) -> None:
         current_outdir = Path(self.outdir_path.text()).expanduser()
@@ -753,6 +776,44 @@ class MainWindow(QMainWindow):
             preview = QPushButton("Preview")
             preview.clicked.connect(lambda _checked=False, current=row: self.preview_utterance(current))
             self.table.setCellWidget(row, 6, preview)
+            control = self._create_row_action(row)
+            self.table.setCellWidget(row, 7, control)
+
+    def _create_row_action(self, row: int) -> QComboBox:
+        control = QComboBox()
+        control.addItems(["+/-", "Extra", "Remove"])
+        control.setMaximumWidth(80)
+        control.currentIndexChanged.connect(lambda idx, r=row, c=control: self._handle_row_action(idx, r, c))
+        return control
+
+    def _handle_row_action(self, idx: int, row: int, control: QComboBox) -> None:
+        if idx == 0 or not self.plan:
+            return
+        if idx == 1:
+            self.plan.utterances.insert(row + 1, self._blank_utterance())
+        elif idx == 2 and 0 <= row < len(self.plan.utterances):
+            self.plan.utterances.pop(row)
+        control.blockSignals(True)
+        control.setCurrentIndex(0)
+        control.blockSignals(False)
+        self._reindex_utterances()
+        self._populate_table(self.plan)
+
+    def _blank_utterance(self) -> Utterance:
+        return Utterance(
+            index=0,
+            original_text="",
+            repaired_text="",
+            speaker="A",
+            emotion="neutral",
+            duration_seconds=None,
+        )
+
+    def _reindex_utterances(self) -> None:
+        if not self.plan:
+            return
+        for idx, utterance in enumerate(self.plan.utterances):
+            utterance.index = idx
 
     def _sync_plan_from_table(self) -> None:
         if not self.plan:

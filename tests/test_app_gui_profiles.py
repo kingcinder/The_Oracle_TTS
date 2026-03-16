@@ -5,10 +5,10 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
-from the_oracle.app_paths import ensure_repo_default_paths
-from the_oracle.models.project import VoiceSettings
+from the_oracle.app_paths import OraclePaths, default_output_filename, ensure_repo_default_paths
+from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings
 from the_oracle.pipeline import RenderSettings
 
 
@@ -46,6 +46,20 @@ class _FakePipeline:
 def qt_app():
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+def _minimal_plan(paths: OraclePaths | None) -> RenderPlan:
+    profile_a = VoiceProfile(name="Speaker A", speaker="A", reference_audio=[], engine_params=VoiceSettings())
+    profile_b = VoiceProfile(name="Speaker B", speaker="B", reference_audio=[], engine_params=VoiceSettings())
+    return RenderPlan(
+        title="test",
+        source_path="",
+        output_dir=str(paths.output_dir) if paths else "",
+        engine="chatterbox",
+        correction_mode="conservative",
+        metadata={"model_variant": "standard"},
+        voice_profiles={"A": profile_a, "B": profile_b},
+    )
 
 
 def _build_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -163,5 +177,47 @@ def test_reset_to_defaults_restores_profile_baseline(qt_app, monkeypatch: pytest
         assert window.speaker_b.reference_path.text() == ""
         assert window.speaker_a.cfg_weight.value() == pytest.approx(defaults.cfg_weight)
         assert window.speaker_b.pause_spin.value() == defaults.pause_ms
+    finally:
+        window.close()
+
+
+def test_custom_output_folder_autofills_filename(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        input_file = tmp_path / "dialogue.txt"
+        input_file.write_text("Line 1\nLine 2\n")
+        custom_output = tmp_path / "custom_output"
+        custom_output.mkdir()
+
+        window.input_path.setText(str(input_file))
+        window.outdir_path.setText(str(custom_output))
+
+        expected = default_output_filename(input_file)
+        assert window.output_name.text() == expected
+        window.output_name.setText("modified")
+        window.outdir_path.setText(str(custom_output))
+        assert window.output_name.text() == "modified"
+    finally:
+        window.close()
+
+
+def test_custom_output_folder_requires_filename(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        custom_output = tmp_path / "custom_output"
+        custom_output.mkdir()
+        window.plan = _minimal_plan(paths)
+        window.input_path.setText(str(tmp_path / "dialogue.txt"))
+        window.outdir_path.setText(str(custom_output))
+        window.output_name.clear()
+
+        def fail(*args, **kwargs):
+            raise RuntimeError(args[2])
+
+        monkeypatch.setattr(QMessageBox, "critical", fail)
+
+        with pytest.raises(RuntimeError) as excinfo:
+            window.render_project()
+        assert "Choose an output filename" in str(excinfo.value)
     finally:
         window.close()
