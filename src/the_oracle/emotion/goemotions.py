@@ -12,6 +12,7 @@ LEXICON = {
     "sadness": {"sad", "upset", "hurt", "cry", "grief", "mourn"},
     "surprise": {"surprised", "suddenly", "unexpected", "astonished"},
 }
+SUPPORTED_EMOTIONS = [*LEXICON.keys(), "curiosity", "neutral"]
 
 
 @dataclass(slots=True)

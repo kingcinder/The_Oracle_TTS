@@ -44,6 +44,7 @@ from the_oracle.app_paths import (
     resolve_output_filename,
 )
 from the_oracle.correction_modes import CORRECTION_MODE_OPTIONS, correction_mode_label, normalize_correction_mode
+from the_oracle.emotion.goemotions import SUPPORTED_EMOTIONS
 from the_oracle.gui_settings import (
     GUISettingsError,
     list_templates,
@@ -773,9 +774,8 @@ class MainWindow(QMainWindow):
             repaired = QTableWidgetItem(utterance.repaired_text)
             repaired.setFlags(repaired.flags() | Qt.ItemIsEditable)
             self.table.setItem(row, 3, repaired)
-            emotion = QTableWidgetItem(utterance.emotion)
-            emotion.setFlags(emotion.flags() | Qt.ItemIsEditable)
-            self.table.setItem(row, 4, emotion)
+            emotion = self._create_emotion_combo(utterance.emotion)
+            self.table.setCellWidget(row, 4, emotion)
             duration = "" if utterance.duration_seconds is None else f"{utterance.duration_seconds:.2f}s"
             self.table.setItem(row, 5, QTableWidgetItem(duration))
             preview = QPushButton("Preview")
@@ -790,6 +790,19 @@ class MainWindow(QMainWindow):
         control.setMaximumWidth(80)
         control.currentIndexChanged.connect(lambda idx, r=row, c=control: self._handle_row_action(idx, r, c))
         return control
+
+    def _create_emotion_combo(self, value: str) -> QComboBox:
+        combo = QComboBox()
+        for emotion in SUPPORTED_EMOTIONS:
+            combo.addItem(emotion, emotion)
+        if value and value not in SUPPORTED_EMOTIONS:
+            combo.addItem(value, value)
+        target = value if value else "neutral"
+        idx = combo.findData(target)
+        if idx < 0:
+            idx = combo.findData("neutral")
+        combo.setCurrentIndex(max(0, idx))
+        return combo
 
     def _handle_row_action(self, idx: int, row: int, control: QComboBox) -> None:
         if idx == 0 or not self.plan:
@@ -862,9 +875,9 @@ class MainWindow(QMainWindow):
                 repaired_text = repaired_item.text().strip()
                 utterance.manual_text_override = utterance.manual_text_override or repaired_text != utterance.repaired_text
                 utterance.repaired_text = repaired_text
-            emotion_item = self.table.item(row, 4)
-            if emotion_item:
-                emotion_text = emotion_item.text().strip()
+            emotion_widget = self.table.cellWidget(row, 4)
+            if isinstance(emotion_widget, QComboBox):
+                emotion_text = emotion_widget.currentData() or emotion_widget.currentText()
                 utterance.manual_emotion_override = utterance.manual_emotion_override or emotion_text != utterance.emotion
                 utterance.emotion = emotion_text
         speaker_settings = self._speaker_settings()
