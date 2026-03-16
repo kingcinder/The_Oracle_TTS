@@ -22,7 +22,24 @@ Chatterbox outputs include built-in Perth watermarking by design. This project d
 
 ## Install
 
-Exact Linux Mint 22.1 install flow:
+Supported platform (customer-ready): Linux Mint 22.1 / Ubuntu 22.04-class desktops with X11/XWayland.
+
+### Quick install (release tarball)
+
+1) Download the release tar (for example `The_Oracle_TTS_alpha-<version>_*.tar.gz`) and verify its `.sha256`.
+2) Extract somewhere you control, e.g. `~/The_Oracle_TTS`.
+3) Run the managed installer:
+
+```bash
+cd ~/The_Oracle_TTS
+./install_oracle_tts.sh
+```
+
+The installer bootstraps the venv, installs CPU PyTorch + Chatterbox, installs `~/.local/bin/the-oracle`, creates a desktop launcher, and runs the doctor.
+
+### From source (developers)
+
+Exact Linux Mint 22.1 flow:
 
 ```bash
 sudo apt update
@@ -57,7 +74,7 @@ Launch the GUI:
 ./run_oracle_tts.sh
 ```
 
-If `the-oracle` is not found in a fresh shell after bootstrap, add `~/.local/bin` to `PATH`, open a new shell, and retry:
+If `the-oracle` is not found in a fresh shell after install/bootstrap, add `~/.local/bin` to `PATH`, open a new shell, and retry:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
