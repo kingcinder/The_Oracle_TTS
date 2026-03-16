@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 from dataclasses import dataclass, field, replace
 from datetime import date
 from importlib.metadata import PackageNotFoundError, version
@@ -14,7 +15,7 @@ from the_oracle.audio.assemble import AudioSegment, assemble_dialogue, load_audi
 from the_oracle.audio.export_flac import next_available_output_path, write_flac
 from the_oracle.device_support import resolve_chatterbox_device
 from the_oracle.emotion.goemotions import GoEmotionsClassifier
-from the_oracle.models.cache import ProjectCache
+from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings
 from the_oracle.speaker_attribution.heuristics import AnchorAssignments, DualSpeakerAttributor
 from the_oracle.text_ingest import TextIngestor
@@ -73,10 +74,54 @@ class SynthesisTask:
     speaker: str
     text: str
     reference_audio_hash: str
+    reference_path: Path
     voice_settings: VoiceSettings
     model_variant: str
     device_mode: str
     export_stems: bool
+
+
+@dataclass(slots=True)
+class _WorkerState:
+    engine: ChatterboxEngine
+    project_cache: ProjectCache
+    conditioning_cache: dict[str, ChatterboxConditioning]
+
+
+_WORKER_STATE: _WorkerState | None = None
+
+
+def _conditioning_cache_key(task: SynthesisTask, reference_hash: str) -> tuple[str, str, str, tuple[tuple[str, Any], ...]]:
+    voice_items = tuple(sorted(task.voice_settings.to_dict().items()))
+    return (task.speaker, reference_hash, task.model_variant, voice_items)
+
+
+def _worker_initialize(engine_cls: type[ChatterboxEngine], variant: str, device: str, project_dir: str) -> None:
+    global _WORKER_STATE
+    engine = engine_cls(variant=variant, device=device)
+    ensure_ready = getattr(engine, "ensure_model_ready", None)
+    if callable(ensure_ready):
+        ensure_ready()
+    project_cache = ProjectCache(project_dir)
+    _WORKER_STATE = _WorkerState(engine=engine, project_cache=project_cache, conditioning_cache={})
+
+
+def _worker_reset() -> None:
+    global _WORKER_STATE
+    _WORKER_STATE = None
+
+
+def _worker_process_task(task: SynthesisTask) -> SynthesisResult:
+    if _WORKER_STATE is None:
+        raise RuntimeError("Worker state is not initialized")
+    worker = _WORKER_STATE
+    cached_reference = worker.engine.prepare_reference(worker.project_cache, task.speaker, str(task.reference_path))
+    cache_key = _conditioning_cache_key(task, cached_reference.original_hash)
+    conditioning = worker.conditioning_cache.get(cache_key)
+    if conditioning is None:
+        conditioning = worker.engine.prepare_conditioning(worker.project_cache, task.speaker, cached_reference, task.voice_settings)
+        worker.conditioning_cache[cache_key] = conditioning
+    return synthesize_task(task, worker.engine, conditioning, worker.project_cache)
 
 
 @dataclass(slots=True)

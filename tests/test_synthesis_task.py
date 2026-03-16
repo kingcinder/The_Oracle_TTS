@@ -5,7 +5,7 @@ from typing import Callable, Tuple
 
 from the_oracle.models.cache import ProjectCache
 from the_oracle.models.project import Utterance, VoiceSettings
-from the_oracle.pipeline import SynthesisTask, synthesize_task
+from the_oracle.pipeline import SynthesisTask, synthesize_task, _worker_initialize, _worker_process_task, _worker_reset
 from the_oracle.smoke import _DeterministicChatterboxEngine, _write_reference
 from the_oracle.utils.hashing import build_chunk_hash
 
@@ -45,6 +45,7 @@ def _prepare_synthesis_task_helpers(
             source_index=source_index if source_index is not None else utterance_index,
             speaker=speaker,
             text=actual_text,
+            reference_path=Path(reference),
             reference_audio_hash=cached_reference.original_hash,
             voice_settings=voice_settings,
             model_variant="standard",
@@ -85,6 +86,20 @@ def test_synthesize_task_cache_behavior(tmp_path: Path) -> None:
     assert second_result.chunk_hash == first_result.chunk_hash
     assert second_result.stem_path == first_result.stem_path
     assert Path(second_result.exported_stem_path).exists()
+
+
+def test_worker_process_task(tmp_path: Path) -> None:
+    project_cache, engine, conditioning, build_task = _prepare_synthesis_task_helpers(tmp_path)
+    _worker_initialize(_DeterministicChatterboxEngine, "standard", "cpu", str(project_cache.project_dir))
+    try:
+        task = build_task(utterance_index=1, export_stems=True)
+        result = _worker_process_task(task)
+        assert result.stem_path.exists()
+        assert result.cache_hit is False
+        repeated = _worker_process_task(build_task(utterance_index=2, export_stems=False))
+        assert repeated.cache_hit is True
+    finally:
+        _worker_reset()
 
 
 def test_synthesize_task_chunk_changes_with_text(tmp_path: Path) -> None:
