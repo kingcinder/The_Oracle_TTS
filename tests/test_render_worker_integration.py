@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from the_oracle.models.project import VoiceProfile, VoiceSettings
-from the_oracle.pipeline import RenderPlan, RenderSettings, SynthesisResult, Utterance
-from the_oracle.smoke import _write_reference
+from the_oracle.pipeline import (
+    OraclePipeline,
+    RenderPlan,
+    RenderSettings,
+    SynthesisResult,
+    Utterance,
+)
+from the_oracle.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference
+from the_oracle.text_repair.repairer import RepairResult
 
 import the_oracle.pipeline as pipeline_module
+
+
+class _StubTextRepairPipeline:
+    def repair(self, text: str, mode: str = "conservative") -> RepairResult:
+        return RepairResult(text=text, corrections=[])
 
 
 def _build_render_plan(tmp_path: Path, render_settings: RenderSettings) -> RenderPlan:
@@ -24,14 +39,6 @@ def _build_render_plan(tmp_path: Path, render_settings: RenderSettings) -> Rende
             pause_after_ms=render_settings.pause_between_turns_ms,
             engine_settings=voice_settings,
         ),
-        Utterance(
-            index=2,
-            original_text="Speaker B.",
-            repaired_text="Speaker B.",
-            speaker="B",
-            pause_after_ms=render_settings.pause_between_turns_ms,
-            engine_settings=voice_settings,
-        ),
     ]
     voice_profiles = {
         "A": VoiceProfile(
@@ -39,13 +46,6 @@ def _build_render_plan(tmp_path: Path, render_settings: RenderSettings) -> Rende
             speaker="A",
             reference_audio=[Path(speaker_a)],
             neutral_reference=Path(speaker_a),
-            engine_params=voice_settings,
-        ),
-        "B": VoiceProfile(
-            name="Speaker B",
-            speaker="B",
-            reference_audio=[Path(speaker_b)],
-            neutral_reference=Path(speaker_b),
             engine_params=voice_settings,
         ),
     }
@@ -218,3 +218,79 @@ def test_worker_pool_returns_sequential_mode_when_fallback(tmp_path: Path) -> No
     assert mode == "sequential"
     assert plan.metadata["synthesis_mode"] == "sequential"
     assert len(results) == len(plan.utterances)
+
+
+def _run_render_with_interrupt(
+    plan: RenderPlan,
+    render_settings: RenderSettings,
+    *,
+    pool_override,
+    seq_override,
+    expected_message: str,
+) -> RenderPlan:
+    with (
+        patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
+        patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
+        patch("the_oracle.pipeline.assemble_dialogue", lambda *_args, **_kwargs: (b"", 24000)),
+        patch("the_oracle.pipeline.write_flac", lambda path, audio, rate, metadata: str(path)),
+        patch("the_oracle.pipeline.next_available_output_path", lambda path: path),
+        patch("the_oracle.pipeline.TextRepairPipeline", _StubTextRepairPipeline),
+        patch("the_oracle.pipeline._run_tasks_with_worker_pool", new=pool_override),
+        patch("the_oracle.pipeline._sequential_worker_execution", new=seq_override),
+    ):
+        pipeline = OraclePipeline()
+        with pytest.raises(RuntimeError, match=expected_message):
+            pipeline.render(plan, render_settings)
+    return plan
+
+
+def test_render_invokes_worker_pool(tmp_path: Path) -> None:
+    render_settings = RenderSettings(model_variant="standard", device_mode="cpu")
+    plan = _build_render_plan(tmp_path, render_settings)
+    called = {"pool": 0}
+
+    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None):
+        called["pool"] += 1
+        plan.metadata["synthesis_mode"] = "parallel"
+        raise RuntimeError("stop after worker pool")
+
+    def dummy_seq(*_args, **_kwargs):
+        raise AssertionError("Sequential fallback should not run for CPU standard worker path.")
+
+    plan = _run_render_with_interrupt(
+        plan,
+        render_settings,
+        pool_override=fake_pool,
+        seq_override=dummy_seq,
+        expected_message="stop after worker pool",
+    )
+
+    assert called["pool"] == 1
+    assert plan.metadata.get("synthesis_mode") == "parallel"
+
+
+def test_render_worker_pool_failure_triggers_sequential(tmp_path: Path) -> None:
+    render_settings = RenderSettings(model_variant="standard", device_mode="cpu")
+    plan = _build_render_plan(tmp_path, render_settings)
+    called = {"seq": 0, "pool": 0}
+
+    def fake_seq(tasks, engine_cls, variant, device, project_dir):
+        called["seq"] += 1
+        plan.metadata["synthesis_mode"] = "sequential"
+        raise RuntimeError("stop after sequential")
+
+    def pool_override(tasks, engine_cls, variant, device, project_dir, worker_count=None):
+        called["pool"] += 1
+        return fake_seq(tasks, engine_cls, variant, device, project_dir)
+
+    plan = _run_render_with_interrupt(
+        plan,
+        render_settings,
+        pool_override=pool_override,
+        seq_override=fake_seq,
+        expected_message="stop after sequential",
+    )
+
+    assert called["pool"] == 1
+    assert called["seq"] == 1
+    assert plan.metadata.get("synthesis_mode") == "sequential"
