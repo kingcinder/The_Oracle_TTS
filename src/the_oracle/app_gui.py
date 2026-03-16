@@ -123,6 +123,13 @@ class RenderProgressDialog(QDialog):
         layout.addWidget(self.segment_label)
         layout.addWidget(self.eta_label)
         layout.addWidget(self.progress_bar)
+        self.reset()
+
+    def reset(self) -> None:
+        self.progress_bar.setValue(0)
+        self.stage_label.setText("Starting render...")
+        self.segment_label.setText("Segments: 0/0")
+        self.eta_label.setText("ETA: calculating...")
 
     def update_progress(self, progress: RenderProgress) -> None:
         percent = 0 if progress.total_steps <= 0 else int(round((progress.current_step / progress.total_steps) * 100))
