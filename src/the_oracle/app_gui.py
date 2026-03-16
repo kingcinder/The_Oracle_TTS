@@ -11,6 +11,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -265,6 +266,7 @@ class MainWindow(QMainWindow):
         self.resize(1320, 900)
         self._build_ui()
         self._build_menu()
+        self.delete_confirm_enabled = True
         self._apply_gui_settings_payload(self._default_gui_settings_payload())
 
     def _build_ui(self) -> None:
@@ -364,6 +366,10 @@ class MainWindow(QMainWindow):
 
         self.templates_menu = settings_menu.addMenu("Load Template")
         self.templates_menu.aboutToShow.connect(self._rebuild_templates_menu)
+        self.confirmation_action = QAction("Re-enable delete confirmations", self)
+        self.confirmation_action.triggered.connect(self._enable_delete_confirmation)
+        settings_menu.addSeparator()
+        settings_menu.addAction(self.confirmation_action)
 
     def _build_project_settings(self) -> QGroupBox:
         box = QGroupBox("Shared Render Settings")
@@ -572,6 +578,7 @@ class MainWindow(QMainWindow):
                 "crossfade_ms": self.crossfade_spin.value(),
                 "output_dir": self.outdir_path.text() or str(self.paths.output_dir),
                 "output_filename": normalize_output_filename(self.output_name.text()),
+                "delete_confirm_enabled": self.delete_confirm_enabled,
             },
             "speakers": {
                 speaker: {
@@ -596,6 +603,7 @@ class MainWindow(QMainWindow):
         self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
         self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
         self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
+        self.delete_confirm_enabled = bool(project.get("delete_confirm_enabled", True))
         for speaker, group in (("A", self.speaker_a), ("B", self.speaker_b)):
             config = {**defaults["speakers"][speaker], **payload["speakers"][speaker]}
             voice = VoiceSettings.from_mapping(config.get("voice_settings"))
@@ -792,6 +800,13 @@ class MainWindow(QMainWindow):
         if idx == 1:
             self.plan.utterances.insert(row + 1, self._blank_utterance())
         elif idx == 2 and 0 <= row < len(self.plan.utterances):
+            utterance = self.plan.utterances[row]
+            if self._needs_delete_confirmation(utterance):
+                if not self._confirm_delete():
+                    control.blockSignals(True)
+                    control.setCurrentIndex(0)
+                    control.blockSignals(False)
+                    return
             self.plan.utterances.pop(row)
         control.blockSignals(True)
         control.setCurrentIndex(0)
@@ -814,6 +829,27 @@ class MainWindow(QMainWindow):
             return
         for idx, utterance in enumerate(self.plan.utterances):
             utterance.index = idx
+
+    def _needs_delete_confirmation(self, utterance: Utterance) -> bool:
+        return self.delete_confirm_enabled and any(
+            getattr(utterance, attr) for attr in ("original_text", "repaired_text", "emotion")
+        )
+
+    def _confirm_delete(self) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Confirm Delete")
+        dialog.setText("This row contains text. Look ready to delete?")
+        checkbox = QCheckBox("Click here to hide this window into the program settings menu above.", dialog)
+        dialog.setCheckBox(checkbox)
+        dialog.setStandardButtons(QMessageBox.Cancel | QMessageBox.Ok)
+        result = dialog.exec()
+        if checkbox.isChecked():
+            self.delete_confirm_enabled = False
+        return result == QMessageBox.Ok
+
+    def _enable_delete_confirmation(self) -> None:
+        self.delete_confirm_enabled = True
+        self.error_panel.append("Delete confirmations re-enabled.")
 
     def _sync_plan_from_table(self) -> None:
         if not self.plan:
