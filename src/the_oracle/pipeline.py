@@ -124,6 +124,44 @@ def _worker_process_task(task: SynthesisTask) -> SynthesisResult:
     return synthesize_task(task, worker.engine, conditioning, worker.project_cache)
 
 
+def _sequential_worker_execution(
+    tasks: list[SynthesisTask],
+    engine_cls: type[ChatterboxEngine],
+    variant: str,
+    device: str,
+    project_dir: str,
+) -> list[SynthesisResult]:
+    _worker_initialize(engine_cls, variant, device, project_dir)
+    try:
+        return [_worker_process_task(task) for task in tasks]
+    finally:
+        _worker_reset()
+
+
+def _run_tasks_with_worker_pool(
+    tasks: list[SynthesisTask],
+    engine_cls: type[ChatterboxEngine],
+    variant: str,
+    device: str,
+    project_dir: str,
+    worker_count: int | None = None,
+) -> tuple[list[SynthesisResult], str]:
+    if not tasks:
+        return [], "parallel"
+    count = worker_count or max(1, min(2, (os.cpu_count() or 1)))
+    ctx = multiprocessing.get_context("spawn")
+    try:
+        with ctx.Pool(processes=count, initializer=_worker_initialize, initargs=(engine_cls, variant, device, project_dir)) as pool:
+            results = pool.map(_worker_process_task, tasks)
+    except Exception:
+        results = _sequential_worker_execution(tasks, engine_cls, variant, device, project_dir)
+        mode = "sequential"
+    else:
+        mode = "parallel"
+    sorted_results = sorted(results, key=lambda entry: entry.utterance_index)
+    return sorted_results, mode
+
+
 @dataclass(slots=True)
 class SynthesisResult:
     utterance_index: int

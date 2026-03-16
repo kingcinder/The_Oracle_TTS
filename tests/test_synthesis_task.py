@@ -5,7 +5,14 @@ from typing import Callable, Tuple
 
 from the_oracle.models.cache import ProjectCache
 from the_oracle.models.project import Utterance, VoiceSettings
-from the_oracle.pipeline import SynthesisTask, synthesize_task, _worker_initialize, _worker_process_task, _worker_reset
+from the_oracle.pipeline import (
+    SynthesisTask,
+    synthesize_task,
+    _run_tasks_with_worker_pool,
+    _worker_initialize,
+    _worker_process_task,
+    _worker_reset,
+)
 from the_oracle.smoke import _DeterministicChatterboxEngine, _write_reference
 from the_oracle.utils.hashing import build_chunk_hash
 
@@ -100,6 +107,15 @@ def test_worker_process_task(tmp_path: Path) -> None:
         assert repeated.cache_hit is True
     finally:
         _worker_reset()
+
+
+def test_worker_pool_dispatch(tmp_path: Path) -> None:
+    project_cache, engine, conditioning, build_task = _prepare_synthesis_task_helpers(tmp_path)
+    tasks = [build_task(utterance_index=i, export_stems=(i == 1)) for i in range(1, 4)]
+    results, mode = _run_tasks_with_worker_pool(tasks, _DeterministicChatterboxEngine, "standard", "cpu", str(project_cache.project_dir), worker_count=2)
+    assert mode in {"parallel", "sequential"}
+    assert len(results) == 3
+    assert all(results[i].utterance_index == i + 1 for i in range(3))
 
 
 def test_synthesize_task_chunk_changes_with_text(tmp_path: Path) -> None:
