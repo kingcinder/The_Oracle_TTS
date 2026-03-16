@@ -77,6 +77,10 @@ Deterministic repo smoke render:
 
 This smoke path is intentionally deterministic and uses a patched in-repo test engine so you can verify ingest, repair, caching, assembly, and FLAC export without depending on live Chatterbox generation. The real Chatterbox model smoke readiness is reported by `./doctor_oracle_tts.sh`.
 
+## Release bundle
+
+When alpha-ready, run `make_alpha_release_bundle.sh` from the repo root to produce `release_artifacts/The_Oracle_TTS_alpha-${project.version}_*.tar.gz` with accompanying checksum, manifest, and release notes. The script now validates that the working tree is clean, that the current tag matches `alpha-${project.version}`, and that package metadata is consistent before emitting artifacts that are safe to publish as-is.
+
 ## Run
 
 GUI:
