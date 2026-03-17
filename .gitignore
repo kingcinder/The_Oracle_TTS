@@ -20,3 +20,7 @@ codex_round_two_checklist.md
 codex_round_two_prompt.txt
 make_alpha_release_bundle.sh
 =1.24,
+Input/
+Seashells/
+release_artifacts/
+user_settings/
