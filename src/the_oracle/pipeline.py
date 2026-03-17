@@ -29,8 +29,6 @@ from the_oracle.correction_modes import normalize_correction_mode
 
 LOGGER = get_logger(__name__)
 
-BASELINE_WPM = 165.0
-
 
 def chatterbox_version() -> str:
     try:
@@ -56,7 +54,6 @@ class RenderSettings:
     pause_between_turns_ms: int = 180
     crossfade_ms: int = 20
     device_mode: str = "cpu"
-    target_wpm: float | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     anchors: AnchorAssignments | None = None
 
@@ -74,13 +71,6 @@ class RenderProgress:
     total_segments: int
     elapsed_seconds: float
     eta_seconds: float | None = None
-
-
-@dataclass(slots=True)
-class PreviewResult:
-    path: Path
-    duration_seconds: float
-    measured_wpm: float
 
 @dataclass(slots=True)
 class SynthesisTask:
@@ -163,12 +153,25 @@ def _run_tasks_with_worker_pool(
 ) -> tuple[list[SynthesisResult], str]:
     if not tasks:
         return [], "parallel"
+
     count = worker_count or max(1, min(2, (os.cpu_count() or 1)))
+
+    # A pool of one has more overhead than running sequentially; skip it.
+    if count == 1:
+        LOGGER.debug("Worker count resolved to 1, using sequential execution to avoid pool overhead.")
+        results = _sequential_worker_execution(tasks, engine_cls, variant, device, project_dir)
+        return sorted(results, key=lambda entry: entry.utterance_index), "sequential"
+
     ctx = multiprocessing.get_context("spawn")
     try:
         with ctx.Pool(processes=count, initializer=_worker_initialize, initargs=(engine_cls, variant, device, project_dir)) as pool:
             results = pool.map(_worker_process_task, tasks)
-    except Exception:
+    except Exception as exc:
+        LOGGER.warning(
+            "Worker pool failed (%s: %s), falling back to sequential execution.",
+            type(exc).__name__,
+            exc,
+        )
         results = _sequential_worker_execution(tasks, engine_cls, variant, device, project_dir)
         mode = "sequential"
     else:
@@ -263,20 +266,6 @@ class OraclePipeline:
             return {"en": "English"}
 
     @staticmethod
-    def _word_count(text: str) -> int:
-        return len([token for token in (text or "").split() if token.strip()])
-
-    @staticmethod
-    def _pause_for_target_wpm(target_wpm: float | None, base_pause_ms: int, words: int) -> int:
-        if not target_wpm or target_wpm <= 0 or words <= 0:
-            return max(0, int(base_pause_ms))
-        baseline_word_ms = 60000.0 / BASELINE_WPM
-        desired_total_ms = (words / float(target_wpm)) * 60000.0
-        estimated_speech_ms = words * baseline_word_ms
-        adjusted_pause_ms = max(0.0, float(base_pause_ms) + (desired_total_ms - estimated_speech_ms))
-        return int(round(min(adjusted_pause_ms, 5000.0)))
-
-    @staticmethod
     def _coerce_voice_settings(value: VoiceSettings | dict[str, Any]) -> VoiceSettings:
         return VoiceSettings.from_mapping(value)
 
@@ -331,8 +320,6 @@ class OraclePipeline:
             merged.language = base.language if variant == "multilingual" else "en"
             merged.pause_ms = max(0, int(round(merged.pause_ms)))
             merged.crossfade_ms = settings.crossfade_ms
-            words_in_segment = self._word_count(repaired.text or segment.text)
-            merged.pause_ms = self._pause_for_target_wpm(settings.target_wpm, merged.pause_ms, words_in_segment)
 
             utterances.append(
                 Utterance(
@@ -373,7 +360,6 @@ class OraclePipeline:
         speaker_languages = {profile.engine_params.language for profile in voice_profiles.values()}
         project_language = next(iter(speaker_languages)) if len(speaker_languages) == 1 else "mixed"
 
-        total_words = sum(self._word_count(item.repaired_text or item.original_text) for item in utterances)
         metadata = {
             "title": document.title,
             "artist": "The Oracle",
@@ -389,8 +375,6 @@ class OraclePipeline:
             "reference_clips_used": "true",
             "watermark": "Perth watermark embedded by Chatterbox",
             "device_mode": settings.device_mode,
-            "target_wpm": "" if not settings.target_wpm else str(settings.target_wpm),
-            "word_count": str(total_words),
             **settings.metadata,
         }
         plan = RenderPlan(
@@ -508,10 +492,17 @@ class OraclePipeline:
         adjusted_device = resolve_chatterbox_device(settings.device_mode)
         for utterance_index, utterance in enumerate(plan.utterances, start=1):
             profile = plan.voice_profiles[utterance.speaker]
-            average_segment_seconds = None
-            if utterance_index > 1:
-                average_segment_seconds = (perf_counter() - render_start) / float(utterance_index - 1)
-            eta_seconds = None if average_segment_seconds is None else average_segment_seconds * (total_segments - utterance_index + 1)
+            # Only compute ETA once at least one segment has completed so we
+            # avoid a division-by-zero on the first iteration.
+            average_segment_seconds: float | None = None
+            if utterance_index > 2:
+                elapsed = perf_counter() - render_start
+                average_segment_seconds = elapsed / float(utterance_index - 1)
+            eta_seconds = (
+                None
+                if average_segment_seconds is None
+                else average_segment_seconds * (total_segments - utterance_index + 1)
+            )
             emit_progress(
                 stage="Rendering segment",
                 detail=f"Rendering segment {utterance_index}/{total_segments} for speaker {utterance.speaker}",
@@ -564,11 +555,14 @@ class OraclePipeline:
         plan.metadata["synthesis_mode"] = mode_metadata
         for result, utterance in zip(results, plan.utterances):
             average_segment_seconds = None
-            if result.utterance_index > 1:
-                average_segment_seconds = (perf_counter() - render_start) / float(result.utterance_index - 1)
-            eta_seconds = None if average_segment_seconds is None else average_segment_seconds * (total_segments - result.utterance_index + 1)
-            utterance.duration_seconds = result.duration_seconds
-            utterance.chunk_hash = result.chunk_hash
+            if result.utterance_index > 2:
+                elapsed = perf_counter() - render_start
+                average_segment_seconds = elapsed / float(result.utterance_index - 1)
+            eta_seconds = (
+                None
+                if average_segment_seconds is None
+                else average_segment_seconds * (total_segments - result.utterance_index)
+            )
             stem_segments.append(
                 AudioSegment(
                     path=str(result.stem_path),
@@ -621,7 +615,7 @@ class OraclePipeline:
                 total_steps=total_steps,
                 current_segment=result.utterance_index,
                 total_segments=total_segments,
-                eta_seconds=None if result.utterance_index >= total_segments else average_segment_seconds * (total_segments - result.utterance_index) if average_segment_seconds is not None else None,
+                eta_seconds=eta_seconds,
             )
 
         plan.metadata["cache_reused_on_second_pass"] = str(not compute_incremental_changes(previous_plan, plan))
@@ -655,15 +649,8 @@ class OraclePipeline:
             current_segment=total_segments,
             total_segments=total_segments,
         )
-        total_words = sum(self._word_count(item.text_for_tts()) for item in plan.utterances)
-        final_duration_seconds = len(final_audio) / sample_rate if sample_rate else 0.0
-        measured_wpm = 0.0 if final_duration_seconds <= 0 else (total_words / (final_duration_seconds / 60.0))
-        plan.metadata["measured_wpm"] = f"{measured_wpm:.2f}"
-        plan.metadata["measured_duration_seconds"] = f"{final_duration_seconds:.3f}"
         exported = write_flac(final_output, final_audio, sample_rate, plan.metadata)
-        render_trace_lines.append(
-            f"output | path={exported} | sample_rate={sample_rate} | duration_seconds={final_duration_seconds:.3f} | measured_wpm={measured_wpm:.2f}"
-        )
+        render_trace_lines.append(f"output | path={exported} | sample_rate={sample_rate}")
         plan.update_hashes()
         project_cache.save_json("render_plan.json", plan.to_dict())
         self._write_correction_log(project_cache, plan)
@@ -698,7 +685,7 @@ class OraclePipeline:
         model_variant: str,
         device_mode: str = "cpu",
         progress_callback=None,
-    ) -> PreviewResult:
+    ) -> Path:
         start_time = perf_counter()
 
         def emit_preview_progress(stage: str, detail: str, current_step: int, total_steps: int = 4) -> None:
@@ -732,11 +719,8 @@ class OraclePipeline:
         rendered = engine.synthesize(utterance.text_for_tts(), conditioning, utterance.engine_settings)
         preview_path = project_cache.preview_path(utterance.speaker, utterance.index)
         save_wav(preview_path, rendered, engine.sample_rate)
-        duration_seconds = len(rendered) / engine.sample_rate if engine.sample_rate else 0.0
-        words = self._word_count(utterance.text_for_tts())
-        measured_wpm = 0.0 if duration_seconds <= 0 else (words / (duration_seconds / 60.0))
         emit_preview_progress("Complete", f"Preview ready: {preview_path.name}", 4)
-        return PreviewResult(path=preview_path, duration_seconds=duration_seconds, measured_wpm=measured_wpm)
+        return preview_path
 
     def _load_previous_plan(self, project_cache: ProjectCache) -> dict[str, Any]:
         path = Path(project_cache.project_dir) / "render_plan.json"

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from importlib import resources
 import re
 
 
 TOKEN_RE = re.compile(r"\b[a-zA-Z']+\b")
+_LOG = logging.getLogger(__name__)
 
 
 class SpellCorrector:
@@ -16,7 +18,8 @@ class SpellCorrector:
     def _try_load_symspell(self):
         try:
             from symspellpy import SymSpell, Verbosity
-        except Exception:
+        except Exception as exc:
+            _LOG.warning("symspellpy not available, spelling correction disabled: %s", exc)
             return None
 
         sym_spell = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
@@ -25,7 +28,8 @@ class SpellCorrector:
             sym_spell.load_dictionary(str(dictionary_path), term_index=0, count_index=1)
             sym_spell._verbosity = Verbosity.CLOSEST
             return sym_spell
-        except Exception:
+        except Exception as exc:
+            _LOG.warning("SymSpell dictionary failed to load, spelling correction disabled: %s", exc)
             return None
 
     def correct(self, text: str, aggressive: bool = False) -> str:

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
+
+_LOG = logging.getLogger(__name__)
 
 QUESTION_PREFIXES = ("who", "what", "when", "where", "why", "how", "did", "do", "does", "is", "are", "can", "could", "would", "will")
 
@@ -15,11 +18,13 @@ class PunctuationRestorer:
     def _try_load_punctuator(self):
         try:
             from deepmultilingualpunctuation import PunctuationModel  # type: ignore
-        except Exception:
+        except Exception as exc:
+            _LOG.warning("deepmultilingualpunctuation not available, punctuation restoration disabled: %s", exc)
             return None
         try:
             return PunctuationModel()
-        except Exception:
+        except Exception as exc:
+            _LOG.warning("PunctuationModel failed to initialise, punctuation restoration disabled: %s", exc)
             return None
 
     def restore(self, text: str) -> str:
@@ -31,8 +36,8 @@ class PunctuationRestorer:
                 restored = self._model.restore_punctuation(cleaned).strip()
                 if restored:
                     cleaned = restored
-            except Exception:
-                pass
+            except Exception as exc:
+                _LOG.debug("PunctuationModel failed on segment, using fallback: %s", exc)
         if cleaned[-1] not in ".!?":
             prefix = cleaned.split()[0].lower()
             cleaned += "?" if prefix in QUESTION_PREFIXES else "."
