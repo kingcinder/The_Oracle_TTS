@@ -29,6 +29,12 @@ from the_oracle.correction_modes import normalize_correction_mode
 
 LOGGER = get_logger(__name__)
 
+# Minimum elapsed time (seconds) before ETA is computed.  Waiting for at
+# least this much real time avoids wildly inaccurate estimates on cache-hit
+# renders where early segments complete in milliseconds, and also means
+# short two-line dialogues still get an ETA once enough time has passed.
+_ETA_MIN_ELAPSED_SECONDS: float = 1.0
+
 
 def chatterbox_version() -> str:
     try:
@@ -71,6 +77,7 @@ class RenderProgress:
     total_segments: int
     elapsed_seconds: float
     eta_seconds: float | None = None
+
 
 @dataclass(slots=True)
 class SynthesisTask:
@@ -156,7 +163,11 @@ def _run_tasks_with_worker_pool(
 
     count = worker_count or max(1, min(2, (os.cpu_count() or 1)))
 
-    # A pool of one has more overhead than running sequentially; skip it.
+    # A pool of one has more overhead than running sequentially — skip it.
+    # Note: on single-core CI machines this means _run_tasks_with_worker_pool
+    # always returns "sequential", which is correct but means pool-specific
+    # test assertions won't fire there.  Tests that need to verify pool
+    # dispatch must mock this function directly.
     if count == 1:
         LOGGER.debug("Worker count resolved to 1, using sequential execution to avoid pool overhead.")
         results = _sequential_worker_execution(tasks, engine_cls, variant, device, project_dir)
@@ -245,6 +256,28 @@ def synthesize_task(
         segment_total_seconds=round(segment_total_seconds, 6),
         sample_rate=sample_rate,
     )
+
+
+def _compute_eta(
+    render_start: float,
+    completed_index: int,
+    total_segments: int,
+) -> float | None:
+    """Return ETA in seconds, or None if not enough data exists yet.
+
+    ETA is only computed once ``_ETA_MIN_ELAPSED_SECONDS`` of real time has
+    passed since synthesis started.  This avoids:
+      - Divide-by-zero on the very first segment.
+      - Wildly wrong estimates when early segments are cache hits that
+        complete in milliseconds.
+      - Missing ETA entirely on short dialogues (the old index > 2 guard).
+    """
+    elapsed = perf_counter() - render_start
+    if elapsed < _ETA_MIN_ELAPSED_SECONDS or completed_index <= 0:
+        return None
+    average = elapsed / float(completed_index)
+    remaining = total_segments - completed_index
+    return average * remaining if remaining > 0 else 0.0
 
 
 class OraclePipeline:
@@ -488,32 +521,19 @@ class OraclePipeline:
         previous_plan = self._load_previous_plan(project_cache)
         render_start = perf_counter()
         should_parallelize = _should_use_worker_pool(settings, resolve_chatterbox_device(settings.device_mode))
-        raw_tasks: list[SynthesisTask] = []
         adjusted_device = resolve_chatterbox_device(settings.device_mode)
+
+        # Build the task list.  In parallel mode we intentionally do NOT emit
+        # per-segment progress here: the pool hasn't synthesised anything yet
+        # so elapsed time and ETA would be meaningless.  Progress is emitted
+        # after the pool returns, in the results loop below.
+        # In sequential mode the results loop is also below, so we keep the
+        # same code path for both.
+        raw_tasks: list[SynthesisTask] = []
         for utterance_index, utterance in enumerate(plan.utterances, start=1):
             profile = plan.voice_profiles[utterance.speaker]
-            # Only compute ETA once at least one segment has completed so we
-            # avoid a division-by-zero on the first iteration.
-            average_segment_seconds: float | None = None
-            if utterance_index > 2:
-                elapsed = perf_counter() - render_start
-                average_segment_seconds = elapsed / float(utterance_index - 1)
-            eta_seconds = (
-                None
-                if average_segment_seconds is None
-                else average_segment_seconds * (total_segments - utterance_index + 1)
-            )
-            emit_progress(
-                stage="Rendering segment",
-                detail=f"Rendering segment {utterance_index}/{total_segments} for speaker {utterance.speaker}",
-                current_step=completed_steps,
-                total_steps=total_steps,
-                current_segment=utterance_index,
-                total_segments=total_segments,
-                eta_seconds=eta_seconds,
-            )
             LOGGER.info(
-                "Rendering segment %s/%s | utterance=%s | speaker=%s",
+                "Queuing segment %s/%s | utterance=%s | speaker=%s",
                 utterance_index,
                 total_segments,
                 utterance.index,
@@ -533,6 +553,18 @@ class OraclePipeline:
                     export_stems=settings.export_stems,
                 )
             )
+
+        # Emit a single "queued" progress event before handing off to the pool
+        # so the UI doesn't appear frozen while the pool spins up.
+        emit_progress(
+            stage="Rendering",
+            detail=f"Starting synthesis of {total_segments} segments",
+            current_step=completed_steps,
+            total_steps=total_steps,
+            current_segment=0,
+            total_segments=total_segments,
+        )
+
         project_dir = str(project_cache.project_dir)
         results: list[SynthesisResult]
         mode_metadata = "sequential"
@@ -553,16 +585,11 @@ class OraclePipeline:
                 project_dir,
             )
         plan.metadata["synthesis_mode"] = mode_metadata
+
+        # Results loop — this is the single source of per-segment progress
+        # for both sequential and parallel execution paths.
         for result, utterance in zip(results, plan.utterances):
-            average_segment_seconds = None
-            if result.utterance_index > 2:
-                elapsed = perf_counter() - render_start
-                average_segment_seconds = elapsed / float(result.utterance_index - 1)
-            eta_seconds = (
-                None
-                if average_segment_seconds is None
-                else average_segment_seconds * (total_segments - result.utterance_index)
-            )
+            eta = _compute_eta(render_start, result.utterance_index, total_segments)
             stem_segments.append(
                 AudioSegment(
                     path=str(result.stem_path),
@@ -610,12 +637,12 @@ class OraclePipeline:
             completed_steps += 1
             emit_progress(
                 stage="Rendering segment",
-                detail=f"Segment {result.utterance_index}/{total_segments} ready",
+                detail=f"Segment {result.utterance_index}/{total_segments} ready ({utterance.speaker})",
                 current_step=completed_steps,
                 total_steps=total_steps,
                 current_segment=result.utterance_index,
                 total_segments=total_segments,
-                eta_seconds=eta_seconds,
+                eta_seconds=eta,
             )
 
         plan.metadata["cache_reused_on_second_pass"] = str(not compute_incremental_changes(previous_plan, plan))
