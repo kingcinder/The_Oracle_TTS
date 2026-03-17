@@ -1,3 +1,0 @@
-Speaker A: Hello.
-Speaker B: Hi there.
-Speaker A: Just a quick test.
