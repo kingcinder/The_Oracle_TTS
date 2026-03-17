@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,8 @@ from the_oracle.correction_modes import normalize_correction_mode
 
 
 GUI_SETTINGS_VERSION = 1
+_SUPPORTED_DEVICE_MODES = {"cpu"}
+_LOG = logging.getLogger(__name__)
 
 
 class GUISettingsError(ValueError):
@@ -77,6 +80,24 @@ def remember_recent_reference_path(path_value: str, limit: int = 10) -> None:
     recent_references_path().write_text(json.dumps(updated, indent=2, ensure_ascii=True), encoding="utf-8")
 
 
+def _normalize_device_mode(value: str) -> str:
+    """Coerce device_mode to a supported value.
+
+    Only "cpu" is a verified execution path.  Any other value in a saved
+    settings file (e.g. an old "vulkan" entry) is silently replaced with
+    "cpu" so round-tripped files stay clean and users are not left in an
+    unverified state.
+    """
+    candidate = str(value).strip().lower()
+    if candidate not in _SUPPORTED_DEVICE_MODES:
+        _LOG.debug(
+            "Unsupported device_mode %r in settings file, replacing with 'cpu'.",
+            value,
+        )
+        return "cpu"
+    return candidate
+
+
 def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     required = {"version", "project", "speakers"}
     missing = sorted(required - set(payload))
@@ -93,7 +114,6 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "correction_mode": normalize_correction_mode(str(project.get("correction_mode", "moderate"))),
         "loudness_preset": str(project.get("loudness_preset", "light")),
         "crossfade_ms": int(project.get("crossfade_ms", 20)),
-        "target_wpm": float(project.get("target_wpm", 0.0) or 0.0),
         "output_dir": str(project.get("output_dir", "")),
         "output_filename": str(project.get("output_filename", "")),
     }
@@ -104,7 +124,9 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "version": GUI_SETTINGS_VERSION,
         "name": str(payload.get("name", "")),
         "project": normalized_project,
-        "device_mode": str(payload.get("device_mode", "cpu")),
+        # Always normalise device_mode so stale values in old settings files
+        # do not leave the app in an unverified execution state.
+        "device_mode": _normalize_device_mode(payload.get("device_mode", "cpu")),
         "speakers": {},
     }
     for speaker, config in speakers.items():

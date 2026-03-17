@@ -66,6 +66,30 @@ class _SmokeEmotionClassifier:
 
 
 class _DeterministicChatterboxEngine:
+    """Deterministic drop-in replacement for ChatterboxEngine used in smoke tests.
+
+    This class is intentionally *not* a subclass of ChatterboxEngine because it
+    must be importable without the real Chatterbox runtime installed.  It is
+    always injected via ``unittest.mock.patch("the_oracle.pipeline.ChatterboxEngine", ...)``
+    so the pipeline sees it in place of the real engine.
+
+    CONTRACT: any attribute or method accessed on a ChatterboxEngine instance
+    inside ``pipeline.py`` must have a matching implementation here.  If you
+    add a new attribute or method to ChatterboxEngine that the pipeline calls,
+    add a matching stub here to keep smoke tests valid.
+
+    Current surface used by the pipeline:
+      - engine_id          (str)
+      - sample_rate        (int property)
+      - engine_version     (str property)
+      - device             (str)
+      - supported_languages() -> dict[str, str]
+      - ensure_model_ready() -> None
+      - prepare_reference(project_cache, speaker, reference_path) -> CachedReference
+      - prepare_conditioning(project_cache, speaker, cached_reference, settings) -> ChatterboxConditioning
+      - synthesize(text, conditioning, settings) -> np.ndarray
+    """
+
     engine_id = "chatterbox"
     sample_rate = 24000
     engine_version = "deterministic-smoke-v1"
@@ -76,6 +100,9 @@ class _DeterministicChatterboxEngine:
 
     def supported_languages(self) -> dict[str, str]:
         return {"en": "English"}
+
+    def ensure_model_ready(self) -> None:
+        pass
 
     def prepare_reference(self, project_cache: ProjectCache, speaker: str, reference_path: str) -> CachedReference:
         return project_cache.cache_reference_audio(reference_path, speaker, self.sample_rate)
