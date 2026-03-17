@@ -26,6 +26,7 @@ def _payload() -> dict:
             "loudness_preset": "light",
             "pause_between_turns_ms": 180,
             "crossfade_ms": 20,
+            "target_wpm": 150.0,
             "output_dir": "/tmp/output",
             "output_filename": "oracle_render.flac",
         },
@@ -53,6 +54,7 @@ def test_gui_settings_round_trip(tmp_path: Path) -> None:
     assert loaded["project"]["model_variant"] == "standard"
     assert loaded["project"]["output_dir"] == "/tmp/output"
     assert loaded["project"]["output_filename"] == "oracle_render.flac"
+    assert loaded["project"]["target_wpm"] == pytest.approx(150.0)
     assert loaded["speakers"]["A"]["reference_path"] == "/tmp/a.wav"
     assert loaded["speakers"]["B"]["voice_settings"]["cfg_weight"] == 0.6
 

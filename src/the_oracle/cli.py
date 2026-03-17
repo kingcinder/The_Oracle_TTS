@@ -37,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--repetition-penalty", type=float, default=1.2)
     render.add_argument("--min-p", type=float, default=0.05)
     render.add_argument("--top-p", type=float, default=1.0)
+    render.add_argument("--target-wpm", type=float, help="Optional target words-per-minute pacing hint.")
     render.add_argument(
         "--correction-mode",
         choices=["aggressive", "moderate", "mild", "off", "conservative"],
@@ -81,6 +82,7 @@ def handle_render(args: argparse.Namespace) -> int:
             export_stems=not args.no_stems,
             loudness_preset=args.loudness,
             device_mode=args.device_mode,
+            target_wpm=args.target_wpm,
             metadata={"title": args.title} if args.title else {},
         )
         voice_settings = _voice_settings_from_args(args)

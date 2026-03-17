@@ -138,12 +138,12 @@ def test_render_preview_creates_preview_files_for_both_speakers(tmp_path: Path) 
         preview_a = pipeline.render_preview(plan.utterances[0], plan.voice_profiles["A"], "standard")
         preview_b = pipeline.render_preview(plan.utterances[1], plan.voice_profiles["B"], "standard")
 
-    assert preview_a.exists()
-    assert preview_a.parent.name == "previews"
-    assert preview_a.name == "preview_A_0000.wav"
-    assert preview_b.exists()
-    assert preview_b.parent.name == "previews"
-    assert preview_b.name == "preview_B_0001.wav"
+    assert preview_a.path.exists()
+    assert preview_a.path.parent.name == "previews"
+    assert preview_a.path.name == "preview_A_0000.wav"
+    assert preview_b.path.exists()
+    assert preview_b.path.parent.name == "previews"
+    assert preview_b.path.name == "preview_B_0001.wav"
 
 
 def test_render_preview_rejects_blank_reference_path_before_reading_dot(tmp_path: Path) -> None:
@@ -172,14 +172,14 @@ def test_render_preview_reports_honest_stage_progress(tmp_path: Path) -> None:
     ):
         pipeline = OraclePipeline()
         plan = pipeline.prepare_plan(dialogue, tmp_path / "output", speaker_settings, RenderSettings(model_variant="standard"))
-        preview_path = pipeline.render_preview(
+        preview_result = pipeline.render_preview(
             plan.utterances[0],
             plan.voice_profiles["A"],
             "standard",
             progress_callback=events.append,
         )
 
-    assert preview_path.exists()
+    assert preview_result.path.exists()
     assert [event.stage for event in events] == [
         "Loading model",
         "Preparing reference",

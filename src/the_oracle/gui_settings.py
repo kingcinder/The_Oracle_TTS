@@ -93,6 +93,7 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "correction_mode": normalize_correction_mode(str(project.get("correction_mode", "moderate"))),
         "loudness_preset": str(project.get("loudness_preset", "light")),
         "crossfade_ms": int(project.get("crossfade_ms", 20)),
+        "target_wpm": float(project.get("target_wpm", 0.0) or 0.0),
         "output_dir": str(project.get("output_dir", "")),
         "output_filename": str(project.get("output_filename", "")),
     }
