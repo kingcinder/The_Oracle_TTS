@@ -60,6 +60,11 @@ from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, 
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
 from the_oracle.voice_catalog import VoiceChoice, default_voice_choices
 
+# CPU is the only verified Chatterbox execution path in this project.
+# Preview and render always use "cpu"; the constant is defined here so
+# it can be updated in one place if a verified GPU path is added later.
+_DEVICE_MODE: str = "cpu"
+
 
 class RenderWorker(QThread):
     progress = Signal(object)
@@ -82,7 +87,7 @@ class RenderWorker(QThread):
 
 class PreviewWorker(QThread):
     progress = Signal(object)
-    completed = Signal(object)
+    completed = Signal(str)
     failed = Signal(str)
 
     def __init__(self, utterance: Utterance, profile: VoiceProfile, model_variant: str, device_mode: str) -> None:
@@ -94,7 +99,7 @@ class PreviewWorker(QThread):
 
     def run(self) -> None:
         try:
-            preview_result = OraclePipeline().render_preview(
+            preview_path = OraclePipeline().render_preview(
                 self.utterance,
                 self.profile,
                 self.model_variant,
@@ -104,7 +109,7 @@ class PreviewWorker(QThread):
         except Exception as exc:
             self.failed.emit(str(exc))
             return
-        self.completed.emit(preview_result)
+        self.completed.emit(str(preview_path))
 
 
 class RenderProgressDialog(QDialog):
@@ -267,7 +272,6 @@ class MainWindow(QMainWindow):
         self.preview_worker: PreviewWorker | None = None
         self.progress_dialog: RenderProgressDialog | None = None
         self.preview_dialog: RenderProgressDialog | None = None
-        self._preview_row: int | None = None
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
@@ -396,18 +400,10 @@ class MainWindow(QMainWindow):
         self.crossfade_spin = QSpinBox()
         self.crossfade_spin.setRange(0, 500)
         self.crossfade_spin.setValue(RenderSettings().crossfade_ms)
-        self.target_wpm_spin = QDoubleSpinBox()
-        self.target_wpm_spin.setDecimals(1)
-        self.target_wpm_spin.setRange(0.0, 400.0)
-        self.target_wpm_spin.setSingleStep(5.0)
-        self.target_wpm_spin.setValue(0.0)
-        self.measured_wpm_label = QLabel("Measured WPM: \u2013")
         form.addRow("Model Variant", self.variant_combo)
         form.addRow("Correction Mode", self.correction_mode_combo)
         form.addRow("Loudness", self.loudness_combo)
         form.addRow("Crossfade (ms)", self.crossfade_spin)
-        form.addRow("Target WPM (0 = default)", self.target_wpm_spin)
-        form.addRow("Measured WPM", self.measured_wpm_label)
         return box
 
     def _set_correction_mode(self, value: str) -> None:
@@ -509,7 +505,6 @@ class MainWindow(QMainWindow):
     def _render_settings(self) -> RenderSettings:
         variant = self.variant_combo.currentText()
         mode_value = self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText()
-        target_wpm_value = self.target_wpm_spin.value()
         return RenderSettings(
             correction_mode=mode_value,
             model_variant=variant,
@@ -518,9 +513,8 @@ class MainWindow(QMainWindow):
             loudness_preset=self.loudness_combo.currentText(),
             pause_between_turns_ms=self.speaker_a.pause_spin.value(),
             crossfade_ms=self.crossfade_spin.value(),
-            device_mode="cpu",
+            device_mode=_DEVICE_MODE,
             metadata={"output_filename": normalize_output_filename(self.output_name.text())},
-            target_wpm=target_wpm_value if target_wpm_value > 0 else None,
         )
 
     def _default_gui_settings_payload(self) -> dict:
@@ -535,7 +529,6 @@ class MainWindow(QMainWindow):
                 "correction_mode": default_render.correction_mode,
                 "loudness_preset": default_render.loudness_preset,
                 "crossfade_ms": default_render.crossfade_ms,
-                "target_wpm": default_render.target_wpm or 0.0,
                 "output_dir": str(self.paths.output_dir),
                 "output_filename": "",
             },
@@ -574,9 +567,6 @@ class MainWindow(QMainWindow):
         self._set_correction_mode(saved_project.render_settings.correction_mode)
         self.loudness_combo.setCurrentText(saved_project.render_settings.loudness_preset)
         self.crossfade_spin.setValue(saved_project.render_settings.crossfade_ms)
-        self.target_wpm_spin.setValue(saved_project.render_settings.target_wpm or 0.0)
-        measured_wpm = saved_project.plan.metadata.get("measured_wpm", "–") if saved_project.plan else "–"
-        self.measured_wpm_label.setText(f"Measured WPM: {measured_wpm}")
         self._apply_speaker_group(self.speaker_a, saved_project.speaker_settings["A"])
         self._apply_speaker_group(self.speaker_b, saved_project.speaker_settings["B"])
         self._populate_table(self.plan)
@@ -593,13 +583,12 @@ class MainWindow(QMainWindow):
         return {
             "version": 1,
             "name": "",
-            "device_mode": "cpu",
+            "device_mode": _DEVICE_MODE,
             "project": {
                 "model_variant": self.variant_combo.currentText(),
                 "correction_mode": normalize_correction_mode(self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText()),
                 "loudness_preset": self.loudness_combo.currentText(),
                 "crossfade_ms": self.crossfade_spin.value(),
-                "target_wpm": self.target_wpm_spin.value(),
                 "output_dir": self.outdir_path.text() or str(self.paths.output_dir),
                 "output_filename": normalize_output_filename(self.output_name.text()),
                 "delete_confirm_enabled": self.delete_confirm_enabled,
@@ -622,8 +611,6 @@ class MainWindow(QMainWindow):
         self._set_correction_mode(project.get("correction_mode", "moderate"))
         self.loudness_combo.setCurrentText(project.get("loudness_preset", RenderSettings().loudness_preset))
         self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
-        self.target_wpm_spin.setValue(float(project.get("target_wpm", 0.0) or 0.0))
-        self.measured_wpm_label.setText("Measured WPM: \u2013")
         self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
         self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
         self.delete_confirm_enabled = bool(project.get("delete_confirm_enabled", True))
@@ -720,12 +707,16 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Load Template Failed", str(exc))
 
     def new_project(self) -> None:
+        """Clear the current document (input path, analysis table, plan) while
+        intentionally preserving the voice configuration (speaker reference
+        clips, voice settings, render settings, output folder).  This mirrors
+        the expected workflow: load a new script into an already-configured
+        session without having to re-enter reference paths every time."""
         self.current_project_path = None
         self.plan = None
         self.input_path.clear()
         self.error_panel.clear()
         self.table.setRowCount(0)
-        self.measured_wpm_label.setText("Measured WPM: \u2013")
         self._refresh_reference_pickers()
 
     def open_project(self) -> None:
@@ -941,12 +932,11 @@ class MainWindow(QMainWindow):
         self.preview_dialog = RenderProgressDialog(self, title="Generating Preview")
         self.preview_dialog.show()
         self._set_preview_busy(True)
-        self._preview_row = row
         self.preview_worker = PreviewWorker(
             utterance,
             self.plan.voice_profiles[utterance.speaker],
             self.variant_combo.currentText(),
-            self.device_mode_combo.currentData() or "cpu",
+            _DEVICE_MODE,  # CPU is the only verified execution path
         )
         self.preview_worker.progress.connect(self._update_preview_progress)
         self.preview_worker.completed.connect(self._finish_preview)
@@ -1001,15 +991,7 @@ class MainWindow(QMainWindow):
     def _finish_render(self, plan_payload: dict, output_path: str) -> None:
         self.plan = RenderPlan.from_dict(plan_payload)
         self._populate_table(self.plan)
-        measured_wpm = self.plan.metadata.get("measured_wpm")
-        measured_duration = self.plan.metadata.get("measured_duration_seconds")
-        parts = [f"Render complete: {output_path}"]
-        if measured_duration:
-            parts.append(f"duration={measured_duration}s")
-        if measured_wpm:
-            parts.append(f"measured_wpm={measured_wpm}")
-            self.measured_wpm_label.setText(f"Measured WPM: {measured_wpm} (render)")
-        self.error_panel.append(" | ".join(parts))
+        self.error_panel.append(f"Render complete: {output_path}")
         if self.progress_dialog is not None:
             self.progress_dialog.close()
             self.progress_dialog = None
@@ -1031,25 +1013,10 @@ class MainWindow(QMainWindow):
         if self.preview_dialog is not None:
             self.preview_dialog.update_progress(progress)
 
-    def _finish_preview(self, preview_result) -> None:
-        preview_path = getattr(preview_result, "path", preview_result)
-        measured_wpm = getattr(preview_result, "measured_wpm", None)
-        duration_seconds = getattr(preview_result, "duration_seconds", None)
-        self.player.setSource(QUrl.fromLocalFile(str(preview_path)))
+    def _finish_preview(self, preview_path: str) -> None:
+        self.player.setSource(QUrl.fromLocalFile(preview_path))
         self.player.play()
-        summary_parts = [f"Preview ready: {preview_path}"]
-        if duration_seconds is not None:
-            summary_parts.append(f"duration={duration_seconds:.2f}s")
-        if measured_wpm is not None:
-            summary_parts.append(f"measured_wpm={measured_wpm:.2f}")
-            self.measured_wpm_label.setText(f"Measured WPM: {measured_wpm:.2f} (preview)")
-        self.error_panel.append(" | ".join(summary_parts))
-        if self.plan and self._preview_row is not None and 0 <= self._preview_row < len(self.plan.utterances):
-            target = self.plan.utterances[self._preview_row]
-            if duration_seconds is not None:
-                target.duration_seconds = duration_seconds
-            target.chunk_hash = target.chunk_hash or ""
-            self._populate_table(self.plan)
+        self.error_panel.append(f"Preview ready: {preview_path}")
         if self.preview_dialog is not None:
             self.preview_dialog.close()
             self.preview_dialog = None
@@ -1063,7 +1030,6 @@ class MainWindow(QMainWindow):
 
     def _cleanup_preview_worker(self) -> None:
         self._set_preview_busy(False)
-        self._preview_row = None
         if self.preview_worker is not None:
             self.preview_worker.deleteLater()
             self.preview_worker = None

@@ -74,7 +74,14 @@ class VoiceProfile:
             candidate = self.reference_audio[0].expanduser()
         else:
             raise ValueError(f"Voice profile {self.speaker} has no reference audio configured.")
-        if str(candidate).strip() in {"", "."}:
+
+        # Reject empty string, ".", or any path that resolves to cwd without a
+        # real filename component (e.g. Path("") and Path(".") both have no
+        # meaningful stem and Path(".").exists() returns True on any machine).
+        raw = str(candidate)
+        if not raw.strip() or raw.strip() in {".", ".."}:
+            raise ValueError(f"Voice profile {self.speaker} has no reference audio configured.")
+        if not candidate.name or candidate.name in {".", ".."}:
             raise ValueError(f"Voice profile {self.speaker} has no reference audio configured.")
         if candidate.exists() and candidate.is_dir():
             raise ValueError(f"Voice profile {self.speaker} reference audio points to a directory: {candidate}")
