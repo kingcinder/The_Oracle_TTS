@@ -1034,15 +1034,23 @@ class MainWindow(QMainWindow):
             self.preview_worker.deleteLater()
             self.preview_worker = None
 
-    def _set_render_busy(self, busy: bool) -> None:
+    def _set_busy(self, busy: bool) -> None:
+        """Disable or re-enable all interactive widgets during a render or preview.
+
+        Centralised here so adding a new interactive widget only requires one
+        update rather than mirroring the change in both a render and a preview
+        variant.
+        """
         self.render_button.setEnabled(not busy)
         self.analyze_button.setEnabled(not busy)
         self.table.setEnabled(not busy)
 
+    # Convenience aliases so call-sites read naturally.
+    def _set_render_busy(self, busy: bool) -> None:
+        self._set_busy(busy)
+
     def _set_preview_busy(self, busy: bool) -> None:
-        self.render_button.setEnabled(not busy)
-        self.analyze_button.setEnabled(not busy)
-        self.table.setEnabled(not busy)
+        self._set_busy(busy)
 
 
 def launch_gui() -> None:

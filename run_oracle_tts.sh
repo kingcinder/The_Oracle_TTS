@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LTP_JAR_DIR_PATH="${LTP_JAR_DIR_PATH:-$HOME/.cache/language_tool_python/LanguageTool-6.8-SNAPSHOT}"
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

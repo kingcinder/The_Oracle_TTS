@@ -588,8 +588,15 @@ class OraclePipeline:
 
         # Results loop — this is the single source of per-segment progress
         # for both sequential and parallel execution paths.
+        #
+        # ETA note: in parallel mode all synthesis is already complete by the
+        # time this loop runs (the pool has returned), so computing an average
+        # from render_start would give a wildly inflated figure.  We emit 0.0
+        # instead to signal "done" without confusing the progress dialog.
+        # In sequential mode synthesis happens inline so _compute_eta gives a
+        # genuine estimate based on elapsed time so far.
         for result, utterance in zip(results, plan.utterances):
-            eta = _compute_eta(render_start, result.utterance_index, total_segments)
+            eta = 0.0 if should_parallelize else _compute_eta(render_start, result.utterance_index, total_segments)
             stem_segments.append(
                 AudioSegment(
                     path=str(result.stem_path),
@@ -618,6 +625,8 @@ class OraclePipeline:
             timing_entries.append(
                 {
                     "type": "utterance",
+                    # segment_number is 1-based (render order).
+                    # index is 0-based (source utterance position in the plan).
                     "segment_number": result.utterance_index,
                     "index": utterance.index,
                     "speaker": utterance.speaker,
