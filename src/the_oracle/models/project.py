@@ -133,6 +133,7 @@ class Utterance:
     original_start_line: int = 0
     original_end_line: int = 0
     duration_seconds: float | None = None
+    status: str = "pending"  # "pending", "synthesizing", "success", "failed"
     pause_after_ms: int = 180
     parameters: dict[str, Any] = field(default_factory=dict)
     corrections: list[CorrectionRecord] = field(default_factory=list)

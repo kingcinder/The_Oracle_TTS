@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.render_button)
         layout.addLayout(actions)
 
-        self.table = QTableWidget(0, 8)
+        self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels([
             "Index",
             "Speaker",
@@ -328,6 +328,7 @@ class MainWindow(QMainWindow):
             "Repaired Text",
             "Emotion",
             "Duration",
+            "Status",
             "Preview",
             "+/-",
         ])
@@ -795,11 +796,15 @@ class MainWindow(QMainWindow):
             self.table.setCellWidget(row, 4, emotion)
             duration = "" if utterance.duration_seconds is None else f"{utterance.duration_seconds:.2f}s"
             self.table.setItem(row, 5, QTableWidgetItem(duration))
+            # Show status in a dedicated column
+            status = QTableWidgetItem(utterance.status)
+            status.setFlags(status.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row, 6, QTableWidgetItem(status))
             preview = QPushButton("Preview")
             preview.clicked.connect(lambda _checked=False, current=row: self.preview_utterance(current))
-            self.table.setCellWidget(row, 6, preview)
+            self.table.setCellWidget(row, 7, preview)
             control = self._create_row_action(row)
-            self.table.setCellWidget(row, 7, control)
+            self.table.setCellWidget(row, 8, control)
 
     def _create_row_action(self, row: int) -> QComboBox:
         control = QComboBox()
@@ -897,6 +902,9 @@ class MainWindow(QMainWindow):
                 emotion_text = emotion_widget.currentData() or emotion_widget.currentText()
                 utterance.manual_emotion_override = utterance.manual_emotion_override or emotion_text != utterance.emotion
                 utterance.emotion = emotion_text
+            # Reset status and duration before rerender to avoid stale state
+            utterance.status = "pending"
+            utterance.duration_seconds = None
         speaker_settings = self._speaker_settings()
         self.plan.voice_profiles = self.plan.voice_profiles | {
             "A": replace(self.plan.voice_profiles["A"], engine_params=speaker_settings["A"].voice_settings),
