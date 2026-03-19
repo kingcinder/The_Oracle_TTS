@@ -465,6 +465,8 @@ class OraclePipeline:
         timing_entries: list[dict[str, Any]] = []
         render_trace_lines: list[str] = []
         total_segments = len(plan.utterances)
+        # total_steps will be recalculated after chunking, since chunked utterances
+        # expand into multiple synthesis tasks. For now use a placeholder.
         total_steps = len(plan.voice_profiles) + total_segments + 3
         completed_steps = 0
 
@@ -592,6 +594,11 @@ class OraclePipeline:
                     raw_tasks.append(task)
                     task_to_utterance_map[task_index] = utterance
 
+        # Recalculate total_steps after chunking, since chunked utterances
+        # expand into multiple synthesis tasks. The +3 accounts for:
+        # model load, assembly, and output write stages.
+        total_steps = len(plan.voice_profiles) + len(raw_tasks) + 3
+
         # Emit a single "queued" progress event before handing off to the pool
         # so the UI doesn't appear frozen while the pool spins up.
         emit_progress(
@@ -636,11 +643,21 @@ class OraclePipeline:
         #
         # When chunking occurs, results may outnumber plan.utterances. We use
         # task_to_utterance_map to look up the source utterance for each result.
+        # Progress is reported in terms of synthesis tasks (raw_tasks), not
+        # original utterances, since each chunk is a separate synthesis operation.
+        utterance_counter = 0  # Track completed utterances for progress display
+        last_utterance_index = -1
         for result in results:
             utterance = task_to_utterance_map.get(result.utterance_index)
             if utterance is None:
                 LOGGER.warning("No utterance found for task index %s", result.utterance_index)
                 continue
+            
+            # Track unique utterances completed (not individual chunks)
+            if utterance.index != last_utterance_index:
+                utterance_counter += 1
+                last_utterance_index = utterance.index
+            
             eta = 0.0 if should_parallelize else _compute_eta(render_start, result.utterance_index, len(raw_tasks))
             stem_segments.append(
                 AudioSegment(
