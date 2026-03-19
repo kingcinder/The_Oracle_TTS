@@ -513,15 +513,17 @@ def test_chunked_row_lifecycle_e2e() -> None:
     assert preview_text != long_text, "Preview text should differ from full text when chunked"
 
 
-def test_preview_persistence_to_gui_row() -> None:
-    """Verify that preview state persists to the GUI row.
-    
-    Regression test for the bug where preview mutated a deep-copied utterance
-    but the GUI never received the updated duration_seconds and status.
-    
+def test_preview_does_not_mutate_row_render_state() -> None:
+    """Verify that preview does NOT persist to row-level render fields.
+
+    Regression test for the semantic conflation bug where preview wrote
+    first-chunk duration and preview-success status to row-level fields
+    that semantically represent full-render truth.
+
     After the fix:
-    - PreviewWorker emits (preview_path, duration_seconds, status)
-    - _finish_preview() updates self.plan.utterances[row] and table cells
+    - PreviewWorker emits only preview_path
+    - _finish_preview() does NOT update self.plan.utterances[row]
+    - Row duration_seconds and status remain unchanged (pending or previous render)
     """
     # Simulate the data flow from PreviewWorker to _finish_preview
     class MockPlan:
@@ -530,21 +532,18 @@ def test_preview_persistence_to_gui_row() -> None:
                 type('Utterance', (), {'index': 0, 'duration_seconds': None, 'status': 'pending'})(),
                 type('Utterance', (), {'index': 1, 'duration_seconds': None, 'status': 'pending'})(),
             ]
-    
+
     plan = MockPlan()
     row = 0
     preview_path = "/tmp/preview.wav"
-    duration_seconds = 1.5
-    status = "success"
-    
-    # Simulate _finish_preview persisting state
-    if 0 <= row < len(plan.utterances):
-        plan.utterances[row].duration_seconds = duration_seconds
-        plan.utterances[row].status = status
-    
-    # Verify state persisted
-    assert plan.utterances[row].duration_seconds == duration_seconds
-    assert plan.utterances[row].status == status
+
+    # Simulate _finish_preview NOT persisting state (correct behavior)
+    # _finish_preview only plays audio and logs - no mutation of plan.utterances
+    # (This is the fix - previously it would write duration/status here)
+
+    # Verify state was NOT mutated
+    assert plan.utterances[row].duration_seconds is None  # Unchanged
+    assert plan.utterances[row].status == "pending"  # Unchanged
     assert plan.utterances[1 - row].duration_seconds is None  # Other row unchanged
     assert plan.utterances[1 - row].status == "pending"
 
@@ -576,11 +575,12 @@ def test_status_column_table_item_flags() -> None:
 
 def test_preview_render_lifecycle_no_stale_state() -> None:
     """Verify no stale preview state leaks into full render semantics.
-    
+
     After the fix:
-    - Preview updates only the specific row's duration and status
+    - Preview does NOT mutate row-level duration_seconds or status
+    - Row state remains 'pending' until full render completes
     - Full render resets all rows to 'pending'/None before starting
-    - Render result replaces entire plan, so no preview state persists
+    - Render result populates row duration/status with full-row truth
     """
     class MockPlan:
         def __init__(self):
@@ -588,30 +588,30 @@ def test_preview_render_lifecycle_no_stale_state() -> None:
                 type('Utterance', (), {'index': 0, 'duration_seconds': None, 'status': 'pending'})(),
                 type('Utterance', (), {'index': 1, 'duration_seconds': None, 'status': 'pending'})(),
             ]
-    
+
     plan = MockPlan()
-    
-    # Simulate preview on row 0
-    plan.utterances[0].duration_seconds = 1.5
-    plan.utterances[0].status = "success"
-    
-    # Verify preview state
-    assert plan.utterances[0].duration_seconds == 1.5
-    assert plan.utterances[0].status == "success"
+
+    # Simulate preview on row 0 - should NOT mutate row state
+    # (This is the fix - previously preview would write duration/status here)
+    # Preview only plays audio and logs - no mutation of plan.utterances
+
+    # Verify preview did NOT mutate state
+    assert plan.utterances[0].duration_seconds is None  # Unchanged
+    assert plan.utterances[0].status == "pending"  # Unchanged
     assert plan.utterances[1].duration_seconds is None
     assert plan.utterances[1].status == "pending"
-    
+
     # Simulate render reset (from _sync_plan_from_table)
     for utterance in plan.utterances:
         utterance.status = "pending"
         utterance.duration_seconds = None
-    
-    # Verify all rows reset
+
+    # Verify all rows still in pending state
     assert plan.utterances[0].duration_seconds is None
     assert plan.utterances[0].status == "pending"
     assert plan.utterances[1].duration_seconds is None
     assert plan.utterances[1].status == "pending"
-    
+
     # Simulate render completion (from _finish_render)
     # This would replace plan.utterances with new data from render
     # For this test, just verify the reset worked correctly

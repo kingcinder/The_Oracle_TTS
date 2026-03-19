@@ -860,15 +860,17 @@ class OraclePipeline:
         # Apply the same chunking logic as full render for parity
         text = utterance.text_for_tts()
         chunks = chunk_utterance(text, utterance.index)
-        
+
         # For preview, only synthesize the first chunk to keep it fast
         # This matches what the user will hear for the start of the utterance
         chunk_text = chunks[0].text if chunks else text
         rendered = engine.synthesize(chunk_text, conditioning, utterance.engine_settings)
-        
-        # Set duration and status on the utterance object so preview can report it
-        utterance.duration_seconds = round(len(rendered) / engine.sample_rate, 6)
-        utterance.status = "success"  # Preview succeeded
+
+        # Do NOT set duration_seconds or status on the utterance object.
+        # Preview is a probe operation, not a render. Row-level duration and
+        # status fields represent full-render truth, not preview-local truth.
+        # For chunked rows, preview duration would be first-chunk only (misleading),
+        # and preview success is not the same as render success.
         preview_path = project_cache.preview_path(utterance.speaker, utterance.index)
         save_wav(preview_path, rendered, engine.sample_rate)
         emit_preview_progress("Complete", f"Preview ready: {preview_path.name}", 4)
