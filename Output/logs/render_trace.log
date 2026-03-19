@@ -1,4 +1,0 @@
-segment 1/2 | utterance=0 | speaker=A | cache_hit=False | chunk_hash=ac6c8c8bf965114a79fb4fa6fb24bdb5f9a16c3a30483e7f5e5e6f8dc255e842 | stem=/home/oem/Documents/The_Oracle_TTS/Output/cache/utterances/ac6c8c8bf965114a79fb4fa6fb24bdb5f9a16c3a30483e7f5e5e6f8dc255e842.wav | exported=/home/oem/Documents/The_Oracle_TTS/Output/stems/0000_A.wav
-segment 2/2 | utterance=1 | speaker=B | cache_hit=False | chunk_hash=cbfa3ec40edddf0ca62bc1d2091d4c36429161b59bd31ab69eb0bce277a4dada | stem=/home/oem/Documents/The_Oracle_TTS/Output/cache/utterances/cbfa3ec40edddf0ca62bc1d2091d4c36429161b59bd31ab69eb0bce277a4dada.wav | exported=/home/oem/Documents/The_Oracle_TTS/Output/stems/0001_B.wav
-assemble | segments=2 | joins=1 | crossfade_ms=20 | loudness=light
-output | path=/home/oem/Documents/The_Oracle_TTS/Output/What is, reality? (2).flac | sample_rate=24000

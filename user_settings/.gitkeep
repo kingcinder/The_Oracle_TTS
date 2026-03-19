@@ -1,0 +1,5 @@
+# User Settings Directory
+
+GUI settings and configuration files are stored here.
+
+This directory is tracked but its contents are ignored by Git.

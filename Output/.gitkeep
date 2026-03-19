@@ -1,0 +1,5 @@
+# Output Directory
+
+Rendered FLAC audio files are written here.
+
+This directory is tracked but its contents are ignored by Git.
