@@ -645,19 +645,27 @@ class OraclePipeline:
         # task_to_utterance_map to look up the source utterance for each result.
         # Progress is reported in terms of synthesis tasks (raw_tasks), not
         # original utterances, since each chunk is a separate synthesis operation.
+        # Duration is accumulated per utterance so that chunked rows show the
+        # total duration of all their chunks combined.
         utterance_counter = 0  # Track completed utterances for progress display
         last_utterance_index = -1
+        utterance_durations: dict[int, float] = {}  # Accumulate duration per utterance index
         for result in results:
             utterance = task_to_utterance_map.get(result.utterance_index)
             if utterance is None:
                 LOGGER.warning("No utterance found for task index %s", result.utterance_index)
                 continue
-            
+
             # Track unique utterances completed (not individual chunks)
             if utterance.index != last_utterance_index:
                 utterance_counter += 1
                 last_utterance_index = utterance.index
-            
+
+            # Accumulate duration for this utterance (handles chunked utterances)
+            if utterance.index not in utterance_durations:
+                utterance_durations[utterance.index] = 0.0
+            utterance_durations[utterance.index] += result.duration_seconds
+
             eta = 0.0 if should_parallelize else _compute_eta(render_start, result.utterance_index, len(raw_tasks))
             stem_segments.append(
                 AudioSegment(
@@ -715,6 +723,13 @@ class OraclePipeline:
                 total_segments=len(raw_tasks),
                 eta_seconds=eta,
             )
+
+        # Propagate accumulated durations back to utterance objects so the GUI
+        # can display them in the duration column. This handles both chunked
+        # and non-chunked utterances.
+        for utterance in plan.utterances:
+            if utterance.index in utterance_durations:
+                utterance.duration_seconds = round(utterance_durations[utterance.index], 6)
 
         plan.metadata["cache_reused_on_second_pass"] = str(not compute_incremental_changes(previous_plan, plan))
         emit_progress(
@@ -815,6 +830,8 @@ class OraclePipeline:
         conditioning = engine.prepare_conditioning(project_cache, utterance.speaker, cached_reference, profile.engine_params)
         emit_preview_progress("Generating preview", f"Generating preview for segment {utterance.index}", 3)
         rendered = engine.synthesize(utterance.text_for_tts(), conditioning, utterance.engine_settings)
+        # Set duration on the utterance object so preview can report it
+        utterance.duration_seconds = round(len(rendered) / engine.sample_rate, 6)
         preview_path = project_cache.preview_path(utterance.speaker, utterance.index)
         save_wav(preview_path, rendered, engine.sample_rate)
         emit_preview_progress("Complete", f"Preview ready: {preview_path.name}", 4)

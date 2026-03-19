@@ -391,3 +391,59 @@ def test_chunked_utterance_progress_accounting() -> None:
     progress_percentage = (completed_steps / old_total_steps) * 100
     assert progress_percentage > 100, \
         "Test setup: old calculation should show >100% progress (the bug)"
+
+
+def test_duration_propagation_for_chunked_utterances() -> None:
+    """Verify that duration is accumulated correctly for chunked utterances.
+    
+    When an utterance is split into multiple chunks, the duration shown in
+    the GUI should be the sum of all chunk durations, not just the last one.
+    """
+    # Simulate what happens in pipeline.render() when accumulating durations
+    utterance_durations: dict[int, float] = {}
+    
+    # Simulate results from synthesis:
+    # Utterance 0: 1 chunk, 2.5 seconds
+    # Utterance 1: 3 chunks, 1.2 + 1.8 + 0.9 = 3.9 seconds total
+    # Utterance 2: 1 chunk, 1.5 seconds
+    # Utterance 3: 2 chunks, 2.0 + 1.5 = 3.5 seconds total
+    
+    results = [
+        # (utterance_index, chunk_duration)
+        (0, 2.5),
+        (1, 1.2),
+        (1, 1.8),
+        (1, 0.9),
+        (2, 1.5),
+        (3, 2.0),
+        (3, 1.5),
+    ]
+    
+    # Accumulate durations as the pipeline does
+    for utterance_index, chunk_duration in results:
+        if utterance_index not in utterance_durations:
+            utterance_durations[utterance_index] = 0.0
+        utterance_durations[utterance_index] += chunk_duration
+    
+    # Verify accumulation is correct
+    assert utterance_durations[0] == 2.5
+    assert utterance_durations[1] == 3.9  # 1.2 + 1.8 + 0.9
+    assert utterance_durations[2] == 1.5
+    assert utterance_durations[3] == 3.5  # 2.0 + 1.5
+    
+    # Simulate propagating back to utterance objects
+    class MockUtterance:
+        def __init__(self, index: int):
+            self.index = index
+            self.duration_seconds = None
+    
+    utterances = [MockUtterance(i) for i in range(4)]
+    for utterance in utterances:
+        if utterance.index in utterance_durations:
+            utterance.duration_seconds = round(utterance_durations[utterance.index], 6)
+    
+    # Verify durations are set correctly on utterance objects
+    assert utterances[0].duration_seconds == 2.5
+    assert utterances[1].duration_seconds == 3.9
+    assert utterances[2].duration_seconds == 1.5
+    assert utterances[3].duration_seconds == 3.5
