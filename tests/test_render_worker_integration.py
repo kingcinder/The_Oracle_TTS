@@ -294,3 +294,38 @@ def test_render_worker_pool_failure_triggers_sequential(tmp_path: Path) -> None:
     assert called["pool"] == 1
     assert called["seq"] == 1
     assert plan.metadata.get("synthesis_mode") == "sequential"
+
+
+def test_long_utterance_gets_chunked_before_synthesis(tmp_path: Path) -> None:
+    """Verify that overlong utterances are split into multiple synthesis tasks."""
+    from the_oracle.pipeline import chunk_utterance
+    
+    # Create a long utterance that should be chunked
+    long_text = "This is a very long sentence. " * 20  # ~560 chars
+    chunks = chunk_utterance(long_text, parent_index=1)
+    
+    # Should produce multiple chunks
+    assert len(chunks) > 1
+    # All chunks should be within size limits
+    from the_oracle.utils.chunking import MAX_CHUNK_SIZE
+    assert all(len(c.text) <= MAX_CHUNK_SIZE + 50 for c in chunks)  # Small tolerance
+    # Chunks should preserve order
+    for i, chunk in enumerate(chunks):
+        assert chunk.chunk_sequence == i
+        assert chunk.parent_index == 1
+    # Reassembly should match original
+    from the_oracle.utils.chunking import verify_chunking
+    assert verify_chunking(long_text, chunks) is True
+
+
+def test_short_utterance_stays_unsplit(tmp_path: Path) -> None:
+    """Verify that short utterances remain as single chunks."""
+    from the_oracle.pipeline import chunk_utterance
+    from the_oracle.utils.chunking import MIN_CHUNK_SIZE
+    
+    short_text = "Short utterance."
+    chunks = chunk_utterance(short_text, parent_index=1)
+    
+    assert len(chunks) == 1
+    assert chunks[0].is_single_chunk is True
+    assert chunks[0].text == short_text
