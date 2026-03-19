@@ -1,3 +1,7 @@
+# Archive folder (legacy/user-specific files)
+_archive/
+
+# Python/build artifacts
 .envs/
 build/
 __pycache__/
@@ -8,9 +12,21 @@ __pycache__/
 .model_cache/
 .tools/
 .venv/
-Output/
+
+# Third-party and examples
 examples/
 third_party/
+
+# Temporary development folders
+tmp_gui_repo/
+
+# Qwen Code config
+.qwen/
+
+# Temporary credentials
+gha-creds-*.json
+
+# Legacy/backup files
 README.md.bak.*
 The_Oracle_TTS.md
 bootstrap_dualvoice_engines.sh
@@ -20,8 +36,4 @@ codex_round_two_checklist.md
 codex_round_two_prompt.txt
 make_alpha_release_bundle.sh
 =1.24,
-Input/
-Seashells/
-release_artifacts/
-user_settings/
 NEXT_CODEX_PROMPT.txt
