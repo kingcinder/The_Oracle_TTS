@@ -1,0 +1,5 @@
+# Release Artifacts Directory
+
+Build outputs (tarballs, checksums, manifests) are created here by the release script.
+
+This directory is tracked but its contents are ignored by Git.

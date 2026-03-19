@@ -1,0 +1,5 @@
+# Profiles Directory
+
+Voice profile JSON files are stored here during rendering.
+
+This directory is tracked but its contents are ignored by Git.
