@@ -146,7 +146,31 @@ def _sequential_worker_execution(
 ) -> list[SynthesisResult]:
     _worker_initialize(engine_cls, variant, device, project_dir)
     try:
-        return [_worker_process_task(task) for task in tasks]
+        results = []
+        for task in tasks:
+            try:
+                result = _worker_process_task(task)
+                results.append(result)
+            except Exception as exc:
+                # Log the failure but continue with remaining tasks
+                # This preserves partial results for truthful row state
+                LOGGER.error("Synthesis failed for task %s: %s", task.utterance_index, exc)
+                # Create a failure marker result for this task
+                results.append(SynthesisResult(
+                    utterance_index=task.utterance_index,
+                    speaker=task.speaker,
+                    stem_path=Path(""),
+                    exported_stem_path="",
+                    duration_seconds=0.0,
+                    chunk_hash="",
+                    cache_hit=False,
+                    synthesize_seconds=0.0,
+                    load_audio_seconds=0.0,
+                    segment_total_seconds=0.0,
+                    sample_rate=0,
+                    error=str(exc),
+                ))
+        return results
     finally:
         _worker_reset()
 
@@ -209,6 +233,7 @@ class SynthesisResult:
     load_audio_seconds: float
     segment_total_seconds: float
     sample_rate: int
+    error: str | None = None  # Set if synthesis failed for this task
 
 
 def synthesize_task(
@@ -654,6 +679,8 @@ class OraclePipeline:
         utterance_durations: dict[int, float] = {}  # Accumulate duration per utterance index
         utterance_chunk_counts: dict[int, int] = {}  # Count chunks per utterance
         utterance_success_chunks: dict[int, int] = {}  # Count successful chunks per utterance
+        utterance_failed_chunks: dict[int, int] = {}  # Count failed chunks per utterance
+        failed_row_indices: set[int] = set()  # Track which rows had failures
         for result in results:
             utterance = task_to_utterance_map.get(result.utterance_index)
             if utterance is None:
@@ -669,29 +696,36 @@ class OraclePipeline:
             if utterance.index not in utterance_chunk_counts:
                 utterance_chunk_counts[utterance.index] = 0
                 utterance_success_chunks[utterance.index] = 0
+                utterance_failed_chunks[utterance.index] = 0
             utterance_chunk_counts[utterance.index] += 1
-            
-            # Accumulate duration for this utterance (handles chunked utterances)
-            if utterance.index not in utterance_durations:
-                utterance_durations[utterance.index] = 0.0
-            utterance_durations[utterance.index] += result.duration_seconds
-            
-            # Track successful chunks (cache hits and misses both count as success)
-            utterance_success_chunks[utterance.index] += 1
 
-            eta = 0.0 if should_parallelize else _compute_eta(render_start, result.utterance_index, len(raw_tasks))
-            stem_segments.append(
-                AudioSegment(
-                    path=str(result.stem_path),
-                    sample_rate=result.sample_rate,
-                    pause_after_ms=utterance.pause_after_ms,
-                    duration_seconds=result.duration_seconds,
-                    segment_index=utterance.index,
-                    speaker=utterance.speaker,
-                    chunk_hash=result.chunk_hash,
-                    exported_path=result.exported_stem_path,
+            # Check if this task failed
+            if result.error is not None:
+                # This chunk failed - track it but don't add duration
+                utterance_failed_chunks[utterance.index] += 1
+                failed_row_indices.add(utterance.index)
+                LOGGER.warning("Chunk %s/%s for utterance %s failed: %s", 
+                             result.utterance_index, len(raw_tasks), utterance.index, result.error)
+            else:
+                # Accumulate duration for successful chunks only
+                if utterance.index not in utterance_durations:
+                    utterance_durations[utterance.index] = 0.0
+                utterance_durations[utterance.index] += result.duration_seconds
+                utterance_success_chunks[utterance.index] += 1
+
+                # Only add successful stems to assembly
+                stem_segments.append(
+                    AudioSegment(
+                        path=str(result.stem_path),
+                        sample_rate=result.sample_rate,
+                        pause_after_ms=utterance.pause_after_ms,
+                        duration_seconds=result.duration_seconds,
+                        segment_index=utterance.index,
+                        speaker=utterance.speaker,
+                        chunk_hash=result.chunk_hash,
+                        exported_path=result.exported_stem_path,
+                    )
                 )
-            )
             render_trace_lines.append(
                 "segment {current}/{total} | utterance={utterance} | speaker={speaker} | cache_hit={cache_hit} | "
                 "chunk_hash={chunk_hash} | stem={stem} | exported={exported}".format(
@@ -740,23 +774,35 @@ class OraclePipeline:
         # Propagate accumulated durations and status back to utterance objects
         # so the GUI can display them. This handles both chunked and non-chunked
         # utterances. Status is "success" only when all chunks for that utterance
-        # succeeded, otherwise "failed".
+        # succeeded, "failed" if any chunk failed, "pending" if never reached.
         for utterance in plan.utterances:
-            if utterance.index in utterance_durations:
+            # Set duration only for rows that had successful chunks
+            if utterance.index in utterance_durations and utterance_durations[utterance.index] > 0:
                 utterance.duration_seconds = round(utterance_durations[utterance.index], 6)
+            
             # Set status based on chunk aggregation
             if utterance.index in utterance_chunk_counts:
                 total_chunks = utterance_chunk_counts[utterance.index]
                 success_chunks = utterance_success_chunks.get(utterance.index, 0)
-                if success_chunks == total_chunks and total_chunks > 0:
+                failed_chunks = utterance_failed_chunks.get(utterance.index, 0)
+                
+                if failed_chunks > 0:
+                    # At least one chunk failed - row is failed
+                    utterance.status = "failed"
+                elif success_chunks == total_chunks and total_chunks > 0:
+                    # All chunks succeeded
                     utterance.status = "success"
-                elif success_chunks > 0:
-                    # Partial success - some chunks succeeded, some failed
-                    # This shouldn't happen in current flow (failure stops all)
-                    # but handle it truthfully
-                    utterance.status = "failed"
                 else:
+                    # Should not happen, but default to failed
                     utterance.status = "failed"
+            # Rows not in utterance_chunk_counts remain "pending" (never reached)
+
+        # Record failure information in plan metadata for GUI to display
+        if failed_row_indices:
+            plan.metadata["failed_rows"] = ",".join(str(i) for i in sorted(failed_row_indices))
+            plan.metadata["render_outcome"] = "partial_failure"
+        else:
+            plan.metadata["render_outcome"] = "success"
 
         plan.metadata["cache_reused_on_second_pass"] = str(not compute_incremental_changes(previous_plan, plan))
         emit_progress(
