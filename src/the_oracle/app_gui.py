@@ -87,7 +87,7 @@ class RenderWorker(QThread):
 
 class PreviewWorker(QThread):
     progress = Signal(object)
-    completed = Signal(str)
+    completed = Signal(str, float, str)  # preview_path, duration_seconds, status
     failed = Signal(str)
 
     def __init__(self, utterance: Utterance, profile: VoiceProfile, model_variant: str, device_mode: str) -> None:
@@ -109,7 +109,8 @@ class PreviewWorker(QThread):
         except Exception as exc:
             self.failed.emit(str(exc))
             return
-        self.completed.emit(str(preview_path))
+        # Emit the mutated utterance data along with the preview path
+        self.completed.emit(str(preview_path), self.utterance.duration_seconds or 0.0, self.utterance.status)
 
 
 class RenderProgressDialog(QDialog):
@@ -799,7 +800,7 @@ class MainWindow(QMainWindow):
             # Show status in a dedicated column
             status = QTableWidgetItem(utterance.status)
             status.setFlags(status.flags() & ~Qt.ItemIsEditable)
-            self.table.setItem(row, 6, QTableWidgetItem(status))
+            self.table.setItem(row, 6, status)
             preview = QPushButton("Preview")
             preview.clicked.connect(lambda _checked=False, current=row: self.preview_utterance(current))
             self.table.setCellWidget(row, 7, preview)
@@ -947,7 +948,7 @@ class MainWindow(QMainWindow):
             _DEVICE_MODE,  # CPU is the only verified execution path
         )
         self.preview_worker.progress.connect(self._update_preview_progress)
-        self.preview_worker.completed.connect(self._finish_preview)
+        self.preview_worker.completed.connect(lambda path, duration, status: self._finish_preview(row, path, duration, status))
         self.preview_worker.failed.connect(self._fail_preview)
         self.preview_worker.finished.connect(self._cleanup_preview_worker)
         self.preview_worker.start()
@@ -1021,7 +1022,18 @@ class MainWindow(QMainWindow):
         if self.preview_dialog is not None:
             self.preview_dialog.update_progress(progress)
 
-    def _finish_preview(self, preview_path: str) -> None:
+    def _finish_preview(self, row: int, preview_path: str, duration_seconds: float, status: str) -> None:
+        # Persist preview state to the plan so the GUI shows truthful row state
+        if 0 <= row < len(self.plan.utterances):
+            self.plan.utterances[row].duration_seconds = duration_seconds
+            self.plan.utterances[row].status = status
+            # Update the specific table cells for duration and status
+            duration_text = f"{duration_seconds:.2f}s" if duration_seconds else ""
+            self.table.setItem(row, 5, QTableWidgetItem(duration_text))
+            status_item = QTableWidgetItem(status)
+            status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row, 6, status_item)
+        
         self.player.setSource(QUrl.fromLocalFile(preview_path))
         self.player.play()
         self.error_panel.append(f"Preview ready: {preview_path}")
