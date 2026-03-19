@@ -1,0 +1,30 @@
+{
+  "name": "Speaker B",
+  "speaker": "B",
+  "reference_audio": [
+    "Seashells/Cody's Seashell1.wav"
+  ],
+  "neutral_reference": "Seashells/Cody's Seashell1.wav",
+  "emotion_references": {},
+  "engine_params": {
+    "variant": "standard",
+    "language": "en",
+    "cfg_weight": 0.5,
+    "exaggeration": 0.5,
+    "temperature": 0.8,
+    "repetition_penalty": 1.2,
+    "min_p": 0.05,
+    "top_p": 1.0,
+    "top_k": 1000,
+    "norm_loudness": true,
+    "pause_ms": 180,
+    "crossfade_ms": 20,
+    "emotion_intensity": 1.0,
+    "naturalness": 0.0
+  },
+  "conditioning_cache_id": "0fdbdd6f6450508b9a8d0a22195a7299d5beaf76531e55e19b25f4456067433a",
+  "normalized_reference_audio": [
+    "/home/oem/Documents/The_Oracle_TTS/Output/manual_test/cache/references/B_2dd90d2bb9fb_24000.wav"
+  ],
+  "reference_audio_hash": "2dd90d2bb9fb029ef53c48af515a0431b555506457fb7b8415285df97fad0e92"
+}

@@ -1,0 +1,5 @@
+segment 1/3 | utterance=0 | speaker=A | cache_hit=True | chunk_hash=5d86047a17feea8dce7a44140d1916383ecb19f460f2bfee6058a0ff1ad66cb6 | stem=Output/cli-render/cache/utterances/5d86047a17feea8dce7a44140d1916383ecb19f460f2bfee6058a0ff1ad66cb6.wav | exported=Output/cli-render/stems/0000_A.wav
+segment 2/3 | utterance=1 | speaker=B | cache_hit=True | chunk_hash=d9b17d3bcad7c0e44a82e69ed24e7b85471ec6c82692edbf91ce49c91530caee | stem=Output/cli-render/cache/utterances/d9b17d3bcad7c0e44a82e69ed24e7b85471ec6c82692edbf91ce49c91530caee.wav | exported=Output/cli-render/stems/0001_B.wav
+segment 3/3 | utterance=2 | speaker=A | cache_hit=True | chunk_hash=b3489a1203e85918d30e5c72f09facf1539818f5816d5e0faeec66849d370ae2 | stem=Output/cli-render/cache/utterances/b3489a1203e85918d30e5c72f09facf1539818f5816d5e0faeec66849d370ae2.wav | exported=Output/cli-render/stems/0002_A.wav
+assemble | segments=3 | joins=2 | crossfade_ms=20 | loudness=light
+output | path=Output/cli-render/cli_short (2).flac | sample_rate=24000

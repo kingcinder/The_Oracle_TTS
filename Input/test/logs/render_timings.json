@@ -1,0 +1,152 @@
+{
+  "count": 15,
+  "entries": [
+    {
+      "type": "speaker_prep",
+      "speaker": "A",
+      "seconds": 9.424648
+    },
+    {
+      "type": "speaker_prep",
+      "speaker": "B",
+      "seconds": 0.000832
+    },
+    {
+      "type": "utterance",
+      "index": 0,
+      "speaker": "A",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000331,
+      "segment_total_seconds": 0.000695,
+      "inter_segment_overhead_seconds": 0.000695
+    },
+    {
+      "type": "utterance",
+      "index": 1,
+      "speaker": "B",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000199,
+      "segment_total_seconds": 0.000506,
+      "inter_segment_overhead_seconds": 0.000506
+    },
+    {
+      "type": "utterance",
+      "index": 2,
+      "speaker": "A",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000442,
+      "segment_total_seconds": 0.000879,
+      "inter_segment_overhead_seconds": 0.000879
+    },
+    {
+      "type": "utterance",
+      "index": 3,
+      "speaker": "B",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000341,
+      "segment_total_seconds": 0.000691,
+      "inter_segment_overhead_seconds": 0.000691
+    },
+    {
+      "type": "utterance",
+      "index": 4,
+      "speaker": "B",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000143,
+      "segment_total_seconds": 0.00041,
+      "inter_segment_overhead_seconds": 0.00041
+    },
+    {
+      "type": "utterance",
+      "index": 5,
+      "speaker": "B",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000201,
+      "segment_total_seconds": 0.000522,
+      "inter_segment_overhead_seconds": 0.000522
+    },
+    {
+      "type": "utterance",
+      "index": 6,
+      "speaker": "B",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000122,
+      "segment_total_seconds": 0.000375,
+      "inter_segment_overhead_seconds": 0.000375
+    },
+    {
+      "type": "utterance",
+      "index": 7,
+      "speaker": "B",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000283,
+      "segment_total_seconds": 0.000656,
+      "inter_segment_overhead_seconds": 0.000656
+    },
+    {
+      "type": "utterance",
+      "index": 8,
+      "speaker": "A",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000215,
+      "segment_total_seconds": 0.000498,
+      "inter_segment_overhead_seconds": 0.000498
+    },
+    {
+      "type": "utterance",
+      "index": 9,
+      "speaker": "B",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000406,
+      "segment_total_seconds": 0.000797,
+      "inter_segment_overhead_seconds": 0.000797
+    },
+    {
+      "type": "utterance",
+      "index": 10,
+      "speaker": "A",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000153,
+      "segment_total_seconds": 0.000372,
+      "inter_segment_overhead_seconds": 0.000372
+    },
+    {
+      "type": "utterance",
+      "index": 11,
+      "speaker": "B",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000228,
+      "segment_total_seconds": 0.000506,
+      "inter_segment_overhead_seconds": 0.000506
+    },
+    {
+      "type": "utterance",
+      "index": 12,
+      "speaker": "B",
+      "cache_hit": true,
+      "synthesize_seconds": 0.0,
+      "load_audio_seconds": 0.000277,
+      "segment_total_seconds": 0.00059,
+      "inter_segment_overhead_seconds": 0.00059
+    }
+  ],
+  "summary": {
+    "utterance_count": 13,
+    "cache_hits": 13,
+    "cache_misses": 0,
+    "total_synthesize_seconds": 0.0,
+    "total_overhead_seconds": 0.007497
+  }
+}
