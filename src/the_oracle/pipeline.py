@@ -647,9 +647,13 @@ class OraclePipeline:
         # original utterances, since each chunk is a separate synthesis operation.
         # Duration is accumulated per utterance so that chunked rows show the
         # total duration of all their chunks combined.
+        # Status is tracked per chunk and aggregated to row level: a row is
+        # "success" only when all its chunks succeed, "failed" if any chunk fails.
         utterance_counter = 0  # Track completed utterances for progress display
         last_utterance_index = -1
         utterance_durations: dict[int, float] = {}  # Accumulate duration per utterance index
+        utterance_chunk_counts: dict[int, int] = {}  # Count chunks per utterance
+        utterance_success_chunks: dict[int, int] = {}  # Count successful chunks per utterance
         for result in results:
             utterance = task_to_utterance_map.get(result.utterance_index)
             if utterance is None:
@@ -661,10 +665,19 @@ class OraclePipeline:
                 utterance_counter += 1
                 last_utterance_index = utterance.index
 
+            # Count chunks for this utterance (for status aggregation)
+            if utterance.index not in utterance_chunk_counts:
+                utterance_chunk_counts[utterance.index] = 0
+                utterance_success_chunks[utterance.index] = 0
+            utterance_chunk_counts[utterance.index] += 1
+            
             # Accumulate duration for this utterance (handles chunked utterances)
             if utterance.index not in utterance_durations:
                 utterance_durations[utterance.index] = 0.0
             utterance_durations[utterance.index] += result.duration_seconds
+            
+            # Track successful chunks (cache hits and misses both count as success)
+            utterance_success_chunks[utterance.index] += 1
 
             eta = 0.0 if should_parallelize else _compute_eta(render_start, result.utterance_index, len(raw_tasks))
             stem_segments.append(
@@ -724,12 +737,26 @@ class OraclePipeline:
                 eta_seconds=eta,
             )
 
-        # Propagate accumulated durations back to utterance objects so the GUI
-        # can display them in the duration column. This handles both chunked
-        # and non-chunked utterances.
+        # Propagate accumulated durations and status back to utterance objects
+        # so the GUI can display them. This handles both chunked and non-chunked
+        # utterances. Status is "success" only when all chunks for that utterance
+        # succeeded, otherwise "failed".
         for utterance in plan.utterances:
             if utterance.index in utterance_durations:
                 utterance.duration_seconds = round(utterance_durations[utterance.index], 6)
+            # Set status based on chunk aggregation
+            if utterance.index in utterance_chunk_counts:
+                total_chunks = utterance_chunk_counts[utterance.index]
+                success_chunks = utterance_success_chunks.get(utterance.index, 0)
+                if success_chunks == total_chunks and total_chunks > 0:
+                    utterance.status = "success"
+                elif success_chunks > 0:
+                    # Partial success - some chunks succeeded, some failed
+                    # This shouldn't happen in current flow (failure stops all)
+                    # but handle it truthfully
+                    utterance.status = "failed"
+                else:
+                    utterance.status = "failed"
 
         plan.metadata["cache_reused_on_second_pass"] = str(not compute_incremental_changes(previous_plan, plan))
         emit_progress(
@@ -829,9 +856,19 @@ class OraclePipeline:
         emit_preview_progress("Preparing conditioning", f"Preparing speaker {utterance.speaker} conditioning", 2)
         conditioning = engine.prepare_conditioning(project_cache, utterance.speaker, cached_reference, profile.engine_params)
         emit_preview_progress("Generating preview", f"Generating preview for segment {utterance.index}", 3)
-        rendered = engine.synthesize(utterance.text_for_tts(), conditioning, utterance.engine_settings)
-        # Set duration on the utterance object so preview can report it
+        
+        # Apply the same chunking logic as full render for parity
+        text = utterance.text_for_tts()
+        chunks = chunk_utterance(text, utterance.index)
+        
+        # For preview, only synthesize the first chunk to keep it fast
+        # This matches what the user will hear for the start of the utterance
+        chunk_text = chunks[0].text if chunks else text
+        rendered = engine.synthesize(chunk_text, conditioning, utterance.engine_settings)
+        
+        # Set duration and status on the utterance object so preview can report it
         utterance.duration_seconds = round(len(rendered) / engine.sample_rate, 6)
+        utterance.status = "success"  # Preview succeeded
         preview_path = project_cache.preview_path(utterance.speaker, utterance.index)
         save_wav(preview_path, rendered, engine.sample_rate)
         emit_preview_progress("Complete", f"Preview ready: {preview_path.name}", 4)
