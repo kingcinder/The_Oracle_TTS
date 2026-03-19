@@ -22,6 +22,7 @@ from the_oracle.speaker_attribution.heuristics import AnchorAssignments, DualSpe
 from the_oracle.text_ingest import TextIngestor
 from the_oracle.text_repair.repairer import TextRepairPipeline
 from the_oracle.tts_engines.chatterbox_engine import ChatterboxEngine, ChatterboxConditioning, SUPPORTED_VARIANTS
+from the_oracle.utils.chunking import chunk_utterance, TextChunk
 from the_oracle.utils.hashing import build_chunk_hash
 from the_oracle.utils.logging import get_logger
 from the_oracle.correction_modes import normalize_correction_mode
@@ -529,22 +530,32 @@ class OraclePipeline:
         # after the pool returns, in the results loop below.
         # In sequential mode the results loop is also below, so we keep the
         # same code path for both.
+        #
+        # Pre-synthesis chunking: overlong utterances are split into smaller
+        # chunks to reduce truncation risk. Each chunk becomes a synthesis task.
         raw_tasks: list[SynthesisTask] = []
-        for utterance_index, utterance in enumerate(plan.utterances, start=1):
+        task_to_utterance_map: dict[int, Utterance] = {}  # Maps task index back to source utterance
+        task_index = 0
+        for utterance_pos, utterance in enumerate(plan.utterances, start=1):
             profile = plan.voice_profiles[utterance.speaker]
-            LOGGER.info(
-                "Queuing segment %s/%s | utterance=%s | speaker=%s",
-                utterance_index,
-                total_segments,
-                utterance.index,
-                utterance.speaker,
-            )
-            raw_tasks.append(
-                SynthesisTask(
-                    utterance_index=utterance_index,
+            text = utterance.text_for_tts()
+            chunks = chunk_utterance(text, utterance.index)
+            
+            if len(chunks) == 1 and chunks[0].is_single_chunk:
+                # No chunking needed - original behavior
+                LOGGER.info(
+                    "Queuing segment %s/%s | utterance=%s | speaker=%s",
+                    utterance_pos,
+                    total_segments,
+                    utterance.index,
+                    utterance.speaker,
+                )
+                task_index += 1
+                task = SynthesisTask(
+                    utterance_index=task_index,
                     source_index=utterance.index,
                     speaker=utterance.speaker,
-                    text=utterance.text_for_tts(),
+                    text=text,
                     reference_path=profile.primary_reference,
                     reference_audio_hash=profile.reference_audio_hash,
                     voice_settings=profile.engine_params,
@@ -552,7 +563,34 @@ class OraclePipeline:
                     device_mode=settings.device_mode,
                     export_stems=settings.export_stems,
                 )
-            )
+                raw_tasks.append(task)
+                task_to_utterance_map[task_index] = utterance
+            else:
+                # Utterance was chunked - create a task per chunk
+                LOGGER.info(
+                    "Chunking segment %s/%s | utterance=%s | speaker=%s into %d chunks",
+                    utterance_pos,
+                    total_segments,
+                    utterance.index,
+                    utterance.speaker,
+                    len(chunks),
+                )
+                for chunk in chunks:
+                    task_index += 1
+                    task = SynthesisTask(
+                        utterance_index=task_index,
+                        source_index=utterance.index,
+                        speaker=utterance.speaker,
+                        text=chunk.text,
+                        reference_path=profile.primary_reference,
+                        reference_audio_hash=profile.reference_audio_hash,
+                        voice_settings=profile.engine_params,
+                        model_variant=settings.model_variant,
+                        device_mode=settings.device_mode,
+                        export_stems=settings.export_stems,
+                    )
+                    raw_tasks.append(task)
+                    task_to_utterance_map[task_index] = utterance
 
         # Emit a single "queued" progress event before handing off to the pool
         # so the UI doesn't appear frozen while the pool spins up.
@@ -595,8 +633,15 @@ class OraclePipeline:
         # instead to signal "done" without confusing the progress dialog.
         # In sequential mode synthesis happens inline so _compute_eta gives a
         # genuine estimate based on elapsed time so far.
-        for result, utterance in zip(results, plan.utterances):
-            eta = 0.0 if should_parallelize else _compute_eta(render_start, result.utterance_index, total_segments)
+        #
+        # When chunking occurs, results may outnumber plan.utterances. We use
+        # task_to_utterance_map to look up the source utterance for each result.
+        for result in results:
+            utterance = task_to_utterance_map.get(result.utterance_index)
+            if utterance is None:
+                LOGGER.warning("No utterance found for task index %s", result.utterance_index)
+                continue
+            eta = 0.0 if should_parallelize else _compute_eta(render_start, result.utterance_index, len(raw_tasks))
             stem_segments.append(
                 AudioSegment(
                     path=str(result.stem_path),
@@ -613,7 +658,7 @@ class OraclePipeline:
                 "segment {current}/{total} | utterance={utterance} | speaker={speaker} | cache_hit={cache_hit} | "
                 "chunk_hash={chunk_hash} | stem={stem} | exported={exported}".format(
                     current=result.utterance_index,
-                    total=total_segments,
+                    total=len(raw_tasks),
                     utterance=utterance.index,
                     speaker=utterance.speaker,
                     cache_hit=result.cache_hit,
@@ -646,11 +691,11 @@ class OraclePipeline:
             completed_steps += 1
             emit_progress(
                 stage="Rendering segment",
-                detail=f"Segment {result.utterance_index}/{total_segments} ready ({utterance.speaker})",
+                detail=f"Segment {result.utterance_index}/{len(raw_tasks)} ready ({utterance.speaker})",
                 current_step=completed_steps,
                 total_steps=total_steps,
                 current_segment=result.utterance_index,
-                total_segments=total_segments,
+                total_segments=len(raw_tasks),
                 eta_seconds=eta,
             )
 
