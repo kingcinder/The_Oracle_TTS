@@ -1010,7 +1010,20 @@ class MainWindow(QMainWindow):
         if self.progress_dialog is not None:
             self.progress_dialog.close()
             self.progress_dialog = None
-        QMessageBox.critical(self, "Render Failed", message)
+        
+        # Refresh the table to show truthful row state after failure
+        # Rows that completed will show their status/duration
+        # Rows that failed will show status="failed"
+        # Rows never reached will show status="pending"
+        self._populate_table(self.plan)
+        
+        # Show failure summary with row-level information
+        failed_rows = self.plan.metadata.get("failed_rows", "")
+        if failed_rows:
+            QMessageBox.critical(self, "Render Failed", 
+                               f"Render failed. Failed rows: {failed_rows}\n\nSee error panel for details.")
+        else:
+            QMessageBox.critical(self, "Render Failed", message)
 
     def _cleanup_render_worker(self) -> None:
         self._set_render_busy(False)

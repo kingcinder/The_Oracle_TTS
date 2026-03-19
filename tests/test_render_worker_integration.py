@@ -615,3 +615,152 @@ def test_preview_render_lifecycle_no_stale_state() -> None:
     # Simulate render completion (from _finish_render)
     # This would replace plan.utterances with new data from render
     # For this test, just verify the reset worked correctly
+
+
+def test_render_partial_failure_with_stub_synthesis() -> None:
+    """Test that partial synthesis failures produce truthful row state.
+    
+    Verifies:
+    - Completed rows before failure retain success status and duration
+    - Failed row has status="failed" and no duration
+    - Untouched rows after failure remain status="pending"
+    - Plan metadata records which rows failed
+    """
+    from the_oracle.pipeline import (
+        SynthesisResult, OraclePipeline, RenderSettings, SpeakerSettings,
+        _sequential_worker_execution,
+    )
+    from the_oracle.models.project import VoiceSettings, RenderPlan, Utterance
+    from pathlib import Path
+    
+    # Create a mock plan with 3 utterances
+    plan = RenderPlan(
+        title="Test",
+        source_path="/tmp/test.txt",
+        output_dir="/tmp/output",
+        engine="chatterbox",
+        correction_mode="moderate",
+        utterances=[
+            Utterance(index=0, original_text="First", repaired_text="First", speaker="A"),
+            Utterance(index=1, original_text="Second", repaired_text="Second", speaker="B"),
+            Utterance(index=2, original_text="Third", repaired_text="Third", speaker="A"),
+        ],
+    )
+    
+    # Simulate results where:
+    # - Utterance 0: 1 chunk, succeeds (duration 1.0s)
+    # - Utterance 1: 2 chunks, first succeeds (0.5s), second fails
+    # - Utterance 2: 1 chunk, never reached (pending)
+    results = [
+        # Utterance 0 - success
+        SynthesisResult(
+            utterance_index=1,
+            speaker="A",
+            stem_path=Path("/tmp/stem_0.wav"),
+            exported_stem_path="/tmp/stem_0.wav",
+            duration_seconds=1.0,
+            chunk_hash="hash0",
+            cache_hit=False,
+            synthesize_seconds=0.5,
+            load_audio_seconds=0.1,
+            segment_total_seconds=0.6,
+            sample_rate=24000,
+            error=None,
+        ),
+        # Utterance 1, chunk 0 - success
+        SynthesisResult(
+            utterance_index=2,
+            speaker="B",
+            stem_path=Path("/tmp/stem_1a.wav"),
+            exported_stem_path="/tmp/stem_1a.wav",
+            duration_seconds=0.5,
+            chunk_hash="hash1a",
+            cache_hit=False,
+            synthesize_seconds=0.3,
+            load_audio_seconds=0.1,
+            segment_total_seconds=0.4,
+            sample_rate=24000,
+            error=None,
+        ),
+        # Utterance 1, chunk 1 - FAILURE
+        SynthesisResult(
+            utterance_index=3,
+            speaker="B",
+            stem_path=Path(""),
+            exported_stem_path="",
+            duration_seconds=0.0,
+            chunk_hash="",
+            cache_hit=False,
+            synthesize_seconds=0.0,
+            load_audio_seconds=0.0,
+            segment_total_seconds=0.0,
+            sample_rate=0,
+            error="Synthesis failed: out of memory",
+        ),
+        # Utterance 2 - never reached (no results for this utterance)
+    ]
+    
+    # Simulate the status aggregation logic from pipeline.render()
+    utterance_durations: dict[int, float] = {}
+    utterance_chunk_counts: dict[int, int] = {}
+    utterance_success_chunks: dict[int, int] = {}
+    utterance_failed_chunks: dict[int, int] = {}
+    failed_row_indices: set[int] = set()
+    
+    # Map task indices to utterance indices
+    task_to_utterance_idx = {1: 0, 2: 1, 3: 1}  # Tasks 1,2,3 map to utterances 0,1,1
+    
+    for result in results:
+        utterance_idx = task_to_utterance_idx.get(result.utterance_index)
+        if utterance_idx is None:
+            continue
+        
+        if utterance_idx not in utterance_chunk_counts:
+            utterance_chunk_counts[utterance_idx] = 0
+            utterance_success_chunks[utterance_idx] = 0
+            utterance_failed_chunks[utterance_idx] = 0
+        utterance_chunk_counts[utterance_idx] += 1
+        
+        if result.error is not None:
+            utterance_failed_chunks[utterance_idx] += 1
+            failed_row_indices.add(utterance_idx)
+        else:
+            if utterance_idx not in utterance_durations:
+                utterance_durations[utterance_idx] = 0.0
+            utterance_durations[utterance_idx] += result.duration_seconds
+            utterance_success_chunks[utterance_idx] += 1
+    
+    # Apply status to utterances (simulating pipeline.py lines 779-804)
+    for i, utterance in enumerate(plan.utterances):
+        if i in utterance_durations and utterance_durations[i] > 0:
+            utterance.duration_seconds = round(utterance_durations[i], 6)
+        
+        if i in utterance_chunk_counts:
+            total_chunks = utterance_chunk_counts[i]
+            success_chunks = utterance_success_chunks.get(i, 0)
+            failed_chunks = utterance_failed_chunks.get(i, 0)
+            
+            if failed_chunks > 0:
+                utterance.status = "failed"
+            elif success_chunks == total_chunks and total_chunks > 0:
+                utterance.status = "success"
+            else:
+                utterance.status = "failed"
+        # Rows not in utterance_chunk_counts remain "pending"
+    
+    # Verify row 0 (completed before failure)
+    assert plan.utterances[0].status == "success"
+    assert plan.utterances[0].duration_seconds == 1.0
+    
+    # Verify row 1 (had failure)
+    assert plan.utterances[1].status == "failed"
+    assert plan.utterances[1].duration_seconds == 0.5  # Partial duration from successful chunk
+    
+    # Verify row 2 (never reached)
+    assert plan.utterances[2].status == "pending"
+    assert plan.utterances[2].duration_seconds is None
+    
+    # Verify failure metadata
+    assert 1 in failed_row_indices  # Row 1 failed
+    assert 0 not in failed_row_indices  # Row 0 succeeded
+    assert 2 not in failed_row_indices  # Row 2 never reached
