@@ -1,0 +1,138 @@
+{
+  "count": 19,
+  "entries": [
+    {
+      "index": 0,
+      "speaker": "A",
+      "stage": "punctuation",
+      "before": "Featherline wake beneath the glass",
+      "after": "Featherline wake beneath the glass."
+    },
+    {
+      "index": 0,
+      "speaker": "A",
+      "stage": "grammar",
+      "before": "Featherline wake beneath the glass.",
+      "after": "Featherlike wake beneath the glass."
+    },
+    {
+      "index": 1,
+      "speaker": "B",
+      "stage": "punctuation",
+      "before": "ChatGPT said:",
+      "after": "ChatGPT said."
+    },
+    {
+      "index": 2,
+      "speaker": "A",
+      "stage": "normalize",
+      "before": "\u201cFeatherline wake beneath the glass\u201d reads like the opening of a poem, a",
+      "after": "\"Featherline wake beneath the glass\" reads like the opening of a poem, a"
+    },
+    {
+      "index": 2,
+      "speaker": "A",
+      "stage": "punctuation",
+      "before": "\"Featherline wake beneath the glass\" reads like the opening of a poem, a",
+      "after": "\"Featherline wake beneath the glass\" reads like the opening of a poem. a."
+    },
+    {
+      "index": 2,
+      "speaker": "A",
+      "stage": "grammar",
+      "before": "\"Featherline wake beneath the glass\" reads like the opening of a poem. a.",
+      "after": "\"Featherlike wake beneath the glass\" reads like the opening of a poem. a."
+    },
+    {
+      "index": 3,
+      "speaker": "B",
+      "stage": "normalize",
+      "before": "title, or even a cryptic prompt. If you\u2019d like, I can:",
+      "after": "Title, or even a cryptic prompt. If you'd like, I can:"
+    },
+    {
+      "index": 3,
+      "speaker": "B",
+      "stage": "punctuation",
+      "before": "Title, or even a cryptic prompt. If you'd like, I can:",
+      "after": "Title or even a cryptic prompt If you'd like I can."
+    },
+    {
+      "index": 4,
+      "speaker": "A",
+      "stage": "punctuation",
+      "before": "1.",
+      "after": "1. ."
+    },
+    {
+      "index": 5,
+      "speaker": "B",
+      "stage": "punctuation",
+      "before": "Interpret its meaning,",
+      "after": "Interpret its meaning."
+    },
+    {
+      "index": 6,
+      "speaker": "A",
+      "stage": "punctuation",
+      "before": "2.",
+      "after": "2. ."
+    },
+    {
+      "index": 7,
+      "speaker": "B",
+      "stage": "punctuation",
+      "before": "Expand it into a poem or piece of prose,",
+      "after": "Expand it into a poem or piece of prose."
+    },
+    {
+      "index": 8,
+      "speaker": "A",
+      "stage": "punctuation",
+      "before": "3.",
+      "after": "3. ."
+    },
+    {
+      "index": 9,
+      "speaker": "B",
+      "stage": "punctuation",
+      "before": "Help you develop it into a larger concept (worldbuilding, imagery, theme),",
+      "after": "Help you develop it into a larger concept. (worldbuilding imagery theme)."
+    },
+    {
+      "index": 9,
+      "speaker": "B",
+      "stage": "grammar",
+      "before": "Help you develop it into a larger concept. (worldbuilding imagery theme).",
+      "after": "Help you develop it into a larger concept. (World building imagery theme)."
+    },
+    {
+      "index": 11,
+      "speaker": "B",
+      "stage": "spelling",
+      "before": "Or analyze the symbolism.",
+      "after": "Or analyse the symbolism."
+    },
+    {
+      "index": 11,
+      "speaker": "B",
+      "stage": "grammar",
+      "before": "Or analyse the symbolism.",
+      "after": "Or analyze the symbolism."
+    },
+    {
+      "index": 12,
+      "speaker": "A",
+      "stage": "normalize",
+      "before": "Here\u2019s a quick interpretation to get started:",
+      "after": "Here's a quick interpretation to get started:"
+    },
+    {
+      "index": 12,
+      "speaker": "A",
+      "stage": "punctuation",
+      "before": "Here's a quick interpretation to get started:",
+      "after": "Here's a quick interpretation to get started."
+    }
+  ]
+}

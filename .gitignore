@@ -1,4 +1,4 @@
-# Archive folder (legacy/user-specific files)
+# Archive folder (legacy/dev-only files)
 _archive/
 
 # Python/build artifacts

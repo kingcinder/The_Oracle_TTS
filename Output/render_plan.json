@@ -1,0 +1,233 @@
+{
+  "title": "What is, reality?",
+  "source_path": "/home/oem/Documents/The_Oracle_TTS/Input/What is, reality?.txt",
+  "output_dir": "/home/oem/Documents/The_Oracle_TTS/Output",
+  "engine": "chatterbox",
+  "correction_mode": "moderate",
+  "created_at": "2026-03-17T16:55:15+00:00",
+  "metadata": {
+    "title": "What is, reality?",
+    "artist": "The Oracle",
+    "comment": "Rendered with Chatterbox (standard)",
+    "date": "2026-03-17",
+    "software": "The Oracle 0.2.0",
+    "engine": "chatterbox",
+    "chatterbox_version": "0.1.6",
+    "model_variant": "standard",
+    "language": "en",
+    "cfg_weight": "0.402",
+    "exaggeration": "0.55",
+    "reference_clips_used": "true",
+    "watermark": "Perth watermark embedded by Chatterbox",
+    "device_mode": "cpu",
+    "output_filename": "",
+    "synthesis_mode": "parallel",
+    "cache_reused_on_second_pass": "False"
+  },
+  "utterances": [
+    {
+      "index": 0,
+      "original_text": "Shayla, what if I told you that nothing in reality, is actually real? What if these systems of spacial location reference that we collectively refer to as dimentions, are all nothing more than layered levels of nested holographic simulacra all quietly clicking and ticking away in syncronized lock step with one another, each depending on the function of the last in order to provide the purpose for the next? What if I told you that this audio file, which itself already being a digitized copy of an analogue recording of a sound wave that was once spoken, what if I told you that I in fact never even spoke it, that no one had ever actually uttered these particular words in this particular order before or since this very moment in time in which you're sitting there in front of your phone, staring at the screen, becoming progressively less and less secure in your ability to trust your senses to acurately relay back to your mind what parts of the reality around you are in fact, actually real? Aldus was right, it really is a brave, new, world.",
+      "repaired_text": "Shayla, what if I told you that nothing in reality is actually real? What if these systems of spacial location reference that we collectively refer to as dimensions are all nothing more than layered levels of nested holographic simulacra, all quietly clicking and ticking away in synchronized lock step with one another, each depending on the function of the last in order to provide the purpose for the next? What if I told you that this audio file, which itself already being a digitized copy of an analog recording of a sound wave that was once spoken, what if I told you that I in fact never even spoke it, that no one had ever actually uttered these particular words, in this particular order, before or since this very moment in time in which you're sitting there in front of your phone, staring at the screen, becoming progressively less and less secure in your ability to trust your senses, to accurately relay back to your mind what parts of the surrounding reality are in fact actually real? Aldus was right: it really is a brave new world.",
+      "speaker": "A",
+      "emotion": "curiosity",
+      "emotion_confidence": 0.5846347808837891,
+      "emotion_score": 0.5846347808837891,
+      "speaker_confidence": 0.9,
+      "speaker_source": "binary_clustering",
+      "explicit_speaker": null,
+      "source_line": 1,
+      "original_start_line": 0,
+      "original_end_line": 0,
+      "duration_seconds": null,
+      "pause_after_ms": 189,
+      "parameters": {
+        "variant": "standard",
+        "language": "en",
+        "cfg_weight": 0.402,
+        "exaggeration": 0.55,
+        "temperature": 0.872,
+        "repetition_penalty": 1.0999999999999999,
+        "min_p": 0.062,
+        "top_p": 1.0,
+        "top_k": 1000,
+        "norm_loudness": true,
+        "pause_ms": 189,
+        "crossfade_ms": 20,
+        "emotion_intensity": 1.0,
+        "naturalness": 0.39999999999999997
+      },
+      "corrections": [
+        {
+          "stage": "punctuation",
+          "before": "Shayla, what if I told you that nothing in reality, is actually real? What if these systems of spacial location reference that we collectively refer to as dimentions, are all nothing more than layered levels of nested holographic simulacra all quietly clicking and ticking away in syncronized lock step with one another, each depending on the function of the last in order to provide the purpose for the next? What if I told you that this audio file, which itself already being a digitized copy of an analogue recording of a sound wave that was once spoken, what if I told you that I in fact never even spoke it, that no one had ever actually uttered these particular words in this particular order before or since this very moment in time in which you're sitting there in front of your phone, staring at the screen, becoming progressively less and less secure in your ability to trust your senses to acurately relay back to your mind what parts of the reality around you are in fact, actually real? Aldus was right, it really is a brave, new, world.",
+          "after": "Shayla, what if I told you that nothing in reality is actually real? What if these systems of spacial location reference that we collectively refer to as dimentions are all nothing more than layered levels of nested holographic simulacra, all quietly clicking and ticking away in syncronized lock step with one another, each depending on the function of the last in order to provide the purpose for the next? What if I told you that this audio file, which itself already being a digitized copy of an analogue recording of a sound wave that was once spoken, what if I told you that I in fact never even spoke it, that no one had ever actually uttered these particular words, in this particular order, before or since this very moment in time in which you're sitting there in front of your phone, staring at the screen, becoming progressively less and less secure in your ability to trust your senses, to acurately relay back to your mind what parts of the reality around you are in fact actually real? Aldus was right: it really is a brave new world."
+        },
+        {
+          "stage": "spelling",
+          "before": "Shayla, what if I told you that nothing in reality is actually real? What if these systems of spacial location reference that we collectively refer to as dimentions are all nothing more than layered levels of nested holographic simulacra, all quietly clicking and ticking away in syncronized lock step with one another, each depending on the function of the last in order to provide the purpose for the next? What if I told you that this audio file, which itself already being a digitized copy of an analogue recording of a sound wave that was once spoken, what if I told you that I in fact never even spoke it, that no one had ever actually uttered these particular words, in this particular order, before or since this very moment in time in which you're sitting there in front of your phone, staring at the screen, becoming progressively less and less secure in your ability to trust your senses, to acurately relay back to your mind what parts of the reality around you are in fact actually real? Aldus was right: it really is a brave new world.",
+          "after": "Shayla, what if I told you that nothing in reality is actually real? What if these systems of spacial location reference that we collectively refer to as dimensions are all nothing more than layered levels of nested holographic simulacra, all quietly clicking and ticking away in synchronized lock step with one another, each depending on the function of the last in order to provide the purpose for the next? What if I told you that this audio file, which itself already being a digitized copy of an analogue recording of a sound wave that was once spoken, what if I told you that I in fact never even spoke it, that no one had ever actually uttered these particular words, in this particular order, before or since this very moment in time in which you're sitting there in front of your phone, staring at the screen, becoming progressively less and less secure in your ability to trust your senses, to accurately relay back to your mind what parts of the reality around you are in fact actually real? Aldus was right: it really is a brave new world."
+        },
+        {
+          "stage": "grammar",
+          "before": "Shayla, what if I told you that nothing in reality is actually real? What if these systems of spacial location reference that we collectively refer to as dimensions are all nothing more than layered levels of nested holographic simulacra, all quietly clicking and ticking away in synchronized lock step with one another, each depending on the function of the last in order to provide the purpose for the next? What if I told you that this audio file, which itself already being a digitized copy of an analogue recording of a sound wave that was once spoken, what if I told you that I in fact never even spoke it, that no one had ever actually uttered these particular words, in this particular order, before or since this very moment in time in which you're sitting there in front of your phone, staring at the screen, becoming progressively less and less secure in your ability to trust your senses, to accurately relay back to your mind what parts of the reality around you are in fact actually real? Aldus was right: it really is a brave new world.",
+          "after": "Shayla, what if I told you that nothing in reality is actually real? What if these systems of spacial location reference that we collectively refer to as dimensions are all nothing more than layered levels of nested holographic simulacra, all quietly clicking and ticking away in synchronized lock step with one another, each depending on the function of the last in order to provide the purpose for the next? What if I told you that this audio file, which itself already being a digitized copy of an analog recording of a sound wave that was once spoken, what if I told you that I in fact never even spoke it, that no one had ever actually uttered these particular words, in this particular order, before or since this very moment in time in which you're sitting there in front of your phone, staring at the screen, becoming progressively less and less secure in your ability to trust your senses, to accurately relay back to your mind what parts of the surrounding reality are in fact actually real? Aldus was right: it really is a brave new world."
+        }
+      ],
+      "manual_speaker_override": false,
+      "manual_text_override": false,
+      "manual_emotion_override": false,
+      "chunk_hash": "",
+      "cache_key": "",
+      "engine_settings": {
+        "variant": "standard",
+        "language": "en",
+        "cfg_weight": 0.402,
+        "exaggeration": 0.55,
+        "temperature": 0.872,
+        "repetition_penalty": 1.0999999999999999,
+        "min_p": 0.062,
+        "top_p": 1.0,
+        "top_k": 1000,
+        "norm_loudness": true,
+        "pause_ms": 189,
+        "crossfade_ms": 20,
+        "emotion_intensity": 1.0,
+        "naturalness": 0.39999999999999997
+      }
+    },
+    {
+      "index": 1,
+      "original_text": "Simulacra (singular: simulacrum) are copies, representations, or imitations that either lack an original or have become detached from it, representing a state where the simulation of something becomes more real than the reality itself\u2014a condition known as hyperreality. Popularized by Jean Baudrillard, this concept highlights how media and modern culture create artificial realities, replacing true experience with images and signs.",
+      "repaired_text": "Simulacra (singular simulacrum) are copies, representations or imitations that either lack an original or have become detached from it, representing a state where the simulation of something becomes more real than the reality itself-a condition known as hyperreality. Popularized by Jean Baudrillard, this concept highlights how media and modern culture create artificial realities, replacing true experience with images and signs.",
+      "speaker": "B",
+      "emotion": "neutral",
+      "emotion_confidence": 0.7851671576499939,
+      "emotion_score": 0.7851671576499939,
+      "speaker_confidence": 0.9,
+      "speaker_source": "binary_clustering",
+      "explicit_speaker": null,
+      "source_line": 3,
+      "original_start_line": 0,
+      "original_end_line": 0,
+      "duration_seconds": null,
+      "pause_after_ms": 180,
+      "parameters": {
+        "variant": "standard",
+        "language": "en",
+        "cfg_weight": 0.5,
+        "exaggeration": 0.5,
+        "temperature": 0.8,
+        "repetition_penalty": 1.2,
+        "min_p": 0.05,
+        "top_p": 1.0,
+        "top_k": 1000,
+        "norm_loudness": true,
+        "pause_ms": 180,
+        "crossfade_ms": 20,
+        "emotion_intensity": 1.0,
+        "naturalness": 0.0
+      },
+      "corrections": [
+        {
+          "stage": "normalize",
+          "before": "Simulacra (singular: simulacrum) are copies, representations, or imitations that either lack an original or have become detached from it, representing a state where the simulation of something becomes more real than the reality itself\u2014a condition known as hyperreality. Popularized by Jean Baudrillard, this concept highlights how media and modern culture create artificial realities, replacing true experience with images and signs.",
+          "after": "Simulacra (singular: simulacrum) are copies, representations, or imitations that either lack an original or have become detached from it, representing a state where the simulation of something becomes more real than the reality itself-a condition known as hyperreality. Popularized by Jean Baudrillard, this concept highlights how media and modern culture create artificial realities, replacing true experience with images and signs."
+        },
+        {
+          "stage": "punctuation",
+          "before": "Simulacra (singular: simulacrum) are copies, representations, or imitations that either lack an original or have become detached from it, representing a state where the simulation of something becomes more real than the reality itself-a condition known as hyperreality. Popularized by Jean Baudrillard, this concept highlights how media and modern culture create artificial realities, replacing true experience with images and signs.",
+          "after": "Simulacra (singular simulacrum) are copies, representations or imitations that either lack an original or have become detached from it, representing a state where the simulation of something becomes more real than the reality itself-a condition known as hyperreality. Popularized by Jean Baudrillard, this concept highlights how media and modern culture create artificial realities, replacing true experience with images and signs."
+        }
+      ],
+      "manual_speaker_override": false,
+      "manual_text_override": false,
+      "manual_emotion_override": false,
+      "chunk_hash": "",
+      "cache_key": "",
+      "engine_settings": {
+        "variant": "standard",
+        "language": "en",
+        "cfg_weight": 0.5,
+        "exaggeration": 0.5,
+        "temperature": 0.8,
+        "repetition_penalty": 1.2,
+        "min_p": 0.05,
+        "top_p": 1.0,
+        "top_k": 1000,
+        "norm_loudness": true,
+        "pause_ms": 180,
+        "crossfade_ms": 20,
+        "emotion_intensity": 1.0,
+        "naturalness": 0.0
+      }
+    }
+  ],
+  "voice_profiles": {
+    "A": {
+      "name": "Speaker A",
+      "speaker": "A",
+      "reference_audio": [
+        "/home/oem/Documents/The_Oracle_TTS/Seashells/Cody's Seashell1.wav"
+      ],
+      "neutral_reference": "/home/oem/Documents/The_Oracle_TTS/Seashells/Cody's Seashell1.wav",
+      "emotion_references": {},
+      "engine_params": {
+        "variant": "standard",
+        "language": "en",
+        "cfg_weight": 0.5,
+        "exaggeration": 0.5,
+        "temperature": 0.8,
+        "repetition_penalty": 1.2,
+        "min_p": 0.05,
+        "top_p": 1.0,
+        "top_k": 1000,
+        "norm_loudness": true,
+        "pause_ms": 1500,
+        "crossfade_ms": 20,
+        "emotion_intensity": 1.0,
+        "naturalness": 0.39999999999999997
+      },
+      "conditioning_cache_id": "efa76523ce3a3727bef762e6003708f5d35031e7b4e9d7f4ee6293190b6c52af",
+      "normalized_reference_audio": [
+        "/home/oem/Documents/The_Oracle_TTS/Output/cache/references/A_2dd90d2bb9fb_24000.wav"
+      ],
+      "reference_audio_hash": "2dd90d2bb9fb029ef53c48af515a0431b555506457fb7b8415285df97fad0e92"
+    },
+    "B": {
+      "name": "Speaker B",
+      "speaker": "B",
+      "reference_audio": [
+        "/home/oem/Documents/The_Oracle_TTS/Seashells/Cody's Seashell1.wav"
+      ],
+      "neutral_reference": "/home/oem/Documents/The_Oracle_TTS/Seashells/Cody's Seashell1.wav",
+      "emotion_references": {},
+      "engine_params": {
+        "variant": "standard",
+        "language": "en",
+        "cfg_weight": 0.5,
+        "exaggeration": 0.5,
+        "temperature": 0.8,
+        "repetition_penalty": 1.2,
+        "min_p": 0.05,
+        "top_p": 1.0,
+        "top_k": 1000,
+        "norm_loudness": true,
+        "pause_ms": 180,
+        "crossfade_ms": 20,
+        "emotion_intensity": 1.0,
+        "naturalness": 0.0
+      },
+      "conditioning_cache_id": "0fdbdd6f6450508b9a8d0a22195a7299d5beaf76531e55e19b25f4456067433a",
+      "normalized_reference_audio": [
+        "/home/oem/Documents/The_Oracle_TTS/Output/cache/references/B_2dd90d2bb9fb_24000.wav"
+      ],
+      "reference_audio_hash": "2dd90d2bb9fb029ef53c48af515a0431b555506457fb7b8415285df97fad0e92"
+    }
+  },
+  "hashes": {
+    "utterances": "498dae2e20e489a87df0fafe7221e8b32264086f78f86a1f02318fbaa14f7dfd",
+    "voice_profiles": "04b121272673b89de4f90d4e60b75c781a6ba14c437632e5f4ccf51034011aaf",
+    "plan": "894964dd08973f1032fead4a829db83cbe894f3d16ce9fe7eaa2b5bfe7ba94c9"
+  }
+}
