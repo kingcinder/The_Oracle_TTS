@@ -10,6 +10,7 @@ from the_oracle.pipeline import (
     OraclePipeline,
     RenderPlan,
     RenderSettings,
+    PartialRenderError,
     SynthesisResult,
     Utterance,
 )
@@ -24,7 +25,15 @@ class _StubTextRepairPipeline:
         return RepairResult(text=text, corrections=[])
 
 
-def _build_render_plan(tmp_path: Path, render_settings: RenderSettings) -> RenderPlan:
+@pytest.fixture(autouse=True)
+def _stub_heavy_components(monkeypatch):
+    monkeypatch.setattr(pipeline_module, "GoEmotionsClassifier", _SmokeEmotionClassifier)
+    monkeypatch.setattr(pipeline_module, "TextRepairPipeline", _StubTextRepairPipeline)
+    monkeypatch.setattr(pipeline_module, "ChatterboxEngine", _DeterministicChatterboxEngine)
+    monkeypatch.setattr(pipeline_module, "resolve_chatterbox_device", lambda *_args, **_kwargs: "cpu")
+
+
+def _build_render_plan(tmp_path: Path, render_settings: RenderSettings, utterance_count: int = 1) -> RenderPlan:
     project_dir = tmp_path / "project"
     project_dir.mkdir(parents=True, exist_ok=True)
     speaker_a = _write_reference(tmp_path / "speaker_a_ref.wav", 220.0)
@@ -32,13 +41,14 @@ def _build_render_plan(tmp_path: Path, render_settings: RenderSettings) -> Rende
     voice_settings = VoiceSettings(variant=render_settings.model_variant, language="en")
     utterances = [
         Utterance(
-            index=1,
-            original_text="Speaker A.",
-            repaired_text="Speaker A.",
+            index=i,
+            original_text=f"Speaker A {i}.",
+            repaired_text=f"Speaker A {i}.",
             speaker="A",
             pause_after_ms=render_settings.pause_between_turns_ms,
             engine_settings=voice_settings,
-        ),
+        )
+        for i in range(1, utterance_count + 1)
     ]
     voice_profiles = {
         "A": VoiceProfile(
@@ -114,7 +124,8 @@ def _dispatch_tasks(
     tasks = _build_synthesis_tasks(plan, render_settings)
     resolved_device = device_resolver(render_settings.device_mode)
     should_parallelize = pipeline_module._should_use_worker_pool(render_settings, resolved_device)
-    if should_parallelize:
+    use_worker_pool = should_parallelize and len(tasks) >= pipeline_module._MIN_TASKS_FOR_POOL
+    if use_worker_pool:
         results, mode = pool_override(tasks, pipeline_module.ChatterboxEngine, render_settings.model_variant, resolved_device, plan.output_dir)
     else:
         results = seq_override(tasks, pipeline_module.ChatterboxEngine, render_settings.model_variant, resolved_device, plan.output_dir)
@@ -125,10 +136,10 @@ def _dispatch_tasks(
 
 def test_cpu_standard_uses_worker_pool(tmp_path: Path) -> None:
     render_settings = RenderSettings(model_variant="standard", device_mode="cpu")
-    plan = _build_render_plan(tmp_path, render_settings)
+    plan = _build_render_plan(tmp_path, render_settings, utterance_count=pipeline_module._MIN_TASKS_FOR_POOL)
     called = {"count": 0}
 
-    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None):
+    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
         called["count"] += 1
         return _fake_results(tasks, project_dir), "parallel"
 
@@ -137,6 +148,28 @@ def test_cpu_standard_uses_worker_pool(tmp_path: Path) -> None:
     assert called["count"] == 1
     assert mode == "parallel"
     assert plan.metadata["synthesis_mode"] == "parallel"
+    assert len(results) == len(plan.utterances)
+
+
+def test_cpu_standard_small_task_stays_inline(tmp_path: Path) -> None:
+    render_settings = RenderSettings(model_variant="standard", device_mode="cpu")
+    plan = _build_render_plan(tmp_path, render_settings, utterance_count=1)
+    called = {"pool": 0, "seq": 0}
+
+    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
+        called["pool"] += 1
+        return _fake_results(tasks, project_dir), "parallel"
+
+    def fake_seq(tasks, engine_cls, variant, device, project_dir):
+        called["seq"] += 1
+        return _fake_results(tasks, project_dir)
+
+    results, mode = _dispatch_tasks(plan, render_settings, pool_override=fake_pool, seq_override=fake_seq)
+
+    assert called["pool"] == 0
+    assert called["seq"] == 1
+    assert mode == "sequential"
+    assert plan.metadata["synthesis_mode"] == "sequential"
     assert len(results) == len(plan.utterances)
 
 
@@ -199,7 +232,7 @@ def test_multilingual_stays_sequential(tmp_path: Path) -> None:
 
 def test_worker_pool_returns_sequential_mode_when_fallback(tmp_path: Path) -> None:
     render_settings = RenderSettings(model_variant="standard", device_mode="cpu")
-    plan = _build_render_plan(tmp_path, render_settings)
+    plan = _build_render_plan(tmp_path, render_settings, utterance_count=pipeline_module._MIN_TASKS_FOR_POOL)
     called_pool = {"count": 0}
     called_seq = {"count": 0}
 
@@ -246,10 +279,10 @@ def _run_render_with_interrupt(
 
 def test_render_invokes_worker_pool(tmp_path: Path) -> None:
     render_settings = RenderSettings(model_variant="standard", device_mode="cpu")
-    plan = _build_render_plan(tmp_path, render_settings)
+    plan = _build_render_plan(tmp_path, render_settings, utterance_count=pipeline_module._MIN_TASKS_FOR_POOL)
     called = {"pool": 0}
 
-    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None):
+    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
         called["pool"] += 1
         plan.metadata["synthesis_mode"] = "parallel"
         raise RuntimeError("stop after worker pool")
@@ -271,7 +304,7 @@ def test_render_invokes_worker_pool(tmp_path: Path) -> None:
 
 def test_render_worker_pool_failure_triggers_sequential(tmp_path: Path) -> None:
     render_settings = RenderSettings(model_variant="standard", device_mode="cpu")
-    plan = _build_render_plan(tmp_path, render_settings)
+    plan = _build_render_plan(tmp_path, render_settings, utterance_count=pipeline_module._MIN_TASKS_FOR_POOL)
     called = {"seq": 0, "pool": 0}
 
     def fake_seq(tasks, engine_cls, variant, device, project_dir):
@@ -279,7 +312,7 @@ def test_render_worker_pool_failure_triggers_sequential(tmp_path: Path) -> None:
         plan.metadata["synthesis_mode"] = "sequential"
         raise RuntimeError("stop after sequential")
 
-    def pool_override(tasks, engine_cls, variant, device, project_dir, worker_count=None):
+    def pool_override(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
         called["pool"] += 1
         return fake_seq(tasks, engine_cls, variant, device, project_dir)
 
@@ -764,3 +797,41 @@ def test_render_partial_failure_with_stub_synthesis() -> None:
     assert 1 in failed_row_indices  # Row 1 failed
     assert 0 not in failed_row_indices  # Row 0 succeeded
     assert 2 not in failed_row_indices  # Row 2 never reached
+
+
+def test_render_raises_on_partial_failure(tmp_path: Path) -> None:
+    render_settings = RenderSettings(model_variant="standard", device_mode="cpu")
+    plan = _build_render_plan(tmp_path, render_settings, utterance_count=1)
+
+    failing_result = SynthesisResult(
+        utterance_index=1,
+        speaker="A",
+        stem_path=Path(""),
+        exported_stem_path="",
+        duration_seconds=0.0,
+        chunk_hash="",
+        cache_hit=False,
+        synthesize_seconds=0.0,
+        load_audio_seconds=0.0,
+        segment_total_seconds=0.0,
+        sample_rate=0,
+        error="boom",
+    )
+
+    def fake_seq(tasks, engine_cls, variant, device, project_dir):
+        return [failing_result]
+
+    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
+        return iter([failing_result]), "parallel"
+
+    with (
+        patch("the_oracle.pipeline._run_tasks_with_worker_pool", new=fake_pool),
+        patch("the_oracle.pipeline._sequential_worker_execution", new=fake_seq),
+        patch("the_oracle.pipeline._should_use_worker_pool", return_value=True),
+        patch("the_oracle.pipeline._MIN_TASKS_FOR_POOL", 0),
+        patch("the_oracle.pipeline.assemble_dialogue", lambda *_args, **_kwargs: (_args, 24000)),
+        patch("the_oracle.pipeline.write_flac") as write_flac,
+    ):
+        with pytest.raises(PartialRenderError):
+            OraclePipeline().render(plan, render_settings)
+        write_flac.assert_not_called()

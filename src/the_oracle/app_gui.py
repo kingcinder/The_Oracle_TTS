@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
+from time import perf_counter
+import json
 
 from PySide6.QtCore import QThread, Qt, QUrl, Signal
 from PySide6.QtGui import QAction
@@ -59,6 +61,7 @@ from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings, U
 from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
 from the_oracle.voice_catalog import VoiceChoice, default_voice_choices
+from the_oracle.tts_engines.chatterbox_engine import SUPPORTED_VARIANTS, ChatterboxEngine
 
 # CPU is the only verified Chatterbox execution path in this project.
 # Preview and render always use "cpu"; the constant is defined here so
@@ -264,9 +267,11 @@ class SpeakerGroup(QGroupBox):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self._startup_t0 = perf_counter()
+        self._startup_marks: list[tuple[str, float]] = []
         self.repo_root = Path(__file__).resolve().parents[2]
         self.paths: OraclePaths = ensure_repo_default_paths(self.repo_root)
-        self.pipeline = OraclePipeline()
+        self.pipeline: OraclePipeline | None = None
         self.plan: RenderPlan | None = None
         self.current_project_path: Path | None = None
         self.render_worker: RenderWorker | None = None
@@ -278,10 +283,25 @@ class MainWindow(QMainWindow):
         self.player.setAudioOutput(self.audio_output)
         self.setWindowTitle("The Oracle")
         self.resize(1320, 900)
+        self._mark_startup("mainwindow_init_begin")
         self._build_ui()
         self._build_menu()
         self.delete_confirm_enabled = True
         self._apply_gui_settings_payload(self._default_gui_settings_payload())
+        self._mark_startup("mainwindow_init_end")
+        self._write_startup_timeline()
+
+    def _mark_startup(self, label: str) -> None:
+        self._startup_marks.append((label, perf_counter() - self._startup_t0))
+
+    def _write_startup_timeline(self) -> None:
+        try:
+            log_dir = self.paths.output_dir / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            payload = {"events": self._startup_marks}
+            (log_dir / "gui_startup_timing.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -390,7 +410,7 @@ class MainWindow(QMainWindow):
         box = QGroupBox("Shared Render Settings")
         form = QFormLayout(box)
         self.variant_combo = QComboBox()
-        self.variant_combo.addItems(self.pipeline.available_model_variants())
+        self.variant_combo.addItems(list(SUPPORTED_VARIANTS))
         self.variant_combo.currentTextChanged.connect(self._refresh_language_options)
         self.correction_mode_combo = QComboBox()
         for label, value in CORRECTION_MODE_OPTIONS:
@@ -460,7 +480,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_language_options(self) -> None:
         variant = self.variant_combo.currentText() if hasattr(self, "variant_combo") else "standard"
-        languages = self.pipeline.supported_languages(variant)
+        languages = {"en": "English"} if variant != "multilingual" else ChatterboxEngine(variant).supported_languages()
         is_multilingual = variant == "multilingual"
         self.speaker_a.set_language_options(languages, is_multilingual)
         self.speaker_b.set_language_options(languages, is_multilingual)
@@ -518,6 +538,11 @@ class MainWindow(QMainWindow):
             device_mode=_DEVICE_MODE,
             metadata={"output_filename": normalize_output_filename(self.output_name.text())},
         )
+
+    def _pipeline(self) -> OraclePipeline:
+        if self.pipeline is None:
+            self.pipeline = OraclePipeline()
+        return self.pipeline
 
     def _default_gui_settings_payload(self) -> dict:
         default_render = RenderSettings()
@@ -765,7 +790,7 @@ class MainWindow(QMainWindow):
 
     def prepare_project(self) -> None:
         try:
-            self.plan = self.pipeline.prepare_plan(
+            self.plan = self._pipeline().prepare_plan(
                 self.input_path.text(),
                 self.outdir_path.text(),
                 self._speaker_settings(),
@@ -903,9 +928,6 @@ class MainWindow(QMainWindow):
                 emotion_text = emotion_widget.currentData() or emotion_widget.currentText()
                 utterance.manual_emotion_override = utterance.manual_emotion_override or emotion_text != utterance.emotion
                 utterance.emotion = emotion_text
-            # Reset status and duration before rerender to avoid stale state
-            utterance.status = "pending"
-            utterance.duration_seconds = None
         speaker_settings = self._speaker_settings()
         self.plan.voice_profiles = self.plan.voice_profiles | {
             "A": replace(self.plan.voice_profiles["A"], engine_params=speaker_settings["A"].voice_settings),
@@ -1084,7 +1106,17 @@ class MainWindow(QMainWindow):
 
 
 def launch_gui() -> None:
+    launch_t0 = perf_counter()
     app = QApplication.instance() or QApplication([])
+    launch_marks: list[tuple[str, float]] = [("qt_app_created", perf_counter() - launch_t0)]
     window = MainWindow()
+    launch_marks.append(("mainwindow_built", perf_counter() - launch_t0))
     window.show()
+    try:
+        log_dir = Path(__file__).resolve().parents[2] / "Output" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        payload = {"events": launch_marks}
+        (log_dir / "gui_launch_timing.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
     app.exec()
