@@ -5,10 +5,11 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time
 import json
+import threading
 
-from PySide6.QtCore import QThread, Qt, QUrl, Signal
+from PySide6.QtCore import QThread, Qt, QUrl, Signal, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -74,14 +75,32 @@ class RenderWorker(QThread):
     completed = Signal(object, str)
     failed = Signal(str)
 
-    def __init__(self, plan: RenderPlan, settings: RenderSettings) -> None:
+    def __init__(
+        self,
+        plan: RenderPlan,
+        settings: RenderSettings,
+        *,
+        pipeline: OraclePipeline | None = None,
+        prewarmed_engine=None,
+        render_click_wall: float | None = None,
+    ) -> None:
         super().__init__()
         self.plan = RenderPlan.from_dict(plan.to_dict())
         self.settings = deepcopy(settings)
+        self._pipeline = pipeline
+        self._prewarmed_engine = prewarmed_engine
+        self._render_click_wall = render_click_wall
 
     def run(self) -> None:
         try:
-            output_path = OraclePipeline().render(self.plan, self.settings, progress_callback=self.progress.emit)
+            pipeline = self._pipeline or OraclePipeline()
+            output_path = pipeline.render(
+                self.plan,
+                self.settings,
+                progress_callback=self.progress.emit,
+                prewarmed_engine=self._prewarmed_engine,
+                render_click_wall=self._render_click_wall or time(),
+            )
         except Exception as exc:
             self.failed.emit(str(exc))
             return
@@ -93,16 +112,17 @@ class PreviewWorker(QThread):
     completed = Signal(str)  # preview_path only
     failed = Signal(str)
 
-    def __init__(self, utterance: Utterance, profile: VoiceProfile, model_variant: str, device_mode: str) -> None:
+    def __init__(self, utterance: Utterance, profile: VoiceProfile, model_variant: str, device_mode: str, *, pipeline: OraclePipeline | None = None) -> None:
         super().__init__()
         self.utterance = Utterance.from_dict(utterance.to_dict())
         self.profile = VoiceProfile.from_dict(profile.to_dict())
         self.model_variant = model_variant
         self.device_mode = device_mode
+        self._pipeline = pipeline
 
     def run(self) -> None:
         try:
-            preview_path = OraclePipeline().render_preview(
+            preview_path = (self._pipeline or OraclePipeline()).render_preview(
                 self.utterance,
                 self.profile,
                 self.model_variant,
@@ -269,9 +289,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._startup_t0 = perf_counter()
         self._startup_marks: list[tuple[str, float]] = []
+        self._gui_shown_wall: float | None = None
         self.repo_root = Path(__file__).resolve().parents[2]
         self.paths: OraclePaths = ensure_repo_default_paths(self.repo_root)
         self.pipeline: OraclePipeline | None = None
+        self._prewarmed_pipeline: OraclePipeline | None = None
+        self._prewarmed_engine = None
+        self._prewarm_state = "not_started"  # not_started, warming, ready, failed
+        self._prewarm_thread: PrewarmThread | None = None
+        self._prewarm_lock = threading.Lock()
+        self._prewarm_timing: dict[str, float] | None = None
         self.plan: RenderPlan | None = None
         self.current_project_path: Path | None = None
         self.render_worker: RenderWorker | None = None
@@ -290,6 +317,7 @@ class MainWindow(QMainWindow):
         self._apply_gui_settings_payload(self._default_gui_settings_payload())
         self._mark_startup("mainwindow_init_end")
         self._write_startup_timeline()
+        QTimer.singleShot(0, self._on_gui_shown)
 
     def _mark_startup(self, label: str) -> None:
         self._startup_marks.append((label, perf_counter() - self._startup_t0))
@@ -300,6 +328,24 @@ class MainWindow(QMainWindow):
             log_dir.mkdir(parents=True, exist_ok=True)
             payload = {"events": self._startup_marks}
             (log_dir / "gui_startup_timing.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _on_gui_shown(self) -> None:
+        self._gui_shown_wall = time()
+        self._start_prewarm()
+
+    def _log_action_timing(self, label: str, wall: float | None = None, extra: dict | None = None) -> None:
+        try:
+            log_dir = self.paths.output_dir / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            payload_path = log_dir / "gui_action_timing.json"
+            existing = json.loads(payload_path.read_text()) if payload_path.exists() else []
+            entry = {"label": label, "wall": wall or time()}
+            if extra:
+                entry.update(extra)
+            existing.append(entry)
+            payload_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
         except Exception:
             pass
 
@@ -491,6 +537,56 @@ class MainWindow(QMainWindow):
         self.speaker_a.set_reference_choices(defaults, recents, self.speaker_a.reference_path.text())
         self.speaker_b.set_reference_choices(defaults, recents, self.speaker_b.reference_path.text())
 
+    # --------------------
+    # Prewarm management
+    # --------------------
+    def _start_prewarm(self) -> None:
+        with self._prewarm_lock:
+            if self._prewarm_state in {"warming", "ready"}:
+                return
+            self._prewarm_state = "warming"
+        self._prewarm_thread = PrewarmThread(device=_DEVICE_MODE)
+        self._prewarm_thread.ready.connect(self._handle_prewarm_ready)
+        self._prewarm_thread.failed.connect(self._handle_prewarm_failed)
+        self._prewarm_thread.start()
+
+    def _handle_prewarm_ready(self, pipeline: OraclePipeline, engine: object, timing: dict[str, float]) -> None:
+        with self._prewarm_lock:
+            self._prewarm_state = "ready"
+            self._prewarmed_pipeline = pipeline
+            self._prewarmed_engine = engine
+            self._prewarm_timing = timing
+            thread = self._prewarm_thread
+            self._prewarm_thread = None
+        if thread is not None:
+            thread.deleteLater()
+        self._write_prewarm_timing(success=True)
+
+    def _handle_prewarm_failed(self, message: str, timing: dict[str, float]) -> None:
+        with self._prewarm_lock:
+            self._prewarm_state = "failed"
+            self._prewarmed_pipeline = None
+            self._prewarmed_engine = None
+            self._prewarm_timing = timing | {"error": message}
+            thread = self._prewarm_thread
+            self._prewarm_thread = None
+        if thread is not None:
+            thread.deleteLater()
+        self.error_panel.append(f"Background prewarm failed: {message}")
+        self._write_prewarm_timing(success=False)
+
+    def _write_prewarm_timing(self, success: bool) -> None:
+        try:
+            log_dir = self.paths.output_dir / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            timing = dict(self._prewarm_timing or {})
+            if self._gui_shown_wall:
+                timing["gui_shown"] = self._gui_shown_wall
+            timing["prewarm_success"] = success
+            (log_dir / "gui_prewarm_timing.json").write_text(json.dumps(timing, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
     def _speaker_settings(self) -> dict[str, SpeakerSettings]:
         variant = self.variant_combo.currentText()
         return {
@@ -540,9 +636,32 @@ class MainWindow(QMainWindow):
         )
 
     def _pipeline(self) -> OraclePipeline:
-        if self.pipeline is None:
-            self.pipeline = OraclePipeline()
+        if self.pipeline is not None:
+            return self.pipeline
+        with self._prewarm_lock:
+            state = self._prewarm_state
+            thread = self._prewarm_thread
+        if state == "ready" and self._prewarmed_pipeline is not None:
+            self.pipeline = self._prewarmed_pipeline
+            return self.pipeline
+        if state == "warming" and thread is not None:
+            thread.wait()  # Reuse in-flight warmup rather than duplicating
+            if self._prewarmed_pipeline is not None:
+                self.pipeline = self._prewarmed_pipeline
+                return self.pipeline
+        self.pipeline = OraclePipeline()
         return self.pipeline
+
+    def _prewarmed_engine_ready(self):
+        with self._prewarm_lock:
+            state = self._prewarm_state
+            thread = self._prewarm_thread
+        if state == "ready":
+            return self._prewarmed_engine
+        if state == "warming" and thread is not None:
+            thread.wait()
+            return self._prewarmed_engine
+        return None
 
     def _default_gui_settings_payload(self) -> dict:
         default_render = RenderSettings()
@@ -789,6 +908,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Project Failed", str(exc))
 
     def prepare_project(self) -> None:
+        analyze_click_wall = time()
+        self._log_action_timing("analyze_click", analyze_click_wall)
         try:
             self.plan = self._pipeline().prepare_plan(
                 self.input_path.text(),
@@ -796,6 +917,8 @@ class MainWindow(QMainWindow):
                 self._speaker_settings(),
                 self._render_settings(),
             )
+            plan_ready_wall = time()
+            self._log_action_timing("plan_ready", plan_ready_wall, {"elapsed": plan_ready_wall - analyze_click_wall})
             for speaker in self._speaker_settings().values():
                 if speaker.reference_path:
                     remember_recent_reference_path(speaker.reference_path)
@@ -1003,12 +1126,20 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Render Failed", str(exc))
             return
 
+        render_click_wall = time()
+        self._log_action_timing("render_click", render_click_wall)
         self.progress_dialog = RenderProgressDialog(self, title="Rendering")
         self.progress_dialog.show()
         self._set_render_busy(True)
         render_settings = self._render_settings()
         render_settings.metadata["output_filename"] = output_filename
-        self.render_worker = RenderWorker(self.plan, render_settings)
+        self.render_worker = RenderWorker(
+            self.plan,
+            render_settings,
+            pipeline=self._pipeline(),
+            prewarmed_engine=self._prewarmed_engine_ready(),
+            render_click_wall=render_click_wall,
+        )
         self.render_worker.progress.connect(self._update_render_progress)
         self.render_worker.completed.connect(self._finish_render)
         self.render_worker.failed.connect(self._fail_render)
@@ -1120,3 +1251,30 @@ def launch_gui() -> None:
     except Exception:
         pass
     app.exec()
+class PrewarmThread(QThread):
+    ready = Signal(object, object, dict)
+    failed = Signal(str, dict)
+
+    def __init__(self, device: str = "cpu") -> None:
+        super().__init__()
+        self.device = device
+
+    def run(self) -> None:
+        timeline: dict[str, float] = {}
+        try:
+            start_wall = time()
+            timeline["prewarm_start"] = start_wall
+            pipeline = OraclePipeline()
+            timeline["pipeline_ready"] = time()
+            timeline["repair_ready"] = timeline["pipeline_ready"]
+            timeline["emotion_ready"] = timeline["pipeline_ready"]
+            engine = ChatterboxEngine(variant="standard", device=self.device)
+            ensure_ready = getattr(engine, "ensure_model_ready", None)
+            if callable(ensure_ready):
+                ensure_ready()
+            timeline["engine_ready"] = time()
+            timeline["prewarm_complete"] = timeline["engine_ready"]
+            self.ready.emit(pipeline, engine, timeline)
+        except Exception as exc:  # pragma: no cover - GUI-only path
+            timeline["prewarm_failed"] = time()
+            self.failed.emit(str(exc), timeline)
