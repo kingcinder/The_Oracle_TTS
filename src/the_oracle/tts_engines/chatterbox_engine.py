@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from time import perf_counter, time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -121,6 +122,8 @@ class ChatterboxEngine:
         self._condition_cls = None
         self._languages = {"en": "English"}
         self._loaded_conditioning: dict[str, Any] = {}
+        self._load_seconds: float | None = None
+        self._load_wall: float | None = None
 
     @property
     def engine_version(self) -> str:
@@ -136,7 +139,11 @@ class ChatterboxEngine:
     @property
     def model(self):
         if self._model is None:
+            load_start = perf_counter()
+            load_wall = time()
             self._model, self._condition_cls, self._languages = self._load_variant()
+            self._load_seconds = round(perf_counter() - load_start, 6)
+            self._load_wall = load_wall
         return self._model
 
     @staticmethod

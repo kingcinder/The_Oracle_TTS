@@ -8,8 +8,8 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from time import perf_counter
-from typing import Any
+from time import perf_counter, time
+from typing import Any, Callable
 
 from the_oracle.app_paths import normalize_output_filename
 from the_oracle.audio.assemble import AudioSegment, assemble_dialogue, load_audio, save_wav
@@ -23,7 +23,7 @@ from the_oracle.text_ingest import TextIngestor
 from the_oracle.text_repair.repairer import TextRepairPipeline
 from the_oracle.tts_engines.chatterbox_engine import ChatterboxEngine, ChatterboxConditioning, SUPPORTED_VARIANTS
 from the_oracle.utils.chunking import chunk_utterance, TextChunk
-from the_oracle.utils.hashing import build_chunk_hash
+from the_oracle.utils.hashing import build_chunk_hash, hash_file
 from the_oracle.utils.logging import get_logger
 from the_oracle.correction_modes import normalize_correction_mode
 
@@ -35,6 +35,10 @@ LOGGER = get_logger(__name__)
 # renders where early segments complete in milliseconds, and also means
 # short two-line dialogues still get an ETA once enough time has passed.
 _ETA_MIN_ELAPSED_SECONDS: float = 1.0
+# Minimum synthesis tasks needed before worker pool is worth the startup
+# overhead. Below this threshold we stay inline on the already-loaded
+# main-process engine to avoid a second model load and pool spin-up delay.
+_MIN_TASKS_FOR_POOL: int = 4
 
 
 def chatterbox_version() -> str:
@@ -63,6 +67,7 @@ class RenderSettings:
     device_mode: str = "cpu"
     metadata: dict[str, str] = field(default_factory=dict)
     anchors: AnchorAssignments | None = None
+    target_wpm: float | None = None
 
     def __post_init__(self) -> None:
         self.correction_mode = normalize_correction_mode(self.correction_mode)
@@ -102,6 +107,7 @@ class _WorkerState:
 
 
 _WORKER_STATE: _WorkerState | None = None
+_WORKER_METRICS: dict[str, Any] | None = None
 
 
 def _conditioning_cache_key(task: SynthesisTask, reference_hash: str) -> tuple[str, str, str, tuple[tuple[str, Any], ...]]:
@@ -110,31 +116,65 @@ def _conditioning_cache_key(task: SynthesisTask, reference_hash: str) -> tuple[s
 
 
 def _worker_initialize(engine_cls: type[ChatterboxEngine], variant: str, device: str, project_dir: str) -> None:
-    global _WORKER_STATE
+    global _WORKER_STATE, _WORKER_METRICS
+    init_start = perf_counter()
     engine = engine_cls(variant=variant, device=device)
     ensure_ready = getattr(engine, "ensure_model_ready", None)
     if callable(ensure_ready):
         ensure_ready()
     project_cache = ProjectCache(project_dir)
     _WORKER_STATE = _WorkerState(engine=engine, project_cache=project_cache, conditioning_cache={})
+    _WORKER_METRICS = {
+        "pid": os.getpid(),
+        "init_seconds": round(perf_counter() - init_start, 6),
+        "ready_at": perf_counter(),
+        "ready_wall": time(),
+    }
 
 
 def _worker_reset() -> None:
-    global _WORKER_STATE
+    global _WORKER_STATE, _WORKER_METRICS
     _WORKER_STATE = None
+    _WORKER_METRICS = None
 
 
 def _worker_process_task(task: SynthesisTask) -> SynthesisResult:
+    global _WORKER_METRICS
     if _WORKER_STATE is None:
         raise RuntimeError("Worker state is not initialized")
     worker = _WORKER_STATE
+    if _WORKER_METRICS is None:
+        _WORKER_METRICS = {"pid": os.getpid()}
+    task_start = perf_counter()
+    _WORKER_METRICS.setdefault("first_task_start_wall", time())
+    _WORKER_METRICS.setdefault("first_task_start", task_start)
     cached_reference = worker.engine.prepare_reference(worker.project_cache, task.speaker, str(task.reference_path))
     cache_key = _conditioning_cache_key(task, cached_reference.original_hash)
     conditioning = worker.conditioning_cache.get(cache_key)
     if conditioning is None:
         conditioning = worker.engine.prepare_conditioning(worker.project_cache, task.speaker, cached_reference, task.voice_settings)
         worker.conditioning_cache[cache_key] = conditioning
-    return synthesize_task(task, worker.engine, conditioning, worker.project_cache)
+    synth_start = perf_counter()
+    _WORKER_METRICS.setdefault("first_synth_wall", time())
+    _WORKER_METRICS.setdefault("first_synth_start", synth_start)
+    result = synthesize_task(task, worker.engine, conditioning, worker.project_cache)
+    synth_end = perf_counter()
+    _WORKER_METRICS.setdefault("first_synth_duration", round(synth_end - synth_start, 6))
+    if not _WORKER_METRICS.get("emitted"):
+        first_task_total = perf_counter() - task_start
+        _WORKER_METRICS["emitted"] = True
+        result.worker_timing = {
+            "pid": _WORKER_METRICS.get("pid"),
+            "init_seconds": _WORKER_METRICS.get("init_seconds", 0.0),
+            "first_task_queue_seconds": round(task_start - _WORKER_METRICS.get("ready_at", task_start), 6),
+            "first_synth_seconds": _WORKER_METRICS.get("first_synth_duration", 0.0),
+            "first_task_total_seconds": round(first_task_total, 6),
+            "ready_wall": _WORKER_METRICS.get("ready_wall"),
+            "first_task_start_wall": _WORKER_METRICS.get("first_task_start_wall"),
+            "first_synth_wall": _WORKER_METRICS.get("first_synth_wall"),
+            "result_ready_wall": time(),
+        }
+    return result
 
 
 def _sequential_worker_execution(
@@ -182,9 +222,11 @@ def _run_tasks_with_worker_pool(
     device: str,
     project_dir: str,
     worker_count: int | None = None,
-) -> tuple[list[SynthesisResult], str]:
+    *,
+    stream: bool = False,
+) -> tuple[list[SynthesisResult] | Any, str]:
     if not tasks:
-        return [], "parallel"
+        return ([] if not stream else iter(())), "parallel"
 
     count = worker_count or max(1, min(2, (os.cpu_count() or 1)))
 
@@ -200,8 +242,22 @@ def _run_tasks_with_worker_pool(
 
     ctx = multiprocessing.get_context("spawn")
     try:
-        with ctx.Pool(processes=count, initializer=_worker_initialize, initargs=(engine_cls, variant, device, project_dir)) as pool:
-            results = pool.map(_worker_process_task, tasks)
+        pool = ctx.Pool(processes=count, initializer=_worker_initialize, initargs=(engine_cls, variant, device, project_dir))
+        if stream:
+            iterator = pool.imap_unordered(_worker_process_task, tasks, chunksize=1)
+
+            def _generate() -> Any:
+                try:
+                    for item in iterator:
+                        yield item
+                finally:
+                    pool.close()
+                    pool.join()
+
+            results = _generate()
+        else:
+            with pool:
+                results = pool.map(_worker_process_task, tasks)
     except Exception as exc:
         LOGGER.warning(
             "Worker pool failed (%s: %s), falling back to sequential execution.",
@@ -212,6 +268,8 @@ def _run_tasks_with_worker_pool(
         mode = "sequential"
     else:
         mode = "parallel"
+    if stream:
+        return results, mode
     sorted_results = sorted(results, key=lambda entry: entry.utterance_index)
     return sorted_results, mode
 
@@ -234,6 +292,18 @@ class SynthesisResult:
     segment_total_seconds: float
     sample_rate: int
     error: str | None = None  # Set if synthesis failed for this task
+    worker_timing: dict[str, float] | None = None  # Optional timing emitted by the worker that produced this result
+
+
+class PartialRenderError(RuntimeError):
+    def __init__(self, failed_rows: list[int], message: str, exported: Path | None = None) -> None:
+        super().__init__(message)
+        self.failed_rows = failed_rows
+        self.exported = exported
+
+
+class NoAudioToAssembleError(RuntimeError):
+    pass
 
 
 def synthesize_task(
@@ -241,6 +311,7 @@ def synthesize_task(
     engine: ChatterboxEngine,
     conditioning: ChatterboxConditioning,
     project_cache: ProjectCache,
+    on_synth_start: Callable[[], None] | None = None,
 ) -> SynthesisResult:
     chunk_hash = build_chunk_hash(
         speaker=task.speaker,
@@ -256,6 +327,8 @@ def synthesize_task(
     segment_start = perf_counter()
     if not cache_hit:
         synth_start = perf_counter()
+        if on_synth_start:
+            on_synth_start()
         rendered = engine.synthesize(task.text, conditioning, task.voice_settings)
         synthesize_seconds = perf_counter() - synth_start
         save_wav(stem_path, rendered, engine.sample_rate)
@@ -379,6 +452,10 @@ class OraclePipeline:
             merged.language = base.language if variant == "multilingual" else "en"
             merged.pause_ms = max(0, int(round(merged.pause_ms)))
             merged.crossfade_ms = settings.crossfade_ms
+            if settings.target_wpm:
+                # Slow down speech pacing by increasing pauses when target WPM is lower than a nominal 120 WPM.
+                factor = max(1.0, 120.0 / float(settings.target_wpm))
+                merged.pause_ms = max(settings.pause_between_turns_ms, int(round(merged.pause_ms * factor)))
 
             utterances.append(
                 Utterance(
@@ -434,6 +511,7 @@ class OraclePipeline:
             "reference_clips_used": "true",
             "watermark": "Perth watermark embedded by Chatterbox",
             "device_mode": settings.device_mode,
+            "target_wpm": str(settings.target_wpm) if settings.target_wpm is not None else "",
             **settings.metadata,
         }
         plan = RenderPlan(
@@ -456,6 +534,8 @@ class OraclePipeline:
         progress_callback=None,
     ) -> Path:
         start_time = perf_counter()
+        start_wall = time()
+        timeline: dict[str, Any] = {"render_entry_seconds": 0.0, "render_entry_wall": start_wall}
 
         def emit_progress(
             *,
@@ -484,9 +564,8 @@ class OraclePipeline:
 
         variant = settings.model_variant
         project_cache = ProjectCache(plan.output_dir)
-        engine = ChatterboxEngine(variant=variant, device=resolve_chatterbox_device(settings.device_mode))
         conditioning: dict[str, ChatterboxConditioning] = {}
-        stem_segments: list[AudioSegment] = []
+        stem_segments: list[tuple[int, AudioSegment]] = []
         timing_entries: list[dict[str, Any]] = []
         render_trace_lines: list[str] = []
         total_segments = len(plan.utterances)
@@ -495,61 +574,18 @@ class OraclePipeline:
         total_steps = len(plan.voice_profiles) + total_segments + 3
         completed_steps = 0
 
-        emit_progress(
-            stage="Loading model",
-            detail=f"Loading Chatterbox {variant} on {engine.device}",
-            current_step=completed_steps,
-            total_steps=total_steps,
-            total_segments=total_segments,
-        )
-        ensure_model_ready = getattr(engine, "ensure_model_ready", None)
-        if callable(ensure_model_ready):
-            ensure_model_ready()
-        completed_steps += 1
-        emit_progress(
-            stage="Loading model",
-            detail=f"Chatterbox {variant} is ready",
-            current_step=completed_steps,
-            total_steps=total_steps,
-            total_segments=total_segments,
-        )
-
-        for speaker, profile in plan.voice_profiles.items():
-            emit_progress(
-                stage="Preparing speaker",
-                detail=f"Preparing speaker {speaker} reference audio and conditioning",
-                current_step=completed_steps,
-                total_steps=total_steps,
-                total_segments=total_segments,
-            )
-            speaker_start = perf_counter()
-            cached_reference = engine.prepare_reference(project_cache, speaker, str(profile.primary_reference))
-            profile.normalized_reference_audio = [Path(cached_reference.normalized_path)]
-            profile.reference_audio_hash = cached_reference.original_hash
-            conditioning_payload = engine.prepare_conditioning(project_cache, speaker, cached_reference, profile.engine_params)
-            profile.conditioning_cache_id = conditioning_payload.cache_id
-            conditioning[speaker] = conditioning_payload
-            project_cache.save_json(f"profiles/{speaker.lower()}_voice_profile.json", profile.to_dict())
-            timing_entries.append(
-                {
-                    "type": "speaker_prep",
-                    "speaker": speaker,
-                    "seconds": round(perf_counter() - speaker_start, 6),
-                }
-            )
-            completed_steps += 1
-            emit_progress(
-                stage="Preparing speaker",
-                detail=f"Speaker {speaker} is ready",
-                current_step=completed_steps,
-                total_steps=total_steps,
-                total_segments=total_segments,
-            )
-
         previous_plan = self._load_previous_plan(project_cache)
         render_start = perf_counter()
         should_parallelize = _should_use_worker_pool(settings, resolve_chatterbox_device(settings.device_mode))
         adjusted_device = resolve_chatterbox_device(settings.device_mode)
+        engine = ChatterboxEngine(variant=variant, device=adjusted_device)
+        engine_version = engine.engine_version
+
+        # Hash references up front without loading the model so we can short-circuit
+        # cache-only renders before paying the model warmup cost.
+        for speaker, profile in plan.voice_profiles.items():
+            if not profile.reference_audio_hash:
+                profile.reference_audio_hash = hash_file(profile.primary_reference)
 
         # Build the task list.  In parallel mode we intentionally do NOT emit
         # per-segment progress here: the pool hasn't synthesised anything yet
@@ -562,6 +598,7 @@ class OraclePipeline:
         # chunks to reduce truncation risk. Each chunk becomes a synthesis task.
         raw_tasks: list[SynthesisTask] = []
         task_to_utterance_map: dict[int, Utterance] = {}  # Maps task index back to source utterance
+        task_chunk_hashes: dict[int, str] = {}
         task_index = 0
         for utterance_pos, utterance in enumerate(plan.utterances, start=1):
             profile = plan.voice_profiles[utterance.speaker]
@@ -592,6 +629,14 @@ class OraclePipeline:
                 )
                 raw_tasks.append(task)
                 task_to_utterance_map[task_index] = utterance
+                task_chunk_hashes[task_index] = build_chunk_hash(
+                    speaker=task.speaker,
+                    repaired_text=task.text,
+                    engine_key=f"chatterbox:{settings.model_variant}",
+                    engine_params=task.voice_settings.to_dict(),
+                    engine_version=engine_version,
+                    reference_audio_hash=task.reference_audio_hash,
+                )
             else:
                 # Utterance was chunked - create a task per chunk
                 LOGGER.info(
@@ -618,43 +663,237 @@ class OraclePipeline:
                     )
                     raw_tasks.append(task)
                     task_to_utterance_map[task_index] = utterance
+                    task_chunk_hashes[task_index] = build_chunk_hash(
+                        speaker=task.speaker,
+                        repaired_text=task.text,
+                        engine_key=f"chatterbox:{settings.model_variant}",
+                        engine_params=task.voice_settings.to_dict(),
+                        engine_version=engine_version,
+                        reference_audio_hash=task.reference_audio_hash,
+                    )
 
         # Recalculate total_steps after chunking, since chunked utterances
         # expand into multiple synthesis tasks. The +3 accounts for:
         # model load, assembly, and output write stages.
         total_steps = len(plan.voice_profiles) + len(raw_tasks) + 3
 
-        # Emit a single "queued" progress event before handing off to the pool
-        # so the UI doesn't appear frozen while the pool spins up.
-        emit_progress(
-            stage="Rendering",
-            detail=f"Starting synthesis of {total_segments} segments",
-            current_step=completed_steps,
-            total_steps=total_steps,
-            current_segment=0,
-            total_segments=total_segments,
-        )
+        # Fast path: if every stem already exists, skip model warmup and worker dispatch.
+        cached_results: list[SynthesisResult] | None = None
+        all_cached = True
+        for task in raw_tasks:
+            chunk_hash = task_chunk_hashes.get(task.utterance_index, "")
+            if not project_cache.stem_path(chunk_hash).exists():
+                all_cached = False
+                break
 
-        project_dir = str(project_cache.project_dir)
-        results: list[SynthesisResult]
+        inline_first_synth_wall: list[float] = []
+        worker_timing_summary: dict[str, float] | None = None
         mode_metadata = "sequential"
-        if should_parallelize:
-            results, mode_metadata = _run_tasks_with_worker_pool(
-                raw_tasks,
-                ChatterboxEngine,
-                variant,
-                adjusted_device,
-                project_dir,
+
+        if all_cached:
+            emit_progress(
+                stage="Loading model",
+                detail=f"Cache hit: {len(raw_tasks)} stems already synthesized",
+                current_step=completed_steps,
+                total_steps=total_steps,
+                total_segments=total_segments,
             )
+            timeline["model_ready_seconds"] = round(perf_counter() - start_time, 6)
+            timeline["model_ready_wall"] = time()
+            completed_steps += 1
+
+            # Speaker prep bookkeeping (no model work needed here).
+            for speaker in plan.voice_profiles:
+                timing_entries.append({"type": "speaker_prep", "speaker": speaker, "seconds": 0.0})
+                completed_steps += 1
+                emit_progress(
+                    stage="Preparing speaker",
+                    detail=f"Speaker {speaker} is ready (cached)",
+                    current_step=completed_steps,
+                    total_steps=total_steps,
+                    total_segments=total_segments,
+                )
+
+            timeline["speaker_prep_done_seconds"] = round(perf_counter() - start_time, 6)
+            plan.metadata["synthesis_mode"] = "cached"
+            emit_progress(
+                stage="Rendering",
+                detail=f"Reusing {len(raw_tasks)} cached segments",
+                current_step=completed_steps,
+                total_steps=total_steps,
+                current_segment=0,
+                total_segments=total_segments,
+            )
+            timeline["dispatch_start_seconds"] = round(perf_counter() - start_time, 6)
+            timeline["dispatch_start_wall"] = time()
+
+            cached_results = []
+            for task in raw_tasks:
+                chunk_hash = task_chunk_hashes[task.utterance_index]
+                stem_path = project_cache.stem_path(chunk_hash)
+                load_start = perf_counter()
+                audio, sample_rate = load_audio(stem_path)
+                load_audio_seconds = round(perf_counter() - load_start, 6)
+                duration_seconds = len(audio) / sample_rate
+                exported_path = ""
+                if task.export_stems:
+                    exported_path = str(
+                        project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{task.speaker}.wav")
+                    )
+                cached_results.append(
+                    SynthesisResult(
+                        utterance_index=task.utterance_index,
+                        speaker=task.speaker,
+                        stem_path=stem_path,
+                        exported_stem_path=exported_path,
+                        duration_seconds=duration_seconds,
+                        chunk_hash=chunk_hash,
+                        cache_hit=True,
+                        synthesize_seconds=0.0,
+                        load_audio_seconds=load_audio_seconds,
+                        segment_total_seconds=round(load_audio_seconds, 6),
+                        sample_rate=sample_rate,
+                    )
+                )
+            result_iterator = iter(cached_results)
+            mode_metadata = "cached"
+        if not all_cached:
+            emit_progress(
+                stage="Loading model",
+                detail=f"Loading Chatterbox {variant} on {adjusted_device}",
+                current_step=completed_steps,
+                total_steps=total_steps,
+                total_segments=total_segments,
+            )
+            ensure_model_ready = getattr(engine, "ensure_model_ready", None)
+            if callable(ensure_model_ready):
+                ensure_model_ready()
+            timeline["model_ready_seconds"] = round(perf_counter() - start_time, 6)
+            timeline["model_ready_wall"] = time()
+            if getattr(engine, "_load_seconds", None) is not None:
+                timeline["engine_load_seconds"] = engine._load_seconds
+            if getattr(engine, "_load_wall", None) is not None:
+                timeline["engine_load_wall"] = engine._load_wall
+            completed_steps += 1
+            emit_progress(
+                stage="Loading model",
+                detail=f"Chatterbox {variant} is ready",
+                current_step=completed_steps,
+                total_steps=total_steps,
+                total_segments=total_segments,
+            )
+
+            for speaker, profile in plan.voice_profiles.items():
+                emit_progress(
+                    stage="Preparing speaker",
+                    detail=f"Preparing speaker {speaker} reference audio and conditioning",
+                    current_step=completed_steps,
+                    total_steps=total_steps,
+                    total_segments=total_segments,
+                )
+                speaker_start = perf_counter()
+                cached_reference = engine.prepare_reference(project_cache, speaker, str(profile.primary_reference))
+                profile.normalized_reference_audio = [Path(cached_reference.normalized_path)]
+                profile.reference_audio_hash = cached_reference.original_hash
+                conditioning_payload = engine.prepare_conditioning(project_cache, speaker, cached_reference, profile.engine_params)
+                profile.conditioning_cache_id = conditioning_payload.cache_id
+                conditioning[speaker] = conditioning_payload
+                project_cache.save_json(f"profiles/{speaker.lower()}_voice_profile.json", profile.to_dict())
+                timing_entries.append(
+                    {
+                        "type": "speaker_prep",
+                        "speaker": speaker,
+                        "seconds": round(perf_counter() - speaker_start, 6),
+                    }
+                )
+                completed_steps += 1
+                emit_progress(
+                    stage="Preparing speaker",
+                    detail=f"Speaker {speaker} is ready",
+                    current_step=completed_steps,
+                    total_steps=total_steps,
+                    total_segments=total_segments,
+                )
+
+            timeline["speaker_prep_done_seconds"] = round(perf_counter() - start_time, 6)
+
+            # Emit a single "queued" progress event before handing off to the pool
+            # so the UI doesn't appear frozen while the pool spins up.
+            emit_progress(
+                stage="Rendering",
+                detail=f"Starting synthesis of {total_segments} segments",
+                current_step=completed_steps,
+                total_steps=total_steps,
+                current_segment=0,
+                total_segments=total_segments,
+            )
+
+            project_dir = str(project_cache.project_dir)
+            results: list[SynthesisResult]
+            mode_metadata = "sequential"
+            timeline["dispatch_start_seconds"] = round(perf_counter() - start_time, 6)
+            timeline["dispatch_start_wall"] = time()
+            inline_conditioning_cache: dict[
+                tuple[str, str, str, tuple[tuple[str, Any], ...]], ChatterboxConditioning
+            ] = {}
+            inline_first_synth_wall = []
+
+            def _run_tasks_inline(tasks: list[SynthesisTask]) -> list[SynthesisResult]:
+                inline_results: list[SynthesisResult] = []
+                for task in tasks:
+                    try:
+                        cached_reference = engine.prepare_reference(project_cache, task.speaker, str(task.reference_path))
+                        cache_key = _conditioning_cache_key(task, cached_reference.original_hash)
+                        cond = inline_conditioning_cache.get(cache_key)
+                        if cond is None:
+                            cond = engine.prepare_conditioning(project_cache, task.speaker, cached_reference, task.voice_settings)
+                            inline_conditioning_cache[cache_key] = cond
+                        inline_results.append(
+                            synthesize_task(
+                                task,
+                                engine,
+                                cond,
+                                project_cache,
+                                on_synth_start=lambda: inline_first_synth_wall.append(time()) if not inline_first_synth_wall else None,
+                            )
+                        )
+                    except Exception as exc:  # pragma: no cover - mirrors worker path failure handling
+                        LOGGER.error("Synthesis failed for task %s: %s", task.utterance_index, exc)
+                        inline_results.append(
+                            SynthesisResult(
+                                utterance_index=task.utterance_index,
+                                speaker=task.speaker,
+                                stem_path=Path(""),
+                                exported_stem_path="",
+                                duration_seconds=0.0,
+                                chunk_hash="",
+                                cache_hit=False,
+                                synthesize_seconds=0.0,
+                                load_audio_seconds=0.0,
+                                segment_total_seconds=0.0,
+                                sample_rate=0,
+                                error=str(exc),
+                            )
+                        )
+                return inline_results
+
+            use_worker_pool = should_parallelize and len(raw_tasks) >= _MIN_TASKS_FOR_POOL
+            if use_worker_pool:
+                result_iterator, mode_metadata = _run_tasks_with_worker_pool(
+                    raw_tasks,
+                    ChatterboxEngine,
+                    variant,
+                    adjusted_device,
+                    project_dir,
+                    stream=True,
+                )
+            else:
+                result_iterator = iter(_run_tasks_inline(raw_tasks))
+                mode_metadata = "sequential"
+            plan.metadata["synthesis_mode"] = mode_metadata
         else:
-            results = _sequential_worker_execution(
-                raw_tasks,
-                ChatterboxEngine,
-                variant,
-                adjusted_device,
-                project_dir,
-            )
-        plan.metadata["synthesis_mode"] = mode_metadata
+            # dispatch_start_seconds already recorded in cached path above
+            plan.metadata["synthesis_mode"] = mode_metadata
 
         # Results loop — this is the single source of per-segment progress
         # for both sequential and parallel execution paths.
@@ -681,11 +920,19 @@ class OraclePipeline:
         utterance_success_chunks: dict[int, int] = {}  # Count successful chunks per utterance
         utterance_failed_chunks: dict[int, int] = {}  # Count failed chunks per utterance
         failed_row_indices: set[int] = set()  # Track which rows had failures
-        for result in results:
+        worker_timing_summary: dict[str, float] | None = None
+        completed_tasks = 0
+        for result in result_iterator:
             utterance = task_to_utterance_map.get(result.utterance_index)
             if utterance is None:
                 LOGGER.warning("No utterance found for task index %s", result.utterance_index)
                 continue
+
+            if "first_audio_seconds" not in timeline:
+                timeline["first_audio_seconds"] = round(perf_counter() - start_time, 6)
+                timeline["first_audio_wall"] = time()
+            if worker_timing_summary is None and result.worker_timing:
+                worker_timing_summary = result.worker_timing
 
             # Track unique utterances completed (not individual chunks)
             if utterance.index != last_utterance_index:
@@ -715,15 +962,18 @@ class OraclePipeline:
 
                 # Only add successful stems to assembly
                 stem_segments.append(
-                    AudioSegment(
-                        path=str(result.stem_path),
-                        sample_rate=result.sample_rate,
-                        pause_after_ms=utterance.pause_after_ms,
-                        duration_seconds=result.duration_seconds,
-                        segment_index=utterance.index,
-                        speaker=utterance.speaker,
-                        chunk_hash=result.chunk_hash,
-                        exported_path=result.exported_stem_path,
+                    (
+                        result.utterance_index,
+                        AudioSegment(
+                            path=str(result.stem_path),
+                            sample_rate=result.sample_rate,
+                            pause_after_ms=utterance.pause_after_ms,
+                            duration_seconds=result.duration_seconds,
+                            segment_index=utterance.index,
+                            speaker=utterance.speaker,
+                            chunk_hash=result.chunk_hash,
+                            exported_path=result.exported_stem_path,
+                        ),
                     )
                 )
             render_trace_lines.append(
@@ -760,16 +1010,24 @@ class OraclePipeline:
                     "inter_segment_overhead_seconds": round(max(0.0, result.segment_total_seconds - result.synthesize_seconds), 6),
                 }
             )
+            completed_tasks += 1
             completed_steps += 1
+            eta = 0.0 if mode_metadata == "parallel" else _compute_eta(render_start, completed_tasks, len(raw_tasks))
             emit_progress(
                 stage="Rendering segment",
                 detail=f"Segment {result.utterance_index}/{len(raw_tasks)} ready ({utterance.speaker})",
                 current_step=completed_steps,
                 total_steps=total_steps,
-                current_segment=result.utterance_index,
+                current_segment=completed_tasks,
                 total_segments=len(raw_tasks),
                 eta_seconds=eta,
             )
+
+        timeline["results_ready_seconds"] = round(perf_counter() - start_time, 6)
+        if inline_first_synth_wall:
+            timeline["first_synth_call_wall"] = inline_first_synth_wall[0]
+        elif worker_timing_summary and worker_timing_summary.get("first_synth_wall"):
+            timeline["first_synth_call_wall"] = worker_timing_summary.get("first_synth_wall")
 
         # Propagate accumulated durations and status back to utterance objects
         # so the GUI can display them. This handles both chunked and non-chunked
@@ -801,10 +1059,17 @@ class OraclePipeline:
         if failed_row_indices:
             plan.metadata["failed_rows"] = ",".join(str(i) for i in sorted(failed_row_indices))
             plan.metadata["render_outcome"] = "partial_failure"
+            raise PartialRenderError(
+                sorted(failed_row_indices),
+                "Partial render: one or more synthesis chunks failed.",
+            )
         else:
             plan.metadata["render_outcome"] = "success"
 
         plan.metadata["cache_reused_on_second_pass"] = str(not compute_incremental_changes(previous_plan, plan))
+        if not stem_segments:
+            raise NoAudioToAssembleError("No audio was synthesized; nothing to assemble.")
+
         emit_progress(
             stage="Assembling audio",
             detail="Applying pauses, crossfades, and loudness settings",
@@ -813,20 +1078,31 @@ class OraclePipeline:
             current_segment=total_segments,
             total_segments=total_segments,
         )
+        timeline["assembly_start_seconds"] = round(perf_counter() - start_time, 6)
         assembly_diagnostics: dict[str, list[dict[str, Any]]] = {}
+        ordered_segments = [segment for _, segment in sorted(stem_segments, key=lambda pair: pair[0])]
         final_audio, sample_rate = assemble_dialogue(
-            stem_segments,
+            ordered_segments,
             crossfade_ms=settings.crossfade_ms,
             loudness_preset=settings.loudness_preset,
             diagnostics=assembly_diagnostics,
         )
+        timeline["assembly_done_seconds"] = round(perf_counter() - start_time, 6)
         completed_steps += 1
         requested_filename = normalize_output_filename(str(settings.metadata.get("output_filename", ""))) or f"{Path(plan.source_path).stem}.flac"
         final_output = next_available_output_path(Path(plan.output_dir) / requested_filename)
         render_trace_lines.append(
-            f"assemble | segments={len(stem_segments)} | joins={len(assembly_diagnostics.get('joins', []))} | "
+            f"assemble | segments={len(ordered_segments)} | joins={len(assembly_diagnostics.get('joins', []))} | "
             f"crossfade_ms={settings.crossfade_ms} | loudness={settings.loudness_preset}"
         )
+        measured_duration_seconds = round(len(final_audio) / sample_rate, 6) if sample_rate else 0.0
+        word_count = sum(len((utterance.repaired_text or "").split()) for utterance in plan.utterances)
+        measured_wpm = round(word_count / (measured_duration_seconds / 60.0), 6) if measured_duration_seconds > 0 else 0.0
+        plan.metadata["word_count"] = str(word_count)
+        plan.metadata["measured_duration_seconds"] = str(measured_duration_seconds)
+        plan.metadata["measured_wpm"] = str(measured_wpm)
+        if settings.target_wpm is not None:
+            plan.metadata["target_wpm"] = str(settings.target_wpm)
         emit_progress(
             stage="Writing output",
             detail=f"Writing {final_output.name}",
@@ -835,12 +1111,60 @@ class OraclePipeline:
             current_segment=total_segments,
             total_segments=total_segments,
         )
+        timeline["flac_write_start_seconds"] = round(perf_counter() - start_time, 6)
+        timeline["flac_write_start_wall"] = time()
         exported = write_flac(final_output, final_audio, sample_rate, plan.metadata)
+        timeline["flac_write_end_seconds"] = round(perf_counter() - start_time, 6)
+        timeline["flac_write_end_wall"] = time()
         render_trace_lines.append(f"output | path={exported} | sample_rate={sample_rate}")
         plan.update_hashes()
         project_cache.save_json("render_plan.json", plan.to_dict())
         self._write_correction_log(project_cache, plan)
-        self._write_render_timing_log(project_cache, timing_entries, assembly_diagnostics, exported)
+        if "first_audio_seconds" not in timeline and completed_tasks:
+            timeline["first_audio_seconds"] = timeline.get("results_ready_seconds", round(perf_counter() - start_time, 6))
+        if "first_synth_call_wall" in timeline:
+            timeline["first_synth_call_seconds"] = round(timeline["first_synth_call_wall"] - start_wall, 6)
+        if "first_audio_wall" in timeline:
+            timeline["first_audio_wall_seconds"] = round(timeline["first_audio_wall"] - start_wall, 6)
+        if "flac_write_start_wall" in timeline:
+            timeline["flac_write_start_wall_seconds"] = round(timeline["flac_write_start_wall"] - start_wall, 6)
+        if "flac_write_end_wall" in timeline:
+            timeline["flac_write_end_wall_seconds"] = round(timeline["flac_write_end_wall"] - start_wall, 6)
+        timeline["first_audio_to_flac_start_seconds"] = max(
+            0.0, timeline.get("flac_write_start_seconds", 0.0) - timeline.get("first_audio_seconds", 0.0)
+        )
+        if timeline.get("flac_write_end_seconds") is not None and timeline.get("flac_write_start_seconds") is not None:
+            timeline["flac_write_duration_seconds"] = round(
+                max(0.0, timeline["flac_write_end_seconds"] - timeline["flac_write_start_seconds"]), 6
+            )
+        total_elapsed = round(perf_counter() - start_time, 6)
+        phase_breakdown: dict[str, float] = {}
+        if timeline.get("model_ready_wall") is not None:
+            phase_breakdown["render_entry_to_model_ready"] = round(timeline["model_ready_wall"] - start_wall, 6)
+        if timeline.get("model_ready_wall") is not None and timeline.get("dispatch_start_wall") is not None:
+            phase_breakdown["model_ready_to_worker_start"] = round(
+                timeline["dispatch_start_wall"] - timeline["model_ready_wall"], 6
+            )
+        if timeline.get("first_synth_call_wall") is not None and timeline.get("dispatch_start_wall") is not None:
+            phase_breakdown["worker_start_to_first_synth_call"] = round(
+                timeline["first_synth_call_wall"] - timeline["dispatch_start_wall"], 6
+            )
+        if timeline.get("first_audio_wall") is not None and timeline.get("first_synth_call_wall") is not None:
+            phase_breakdown["first_synth_call_to_first_audio"] = round(
+                timeline["first_audio_wall"] - timeline["first_synth_call_wall"], 6
+            )
+        if timeline.get("flac_write_start_seconds") is not None and timeline.get("first_audio_seconds") is not None:
+            phase_breakdown["first_audio_to_flac_start"] = round(
+                timeline["flac_write_start_seconds"] - timeline["first_audio_seconds"], 6
+            )
+        if timeline.get("flac_write_end_seconds") is not None and timeline.get("flac_write_start_seconds") is not None:
+            phase_breakdown["flac_start_to_flac_end"] = round(
+                timeline["flac_write_end_seconds"] - timeline["flac_write_start_seconds"], 6
+            )
+        phase_breakdown["total_render"] = total_elapsed
+        timeline["phase_breakdown_seconds"] = phase_breakdown
+        timeline["total_seconds"] = total_elapsed
+        self._write_render_timing_log(project_cache, timing_entries, assembly_diagnostics, exported, timeline, worker_timing_summary)
         self._write_render_trace_log(project_cache, render_trace_lines)
         emit_progress(
             stage="Complete",
@@ -955,6 +1279,8 @@ class OraclePipeline:
         timing_entries: list[dict[str, Any]],
         assembly_diagnostics: dict[str, list[dict[str, Any]]],
         final_output_path: Path,
+        timeline: dict[str, float],
+        worker_timing: dict[str, float] | None,
     ) -> None:
         utterance_entries = [entry for entry in timing_entries if entry.get("type") == "utterance"]
         payload = {
@@ -963,6 +1289,8 @@ class OraclePipeline:
             "segments": assembly_diagnostics.get("segments", []),
             "joins": assembly_diagnostics.get("joins", []),
             "output": {"path": str(final_output_path)},
+            "timeline": timeline,
+            "worker_timing": worker_timing or {},
             "summary": {
                 "utterance_count": len(utterance_entries),
                 "segment_count": len(assembly_diagnostics.get("segments", [])),
