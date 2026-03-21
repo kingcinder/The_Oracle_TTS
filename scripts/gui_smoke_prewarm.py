@@ -6,8 +6,8 @@ Usage:
 
 What it does:
 - launches the GUI (offscreen)
-- lets background prewarm start
-- pokes a few widgets (voice dropdown selection)
+- lets background prewarm start and sit idle briefly
+- pokes a few widgets while the app is live
 - exits after a short delay
 
 This is a smoke check to ensure startup/prewarm does not freeze or crash the process.
@@ -45,9 +45,11 @@ def main() -> None:
     def interact_and_exit():
         _pick_first_selectable(window.speaker_a.reference_picker)
         _pick_first_selectable(window.speaker_b.reference_picker)
+        window.variant_combo.setCurrentText("standard")
+        window.input_path.setText("")
         QTimer.singleShot(1000, app.quit)
 
-    QTimer.singleShot(500, interact_and_exit)
+    QTimer.singleShot(750, interact_and_exit)
     app.exec()
 
 

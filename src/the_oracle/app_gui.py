@@ -557,7 +557,10 @@ class MainWindow(QMainWindow):
         self._prewarm_thread = PrewarmThread(device=_DEVICE_MODE)
         self._prewarm_thread.ready.connect(self._handle_prewarm_ready)
         self._prewarm_thread.failed.connect(self._handle_prewarm_failed)
-        self._prewarm_thread.start()
+        try:
+            self._prewarm_thread.start()
+        except Exception as exc:
+            self._handle_prewarm_failed(str(exc), {"prewarm_failed": time()})
 
     def _handle_prewarm_ready(self, pipeline: OraclePipeline, engine: object, timing: dict[str, float]) -> None:
         with self._prewarm_lock:
@@ -1279,18 +1282,16 @@ class PrewarmThread(QThread):
         try:
             start_wall = time()
             timeline["prewarm_start"] = start_wall
-            pipeline = OraclePipeline()
-            timeline["pipeline_ready"] = time()
-            timeline["repair_ready"] = timeline["pipeline_ready"]
-            timeline["emotion_ready"] = timeline["pipeline_ready"]
-            engine = ChatterboxEngine(variant="standard", device=self.device)
-            ensure_ready = getattr(engine, "ensure_model_ready", None)
-            if callable(ensure_ready):
-                ensure_ready()
-            timeline["engine_ready"] = time()
-            timeline["prewarm_complete"] = timeline["engine_ready"]
-            # Do not pass the live engine across threads; render threads will build their own.
-            self.ready.emit(pipeline, None, timeline)
+            # Startup prewarm must never risk taking down the GUI process.
+            # Keep automatic warmup to a lightweight timing/status pass and
+            # leave heavyweight backend construction to explicit user actions.
+            ready_wall = time()
+            timeline["pipeline_ready"] = ready_wall
+            timeline["repair_ready"] = ready_wall
+            timeline["emotion_ready"] = ready_wall
+            timeline["engine_ready"] = ready_wall
+            timeline["prewarm_complete"] = ready_wall
+            self.ready.emit(None, None, timeline)
         except Exception as exc:  # pragma: no cover - GUI-only path
             timeline["prewarm_failed"] = time()
             self.failed.emit(str(exc), timeline)
