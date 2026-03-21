@@ -640,27 +640,18 @@ class MainWindow(QMainWindow):
             return self.pipeline
         with self._prewarm_lock:
             state = self._prewarm_state
-            thread = self._prewarm_thread
         if state == "ready" and self._prewarmed_pipeline is not None:
             self.pipeline = self._prewarmed_pipeline
             return self.pipeline
-        if state == "warming" and thread is not None:
-            thread.wait()  # Reuse in-flight warmup rather than duplicating
-            if self._prewarmed_pipeline is not None:
-                self.pipeline = self._prewarmed_pipeline
-                return self.pipeline
         self.pipeline = OraclePipeline()
         return self.pipeline
 
     def _prewarmed_engine_ready(self):
         with self._prewarm_lock:
             state = self._prewarm_state
-            thread = self._prewarm_thread
         if state == "ready":
-            return self._prewarmed_engine
-        if state == "warming" and thread is not None:
-            thread.wait()
-            return self._prewarmed_engine
+            # Do not pass live engine across threads; return sentinel to signal no reuse.
+            return None
         return None
 
     def _default_gui_settings_payload(self) -> dict:
@@ -1274,7 +1265,8 @@ class PrewarmThread(QThread):
                 ensure_ready()
             timeline["engine_ready"] = time()
             timeline["prewarm_complete"] = timeline["engine_ready"]
-            self.ready.emit(pipeline, engine, timeline)
+            # Do not pass the live engine across threads; render threads will build their own.
+            self.ready.emit(pipeline, None, timeline)
         except Exception as exc:  # pragma: no cover - GUI-only path
             timeline["prewarm_failed"] = time()
             self.failed.emit(str(exc), timeline)
