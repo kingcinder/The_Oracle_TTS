@@ -193,6 +193,8 @@ class SpeakerGroup(QGroupBox):
         self.reference_path = QLineEdit()
         self.reference_picker = QComboBox()
         self.reference_picker.currentIndexChanged.connect(self._handle_reference_selection)
+        # Use activated so selecting the already-current custom option still fires.
+        self.reference_picker.activated.connect(self._handle_reference_selection)
         self._available_reference_paths: set[str] = set()
 
         self.language_combo = QComboBox()
@@ -275,7 +277,7 @@ class SpeakerGroup(QGroupBox):
         if current_path in self._available_reference_paths:
             self.reference_path.setText(current_path)
 
-    def _handle_reference_selection(self) -> None:
+    def _handle_reference_selection(self, _index=None) -> None:
         data = self.reference_picker.currentData()
         if data == "__custom__":
             self._pick_audio()
@@ -500,8 +502,12 @@ class MainWindow(QMainWindow):
         button.setStyleSheet(f"font-size: 15px; font-weight: 600; padding: 8px 18px; border-radius: 6px; {palette}")
 
     def _pick_input(self) -> None:
-        current_input = Path(self.input_path.text()).expanduser()
-        start_dir = current_input.parent if current_input.exists() else self.paths.input_dir
+        current_text = self.input_path.text().strip()
+        if not current_text:
+            start_dir = self.paths.input_dir
+        else:
+            current_input = Path(current_text).expanduser()
+            start_dir = current_input.parent if current_input.exists() else self.paths.input_dir
         path, _ = QFileDialog.getOpenFileName(self, "Choose Input", str(start_dir), "Text Files (*.txt *.md)")
         if path:
             self.input_path.setText(path)
@@ -545,6 +551,9 @@ class MainWindow(QMainWindow):
             if self._prewarm_state in {"warming", "ready"}:
                 return
             self._prewarm_state = "warming"
+        # Keep the UI responsive: disable heavy actions while warmup runs, but do not block the event loop.
+        self.analyze_button.setEnabled(False)
+        self.render_button.setEnabled(False)
         self._prewarm_thread = PrewarmThread(device=_DEVICE_MODE)
         self._prewarm_thread.ready.connect(self._handle_prewarm_ready)
         self._prewarm_thread.failed.connect(self._handle_prewarm_failed)
@@ -561,6 +570,9 @@ class MainWindow(QMainWindow):
         if thread is not None:
             thread.deleteLater()
         self._write_prewarm_timing(success=True)
+        # Enable actions now that warmup finished
+        self.analyze_button.setEnabled(True)
+        self.render_button.setEnabled(True)
 
     def _handle_prewarm_failed(self, message: str, timing: dict[str, float]) -> None:
         with self._prewarm_lock:
@@ -574,6 +586,9 @@ class MainWindow(QMainWindow):
             thread.deleteLater()
         self.error_panel.append(f"Background prewarm failed: {message}")
         self._write_prewarm_timing(success=False)
+        # Allow the user to proceed manually even if warmup failed.
+        self.analyze_button.setEnabled(True)
+        self.render_button.setEnabled(True)
 
     def _write_prewarm_timing(self, success: bool) -> None:
         try:
@@ -899,6 +914,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Project Failed", str(exc))
 
     def prepare_project(self) -> None:
+        with self._prewarm_lock:
+            if self._prewarm_state == "warming":
+                self.error_panel.append("Background warmup still running; please wait a moment before analyzing.")
+                return
         analyze_click_wall = time()
         self._log_action_timing("analyze_click", analyze_click_wall)
         try:
@@ -1090,6 +1109,11 @@ class MainWindow(QMainWindow):
         self.preview_worker.start()
 
     def render_project(self) -> None:
+        with self._prewarm_lock:
+            if self._prewarm_state == "warming":
+                self.error_panel.append("Background warmup still running; render will be available shortly.")
+                QMessageBox.information(self, "Warmup In Progress", "Background warmup is still running. Please try Render again in a moment.")
+                return
         if self.preview_worker is not None:
             self.error_panel.append("Wait for the active preview to finish before rendering.")
             return
