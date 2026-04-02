@@ -5,6 +5,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from the_oracle.app_paths import OraclePaths, default_output_filename, ensure_repo_default_paths
@@ -42,6 +43,17 @@ class _FakePipeline:
         return {"en": "English"}
 
 
+class _FakeChatterboxEngine:
+    def __init__(self, variant: str = "standard", device: str | None = None) -> None:
+        self.variant = variant
+        self.device = device
+
+    def supported_languages(self) -> dict[str, str]:
+        if self.variant == "multilingual":
+            return {"en": "English", "es": "Spanish"}
+        return {"en": "English"}
+
+
 @pytest.fixture(scope="module")
 def qt_app():
     app = QApplication.instance() or QApplication([])
@@ -69,6 +81,7 @@ def _build_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(app_gui, "QAudioOutput", _FakeAudioOutput)
     monkeypatch.setattr(app_gui, "QMediaPlayer", _FakeMediaPlayer)
     monkeypatch.setattr(app_gui, "OraclePipeline", _FakePipeline)
+    monkeypatch.setattr(app_gui, "ChatterboxEngine", _FakeChatterboxEngine)
     monkeypatch.setattr(app_gui, "ensure_repo_default_paths", lambda _repo_root: paths)
     monkeypatch.setattr(app_gui, "default_voice_choices", lambda _repo_root: [])
     monkeypatch.setattr(app_gui, "load_recent_reference_paths", lambda limit=10: [])
@@ -221,3 +234,71 @@ def test_custom_output_folder_requires_filename(qt_app, monkeypatch: pytest.Monk
         assert "Choose an output filename" in str(excinfo.value)
     finally:
         window.close()
+
+
+def test_input_browse_defaults_to_repo_input_dir_on_fresh_use(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window, paths = _build_window(monkeypatch, tmp_path)
+    captured: dict[str, str] = {}
+
+    try:
+        def fake_get_open_file_name(_parent, _title, start_dir, _filter):
+            captured["start_dir"] = start_dir
+            return ("", "")
+
+        monkeypatch.setattr("the_oracle.app_gui.QFileDialog.getOpenFileName", fake_get_open_file_name)
+        window.input_path.clear()
+
+        window._pick_input()
+
+        assert captured["start_dir"] == str(paths.input_dir)
+    finally:
+        window.close()
+
+
+def test_custom_reference_picker_custom_option_works_on_first_click(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    calls: list[str] = []
+
+    try:
+        monkeypatch.setattr(window.speaker_a, "_pick_audio", lambda: calls.append("picked"))
+        window.speaker_a.set_reference_choices([], [], "")
+
+        assert window.speaker_a.reference_picker.currentData() == "__custom__"
+        window.speaker_a.reference_picker.activated.emit(window.speaker_a.reference_picker.currentIndex())
+
+        assert calls == ["picked"]
+    finally:
+        window.close()
+
+
+def test_prewarm_thread_skips_heavy_backend_init(monkeypatch: pytest.MonkeyPatch) -> None:
+    import the_oracle.app_gui as app_gui
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("heavy backend init should not run during startup prewarm")
+
+    monkeypatch.setattr(app_gui, "OraclePipeline", fail)
+    monkeypatch.setattr(app_gui, "ChatterboxEngine", fail)
+
+    thread = app_gui.PrewarmThread(device="cpu")
+    ready_payload: dict[str, object] = {}
+
+    thread.ready.connect(
+        lambda pipeline, engine, timing: ready_payload.update(
+            {"pipeline": pipeline, "engine": engine, "timing": timing}
+        ),
+        Qt.DirectConnection,
+    )
+    thread.failed.connect(
+        lambda message, _timing: pytest.fail(f"prewarm failed unexpectedly: {message}"),
+        Qt.DirectConnection,
+    )
+
+    thread.run()
+
+    assert ready_payload["pipeline"] is None
+    assert ready_payload["engine"] is None
+    timing = ready_payload["timing"]
+    assert isinstance(timing, dict)
+    assert "prewarm_start" in timing
+    assert "prewarm_complete" in timing
