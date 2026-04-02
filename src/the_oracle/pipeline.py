@@ -532,10 +532,16 @@ class OraclePipeline:
         plan: RenderPlan,
         settings: RenderSettings,
         progress_callback=None,
+        *,
+        prewarmed_engine: ChatterboxEngine | None = None,
+        render_click_wall: float | None = None,
     ) -> Path:
         start_time = perf_counter()
         start_wall = time()
         timeline: dict[str, Any] = {"render_entry_seconds": 0.0, "render_entry_wall": start_wall}
+        if render_click_wall is not None:
+            timeline["render_click_wall"] = render_click_wall
+            timeline["render_click_to_entry_seconds"] = round(start_wall - render_click_wall, 6)
 
         def emit_progress(
             *,
@@ -578,7 +584,7 @@ class OraclePipeline:
         render_start = perf_counter()
         should_parallelize = _should_use_worker_pool(settings, resolve_chatterbox_device(settings.device_mode))
         adjusted_device = resolve_chatterbox_device(settings.device_mode)
-        engine = ChatterboxEngine(variant=variant, device=adjusted_device)
+        engine = prewarmed_engine or ChatterboxEngine(variant=variant, device=adjusted_device)
         engine_version = engine.engine_version
 
         # Hash references up front without loading the model so we can short-circuit
