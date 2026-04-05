@@ -384,7 +384,12 @@ class OraclePipeline:
         self.ingestor = TextIngestor()
         self.repair = TextRepairPipeline()
         self.attributor = DualSpeakerAttributor()
-        self.emotions = GoEmotionsClassifier()
+        self._emotions: GoEmotionsClassifier | None = None
+
+    def _emotion_classifier(self) -> GoEmotionsClassifier:
+        if self._emotions is None:
+            self._emotions = GoEmotionsClassifier()
+        return self._emotions
 
     def available_model_variants(self) -> list[str]:
         return list(SUPPORTED_VARIANTS)
@@ -408,7 +413,7 @@ class OraclePipeline:
     def _apply_emotion_and_naturalness(self, base: VoiceSettings, emotion_label: str) -> VoiceSettings:
         merged = VoiceSettings.from_mapping(base)
         intensity = max(0.0, min(2.0, merged.emotion_intensity))
-        for key, value in self.emotions.controls_for_emotion(emotion_label).items():
+        for key, value in self._emotion_classifier().controls_for_emotion(emotion_label).items():
             if not hasattr(merged, key):
                 continue
             blended = self._blend_control(getattr(base, key), value, intensity)
@@ -446,7 +451,7 @@ class OraclePipeline:
             base.variant = variant
             base.language = base.language if variant == "multilingual" else "en"
             base.crossfade_ms = settings.crossfade_ms
-            emotion = self.emotions.classify(repaired.text)
+            emotion = self._emotion_classifier().classify(repaired.text)
             merged = self._apply_emotion_and_naturalness(base, emotion.label)
             merged.variant = variant
             merged.language = base.language if variant == "multilingual" else "en"

@@ -15,6 +15,23 @@ from typing import Any
 
 
 REPO_ROOT_DEFAULT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT_DEFAULT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from the_oracle.platform_support import (
+    is_linux,
+    is_windows,
+    managed_launcher_dir,
+    managed_launcher_path,
+    path_entries,
+    repo_bootstrap_display,
+    repo_python_display,
+    repo_run_display,
+    venv_entrypoint_path,
+)
+
+
 JSON_PREFIX = "__ORACLE_TTS_JSON__"
 MANAGED_WRAPPER_MARKER = "ORACLE_TTS_WRAPPER"
 SUPPORTED_PYTHON_MIN = (3, 11)
@@ -25,10 +42,12 @@ LIBRARY_PACKAGE_CANDIDATES: dict[str, list[str]] = {
     "libEGL.so.1": ["libegl1"],
     "libfontconfig.so.1": ["libfontconfig1"],
     "libglib-2.0.so.0": ["libglib2.0-0t64", "libglib2.0-0"],
+    "libGL.so.1": ["libgl1"],
     "libgobject-2.0.so.0": ["libglib2.0-0t64", "libglib2.0-0"],
     "libgthread-2.0.so.0": ["libglib2.0-0t64", "libglib2.0-0"],
     "libnss3.so": ["libnss3"],
     "libOpenGL.so.0": ["libopengl0"],
+    "libpulse.so.0": ["libpulse0"],
     "libxcb-cursor.so.0": ["libxcb-cursor0"],
     "libxcb-icccm.so.4": ["libxcb-icccm4"],
     "libxcb-image.so.0": ["libxcb-image0"],
@@ -110,7 +129,7 @@ def _probe_environment(repo_root: Path, extra_env: dict[str, str] | None = None)
     env = os.environ.copy()
     env["HF_HUB_DISABLE_TELEMETRY"] = "1"
     src_path = str(repo_root / "src")
-    env["PYTHONPATH"] = src_path if not env.get("PYTHONPATH") else f"{src_path}:{env['PYTHONPATH']}"
+    env["PYTHONPATH"] = src_path if not env.get("PYTHONPATH") else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
     if extra_env:
         env.update(extra_env)
     return env
@@ -153,12 +172,16 @@ def _run_python_probe(
 
 @lru_cache(maxsize=None)
 def _package_installed(package_name: str) -> bool:
+    if not is_linux():
+        return False
     result = _run_command(["dpkg-query", "-W", "-f=${Status}", package_name], timeout=10)
     return result["ok"] and result["stdout"].strip().endswith("installed")
 
 
 @lru_cache(maxsize=None)
 def _package_available(package_name: str) -> bool:
+    if not is_linux():
+        return False
     result = _run_command(["apt-cache", "show", package_name], timeout=10)
     return result["ok"] and bool(result["stdout"].strip())
 
@@ -199,9 +222,11 @@ def _ffmpeg_status() -> dict[str, Any]:
 
 
 def _entrypoint_status(repo_root: Path) -> dict[str, Any]:
-    venv_entrypoint = repo_root / ".venv" / "bin" / "the-oracle"
-    wrapper_path = Path.home() / ".local" / "bin" / "the-oracle"
+    venv_entrypoint = venv_entrypoint_path(repo_root, "the-oracle")
+    wrapper_path = managed_launcher_path("the-oracle")
     path_entrypoint = shutil.which("the-oracle")
+    if is_windows() and not path_entrypoint:
+        path_entrypoint = shutil.which("the-oracle.cmd")
     managed_wrapper = False
     if wrapper_path.exists():
         try:
@@ -219,12 +244,24 @@ def _entrypoint_status(repo_root: Path) -> dict[str, Any]:
     if help_target:
         help_result = _run_command([help_target, "--help"], cwd=repo_root, timeout=30)
 
-    fresh_shell = _run_command(
-        ["bash", "-lc", "command -v the-oracle && the-oracle --help >/dev/null"],
-        cwd=repo_root,
-        timeout=30,
-    )
-    path_has_local_bin = str(Path.home() / ".local" / "bin") in os.environ.get("PATH", "").split(":")
+    if is_windows():
+        fresh_shell = _run_command(
+            ["cmd", "/d", "/c", "where the-oracle >nul 2>nul && the-oracle --help >nul 2>nul"],
+            cwd=repo_root,
+            timeout=30,
+        )
+    elif shutil.which("bash"):
+        fresh_shell = _run_command(
+            ["bash", "-lc", "command -v the-oracle && the-oracle --help >/dev/null"],
+            cwd=repo_root,
+            timeout=30,
+        )
+    else:
+        fresh_shell = {"ok": help_result["ok"], "stdout": help_target or "", "stderr": help_result["stderr"]}
+    normalized_entries = {entry.lower() if is_windows() else entry for entry in path_entries()}
+    launcher_dir = str(managed_launcher_dir())
+    launcher_entry = launcher_dir.lower() if is_windows() else launcher_dir
+    path_has_local_bin = launcher_entry in normalized_entries
 
     return {
         "ok": bool(help_target) and help_result["ok"] and fresh_shell["ok"],
@@ -237,7 +274,7 @@ def _entrypoint_status(repo_root: Path) -> dict[str, Any]:
         "help_error": help_result["stderr"] or help_result["stdout"],
         "fresh_shell_help_ok": fresh_shell["ok"],
         "fresh_shell_path": fresh_shell["stdout"].strip(),
-        "fresh_shell_error": fresh_shell["stderr"].strip(),
+        "fresh_shell_error": fresh_shell["stderr"].strip() or ("the-oracle is not available in a fresh shell PATH" if not fresh_shell["ok"] else ""),
         "path_has_local_bin": path_has_local_bin,
     }
 
@@ -294,6 +331,8 @@ print({JSON_PREFIX!r} + json.dumps(payload))
 
 
 def _find_qt_xcb_plugin() -> Path | None:
+    if not is_linux():
+        return None
     try:
         from PySide6 import __file__ as pyside_file
         from PySide6.QtCore import QLibraryInfo
@@ -332,7 +371,7 @@ def _qt_status(repo_root: Path, timeout: float) -> dict[str, Any]:
         }
 
     plugin_path = _find_qt_xcb_plugin()
-    if plugin_path is None:
+    if is_linux() and plugin_path is None:
         return {
             "ok": False,
             "import_ok": True,
@@ -344,12 +383,14 @@ def _qt_status(repo_root: Path, timeout: float) -> dict[str, Any]:
             "error": "Could not locate PySide6 xcb platform plugin.",
         }
 
-    ldd_result = _run_command(["ldd", str(plugin_path)], timeout=30)
     missing_libraries: list[str] = []
-    if ldd_result["ok"]:
-        for line in ldd_result["stdout"].splitlines():
-            if "=> not found" in line:
-                missing_libraries.append(line.split("=>", 1)[0].strip())
+    ldd_result = {"ok": True, "stderr": "", "stdout": ""}
+    if is_linux() and plugin_path is not None:
+        ldd_result = _run_command(["ldd", str(plugin_path)], timeout=30)
+        if ldd_result["ok"]:
+            for line in ldd_result["stdout"].splitlines():
+                if "=> not found" in line:
+                    missing_libraries.append(line.split("=>", 1)[0].strip())
 
     offscreen_code = f"""
 from __future__ import annotations
@@ -379,10 +420,10 @@ print({JSON_PREFIX!r} + json.dumps(payload))
     offscreen = _run_python_probe(repo_root, offscreen_code, timeout=timeout, extra_env={"QT_QPA_PLATFORM": "offscreen"})
     suggested_packages = _qt_package_suggestions(missing_libraries)
     return {
-        "ok": bool(plugin_path.exists()) and not missing_libraries and bool(offscreen.get("ok")),
+        "ok": (not is_linux() or bool(plugin_path and plugin_path.exists())) and not missing_libraries and bool(offscreen.get("ok")),
         "import_ok": True,
-        "plugin_path": str(plugin_path),
-        "plugin_exists": plugin_path.exists(),
+        "plugin_path": str(plugin_path) if plugin_path is not None else "",
+        "plugin_exists": bool(plugin_path and plugin_path.exists()) if is_linux() else True,
         "missing_libraries": missing_libraries,
         "suggested_packages": suggested_packages,
         "offscreen_ok": bool(offscreen.get("ok")),
@@ -460,44 +501,56 @@ print({JSON_PREFIX!r} + json.dumps(payload))
     }
 
 
-def _build_next_steps(report: dict[str, Any]) -> list[str]:
+def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
     steps: list[str] = []
     if not report["python"]["ok"]:
-        steps.append("Install Python 3.12 with venv support: sudo apt install python3.12 python3.12-venv")
+        if is_windows():
+            steps.append(r"Install Python 3.12, make sure the `py` launcher can find it, then rerun .\bootstrap_oracle_tts.ps1.")
+        else:
+            steps.append("Install Python 3.12 with venv support: sudo apt install python3.12 python3.12-venv")
 
     runtime_packages: list[str] = []
-    if not report["ffmpeg"]["ok"]:
-        runtime_packages.append("ffmpeg")
-    runtime_packages.extend(report["qt"]["suggested_packages"])
-    if runtime_packages:
+    if not report["ffmpeg"]["ok"] and not ci_mode:
+        if is_windows():
+            steps.append("Install FFmpeg and add it to PATH, then rerun the doctor.")
+        else:
+            runtime_packages.append("ffmpeg")
+    runtime_packages.extend(report["qt"]["suggested_packages"] if not ci_mode else [])
+    if runtime_packages and is_linux():
         unique_packages = " ".join(sorted(set(runtime_packages)))
-        steps.append(f"Install the missing Linux Mint runtime packages: sudo apt install {unique_packages}")
+        steps.append(f"Install the missing Linux runtime packages: sudo apt install {unique_packages}")
 
-    if not report["entrypoint"]["ok"]:
-        steps.append("Re-run ./bootstrap_oracle_tts.sh to refresh the project venv and install the managed ~/.local/bin/the-oracle wrapper.")
+    if not report["entrypoint"]["ok"] and not ci_mode:
+        steps.append(
+            f"Re-run {repo_bootstrap_display()} to refresh the project venv and install the managed launcher at {managed_launcher_path()}."
+        )
         if not report["entrypoint"]["path_has_local_bin"]:
-            steps.append('Add ~/.local/bin to PATH, open a fresh shell, and retry: export PATH="$HOME/.local/bin:$PATH"')
+            if is_windows():
+                steps.append(f"Add {managed_launcher_dir()} to PATH, open a new PowerShell session, and retry.")
+            else:
+                steps.append(f'Add {managed_launcher_dir()} to PATH, open a fresh shell, and retry: export PATH="{managed_launcher_dir()}:$PATH"')
 
-    if not report["chatterbox_import"]["ok"] or not report["chatterbox_init"]["ok"] or not report["perth"]["ok"]:
-        steps.append("Re-run ./bootstrap_oracle_tts.sh with internet access so Chatterbox and Perth can be installed and cached on CPU.")
+    chatterbox_init_blocked = not report["chatterbox_init"]["ok"] and not report["chatterbox_init"]["skipped"]
+    if not report["chatterbox_import"]["ok"] or chatterbox_init_blocked or not report["perth"]["ok"]:
+        steps.append(f"Re-run {repo_bootstrap_display()} with internet access so Chatterbox and Perth can be installed and cached on CPU.")
 
     if not report["deterministic_smoke"]["ok"]:
-        steps.append("Inspect the deterministic smoke failure above, then retry with ./.venv/bin/python scripts/smoke_render.py.")
+        steps.append(f"Inspect the deterministic smoke failure above, then retry with {repo_python_display()} scripts/download_models.py or {repo_python_display()} scripts/smoke_render.py as needed.")
 
     if not report["real_engine_smoke"]["ok"]:
         steps.append("Real-engine smoke becomes ready after the Chatterbox import/init and Perth checks pass.")
 
-    if not report["turbo"]["ok"]:
-        steps.append("Optional turbo prefetch: ./.venv/bin/python scripts/download_models.py --variant turbo --device cpu")
+    if not report["turbo"]["ok"] and not ci_mode:
+        steps.append(f"Optional turbo prefetch: {repo_python_display()} scripts/download_models.py --variant turbo --device cpu")
     if report["voice_sources"]["primary_source"] != "seashells":
         steps.append("Add curated local reference clips to ./Seashells so the GUI stops defaulting to smoke/build fallback voices.")
 
     if not steps:
-        steps.append("Ready to launch: ./run_oracle_tts.sh")
+        steps.append(f"Ready to launch: {repo_run_display()}")
     return steps
 
 
-def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_init: bool) -> dict[str, Any]:
+def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_init: bool, ci_mode: bool) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     _prepend_repo_src(repo_root)
     from the_oracle.voice_catalog import voice_catalog_audit
@@ -506,6 +559,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
     report: dict[str, Any] = {
         "repo_root": str(repo_root),
         "platform": platform.platform(),
+        "ci_mode": ci_mode,
         "python": _python_status(),
         "ffmpeg": _ffmpeg_status(),
         "entrypoint": _entrypoint_status(repo_root),
@@ -535,29 +589,31 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "deterministic_smoke": _deterministic_smoke_status(repo_root),
         "real_engine_smoke": _real_engine_smoke_status(repo_root),
     }
-    report["overall_ready"] = all(
-        [
-            report["python"]["ok"],
-            report["entrypoint"]["ok"],
-            report["chatterbox_import"]["ok"],
-            report["perth"]["ok"],
-            skip_model_init or report["chatterbox_init"]["ok"],
-            report["qt"]["ok"],
-            report["deterministic_smoke"]["ok"],
-            report["real_engine_smoke"]["ok"],
-        ]
-    )
-    report["next_steps"] = _build_next_steps(report)
+    required_checks = [
+        report["python"]["ok"],
+        report["chatterbox_import"]["ok"],
+        report["perth"]["ok"],
+        skip_model_init or report["chatterbox_init"]["ok"],
+        report["qt"]["ok"],
+        report["deterministic_smoke"]["ok"],
+        report["real_engine_smoke"]["ok"],
+    ]
+    if not ci_mode:
+        required_checks.extend([report["ffmpeg"]["ok"], report["entrypoint"]["ok"]])
+    report["overall_ready"] = all(required_checks)
+    report["next_steps"] = _build_next_steps(report, ci_mode=ci_mode)
     return report
 
 
 def _print_human_report(report: dict[str, Any]) -> None:
+    optional_status = "WARN" if report.get("ci_mode") else "FAIL"
     print(f"Repo root: {report['repo_root']}")
     print(f"Platform: {report['platform']}")
     print(f"{_status(report['python']['ok'])} Python: {report['python']['executable']} ({report['python']['version']})")
 
     ffmpeg_detail = report["ffmpeg"]["path"] or "ffmpeg not found on PATH"
-    print(f"{_status(report['ffmpeg']['ok'])} Runtime tool `ffmpeg`: {ffmpeg_detail}")
+    ffmpeg_label = _status(report["ffmpeg"]["ok"]) if report["ffmpeg"]["ok"] or not report.get("ci_mode") else optional_status
+    print(f"{ffmpeg_label} Runtime tool `ffmpeg`: {ffmpeg_detail}")
 
     entrypoint = report["entrypoint"]
     entrypoint_detail = entrypoint["fresh_shell_path"] or entrypoint["path_entrypoint"] or entrypoint["venv_entrypoint"]
@@ -565,7 +621,8 @@ def _print_human_report(report: dict[str, Any]) -> None:
         print(f"{_status(True)} the-oracle entrypoint: {entrypoint_detail}")
     else:
         detail = entrypoint["fresh_shell_error"] or entrypoint["help_error"] or "the-oracle --help failed"
-        print(f"{_status(False)} the-oracle entrypoint: {detail}")
+        label = _status(False) if not report.get("ci_mode") else optional_status
+        print(f"{label} the-oracle entrypoint: {detail}")
 
     chatterbox_import = report["chatterbox_import"]
     if chatterbox_import["ok"]:
@@ -579,7 +636,7 @@ def _print_human_report(report: dict[str, Any]) -> None:
             f"{_status(True)} Chatterbox CPU init: from_pretrained(device=\"cpu\") in {chatterbox_init['seconds']}s"
         )
     elif chatterbox_init["skipped"]:
-        print(f"{_status(False)} Chatterbox CPU init: skipped")
+        print("SKIP Chatterbox CPU init: skipped")
     else:
         print(f"{_status(False)} Chatterbox CPU init: {chatterbox_init['error']}")
 
@@ -595,7 +652,8 @@ def _print_human_report(report: dict[str, Any]) -> None:
         detail = turbo["checkpoint_dir"] or "cached checkpoint available"
         print(f"{_status(True)} Turbo readiness: {detail}")
     else:
-        print(f"{_status(False)} Turbo readiness: {turbo['error']}")
+        label = _status(False) if not report.get("ci_mode") else optional_status
+        print(f"{label} Turbo readiness: {turbo['error']}")
 
     voice_sources = report["voice_sources"]
     voice_detail = (
@@ -608,7 +666,8 @@ def _print_human_report(report: dict[str, Any]) -> None:
 
     qt = report["qt"]
     if qt["ok"]:
-        print(f"{_status(True)} Qt GUI prerequisites: xcb plugin ready at {qt['plugin_path']}")
+        detail = qt["plugin_path"] or qt["qt_platform"] or "offscreen probe passed"
+        print(f"{_status(True)} Qt GUI prerequisites: {detail}")
     else:
         detail = qt["error"] if "error" in qt else qt["offscreen_error"] or qt["ldd_error"] or "Qt prerequisites failed"
         print(f"{_status(False)} Qt GUI prerequisites: {detail}")
@@ -637,12 +696,13 @@ def _print_human_report(report: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Install and launch diagnostics for The Oracle on Linux Mint.")
+    parser = argparse.ArgumentParser(description="Install and launch diagnostics for The Oracle.")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT_DEFAULT)
     parser.add_argument("--model-timeout", type=float, default=1800.0)
     parser.add_argument("--qt-timeout", type=float, default=60.0)
     parser.add_argument("--skip-model-init", action="store_true")
+    parser.add_argument("--ci", action="store_true", help="Ignore optional environment-only checks such as ffmpeg, wrapper PATH, and turbo prefetch.")
     args = parser.parse_args(argv)
 
     report = run(
@@ -650,6 +710,7 @@ def main(argv: list[str] | None = None) -> int:
         model_timeout=args.model_timeout,
         qt_timeout=args.qt_timeout,
         skip_model_init=args.skip_model_init,
+        ci_mode=args.ci,
     )
     if args.as_json:
         print(json.dumps(report, indent=2))
