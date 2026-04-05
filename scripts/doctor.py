@@ -42,6 +42,7 @@ LIBRARY_PACKAGE_CANDIDATES: dict[str, list[str]] = {
     "libEGL.so.1": ["libegl1"],
     "libfontconfig.so.1": ["libfontconfig1"],
     "libglib-2.0.so.0": ["libglib2.0-0t64", "libglib2.0-0"],
+    "libGL.so.1": ["libgl1"],
     "libgobject-2.0.so.0": ["libglib2.0-0t64", "libglib2.0-0"],
     "libgthread-2.0.so.0": ["libglib2.0-0t64", "libglib2.0-0"],
     "libnss3.so": ["libnss3"],
