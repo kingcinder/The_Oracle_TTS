@@ -1,29 +1,33 @@
 #!/usr/bin/env bash
-export LTP_JAR_DIR_PATH="${LTP_JAR_DIR_PATH:-$HOME/.cache/language_tool_python/LanguageTool-6.8-SNAPSHOT}"
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$REPO_ROOT/.venv"
 
-if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-  printf 'The Oracle is not bootstrapped yet.\nRun %s/bootstrap_oracle_tts.sh first.\n' "$REPO_ROOT" >&2
-  exit 1
-fi
+select_python() {
+  local candidate
+  for candidate in python3.12 python3.11 python3; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+    if "$candidate" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if (3, 11) <= sys.version_info[:3] < (3, 13) else 1)
+PY
+    then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
 
-if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
-  printf 'No GUI display detected. Set DISPLAY or WAYLAND_DISPLAY, then rerun %s/run_oracle_tts.sh.\n' "$REPO_ROOT" >&2
-  exit 1
-fi
+main() {
+  local python_bin
+  if ! python_bin="$(select_python)"; then
+    printf 'FAIL: Need Python 3.11 or 3.12 with venv support.\n' >&2
+    exit 1
+  fi
+  exec "$python_bin" "$REPO_ROOT/scripts/manage_install.py" run "$@"
+}
 
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
-export PYTHONNOUSERSITE=1
-if [[ -z "${QT_QPA_PLATFORM:-}" && -n "${DISPLAY:-}" ]]; then
-  export QT_QPA_PLATFORM=xcb
-fi
-
-if command -v the-oracle >/dev/null 2>&1; then
-  exec the-oracle gui
-fi
-
-exec python -m the_oracle gui
+main "$@"

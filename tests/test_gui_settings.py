@@ -83,7 +83,7 @@ def test_recent_reference_paths_are_mru_and_capped(tmp_path: Path, monkeypatch: 
     recent = load_recent_reference_paths()
 
     assert len(recent) == 10
-    assert recent[0] == "/tmp/ref_11.wav"
+    assert Path(recent[0]).as_posix() == "/tmp/ref_11.wav"
 
 
 def test_legacy_gui_settings_gain_default_output_location_fields(tmp_path: Path) -> None:
