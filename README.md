@@ -1,6 +1,6 @@
 # The Oracle
 
-The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The product is now Chatterbox-exclusive: the standard Chatterbox model is the default quality-first backend, with multilingual and turbo variants available inside the same engine family.
+The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The repository now ships with a cross-platform bootstrap/install surface for both Linux and Windows.
 
 Chatterbox outputs include built-in Perth watermarking by design. This project does not remove or hide that.
 
@@ -8,189 +8,194 @@ Chatterbox outputs include built-in Perth watermarking by design. This project d
 
 - Chatterbox-only render path with `standard`, `multilingual`, and `turbo` variants
 - Voice cloning via per-speaker reference clips passed through `audio_prompt_path`
-- GUI review table for `[index | speaker | original text | repaired text | emotion | duration | preview]`
-- Background FLAC rendering with a live progress dialog, segment counter, stage text, and ETA when enough timing data exists
-- Save/load GUI settings profiles plus reusable local templates for recurring setups
-- Reference voice picker with repo-local default clips, recent custom clips, and a custom file chooser path
-- Automatic normalization, punctuation restoration, spelling correction, and grammar cleanup
-- Dual-speaker attribution with explicit markers, alternating-line fallback, clustering fallback, and anchor-ready plumbing
-- Emotion inference mapped into live Chatterbox controls such as `cfg_weight`, `exaggeration`, and `temperature`, with per-speaker emotion intensity scaling
-- Per-speaker language, pause-after-turn, and voice tuning controls, plus a clearly heuristic naturalness control
-- Incremental stem caching keyed by repaired text, speaker, model variant, language, Chatterbox parameters, reference hash, and Chatterbox version
-- Render timing audit logs under `logs/render_timings.json` for investigating dead time between speaker segments
-- FLAC export with metadata tags plus render plans and correction logs
+- Desktop GUI with review, repair, progress, and profile/template workflows
+- CLI render flow with saved project manifests
+- Deterministic smoke render path for repo-local verification without live model generation
+- Managed bootstrap, install, doctor, run, and uninstall entrypoints for Linux and Windows
 
-## Install
+## Platform Support
 
-Supported platform (customer-ready): Linux Mint 22.1 / Ubuntu 22.04-class desktops with X11/XWayland.
+- Supported Python: `3.11` or `3.12`
+- Supported operating systems: Linux and Windows
+- Default execution path: CPU
+- Vulkan remains surfaced only as an availability check, not a claimed stable runtime
 
-### Quick install (release tarball)
+## Quick Start
 
-1) Download the release tar (for example `The_Oracle_TTS_alpha-<version>_*.tar.gz`) and verify its `.sha256`.
-2) Extract somewhere you control, e.g. `~/The_Oracle_TTS`.
-3) Run the managed installer:
+### Linux
+
+Install Python 3.11 or 3.12, `venv`, and `ffmpeg`, then run:
 
 ```bash
-cd ~/The_Oracle_TTS
 ./install_oracle_tts.sh
 ```
 
-The installer bootstraps the venv, installs CPU PyTorch + Chatterbox, installs `~/.local/bin/the-oracle`, creates a desktop launcher, and runs the doctor.
-
-### From source (developers)
-
-Exact Linux Mint 22.1 flow:
+For source-only bootstrap without desktop integration:
 
 ```bash
-sudo apt update
-sudo apt install python3.12 python3.12-venv ffmpeg \
-  libasound2t64 libdbus-1-3 libegl1 libfontconfig1 libglib2.0-0t64 \
-  libnss3 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
-  libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
-  libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0
-
-git clone git@github.com:kingcinder/The_Oracle_TTS.git
-cd The_Oracle_TTS
 ./bootstrap_oracle_tts.sh
 ```
 
-`./bootstrap_oracle_tts.sh` creates or reuses `.venv`, installs the project plus `.[ml]`, installs CPU PyTorch and the Chatterbox runtime bundle explicitly, installs a managed `~/.local/bin/the-oracle` wrapper, checks Qt/XCB runtime dependencies, verifies `from chatterbox.tts import ChatterboxTTS`, warms the CPU model with `ChatterboxTTS.from_pretrained(device="cpu")`, and prints exact PASS/FAIL next steps.
+### Windows
 
-Fresh-shell CLI verification:
+Install Python 3.11 or 3.12 and `ffmpeg`, then run from PowerShell:
 
-```bash
-the-oracle --help
+```powershell
+.\install_oracle_tts.ps1
 ```
 
-Full diagnostics:
+If local script execution is blocked by policy, run the same command through a one-shot bypass:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install_oracle_tts.ps1
+```
+
+For source-only bootstrap without Start Menu integration:
+
+```powershell
+.\bootstrap_oracle_tts.ps1
+```
+
+The managed launcher is installed into:
+
+- Linux: `~/.local/bin/the-oracle`
+- Windows: `%APPDATA%\Python\Scripts\the-oracle.cmd`
+
+If that directory is not already on `PATH`, the doctor will tell you exactly what is missing.
+
+## Diagnostics And Launch
+
+Linux:
 
 ```bash
 ./doctor_oracle_tts.sh
-```
-
-Launch the GUI:
-
-```bash
 ./run_oracle_tts.sh
 ```
 
-If `the-oracle` is not found in a fresh shell after install/bootstrap, add `~/.local/bin` to `PATH`, open a new shell, and retry:
+Windows:
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
+```powershell
+.\doctor_oracle_tts.ps1
+.\run_oracle_tts.ps1
 ```
 
-Optional model prefetch:
+The doctor checks:
+
+- Python version support
+- `ffmpeg` availability
+- managed launcher health
+- Chatterbox and Perth importability
+- Chatterbox CPU model initialization
+- Qt GUI readiness
+- deterministic smoke render readiness
+- real-engine smoke prerequisites
+
+## Optional Model Prefetch
+
+Linux:
 
 ```bash
 ./.venv/bin/python scripts/download_models.py --variant all --device cpu
 ```
 
-Deterministic repo smoke render:
+Windows:
 
-```bash
-./.venv/bin/python scripts/smoke_render.py
+```powershell
+.\.venv\Scripts\python.exe scripts\download_models.py --variant all --device cpu
 ```
 
-This smoke path is intentionally deterministic and uses a patched in-repo test engine so you can verify ingest, repair, caching, assembly, and FLAC export without depending on live Chatterbox generation. The real Chatterbox model smoke readiness is reported by `./doctor_oracle_tts.sh`.
+Turbo-only prefetch:
 
-## Release bundle
-
-When alpha-ready, run `make_alpha_release_bundle.sh` from the repo root to produce `release_artifacts/The_Oracle_TTS_alpha-${project.version}_*.tar.gz` with accompanying checksum, manifest, and release notes. The script now validates that the working tree is clean, that the current tag matches `alpha-${project.version}`, and that package metadata is consistent before emitting artifacts that are safe to publish as-is.
-
-## Run
-
-GUI:
+Linux:
 
 ```bash
-./run_oracle_tts.sh
+./.venv/bin/python scripts/download_models.py --variant turbo --device cpu
 ```
 
-Direct CLI launch after bootstrap:
+Windows:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\download_models.py --variant turbo --device cpu
+```
+
+## CLI Usage
+
+```bash
+the-oracle render \
+  --input Input/cli_short.txt \
+  --outdir Output \
+  --speakerA-ref Seashells/<speaker_a>.wav \
+  --speakerB-ref Seashells/<speaker_b>.wav
+```
+
+Project save/load workflow:
+
+```bash
+the-oracle render \
+  --input Input/cli_short.txt \
+  --outdir Output \
+  --speakerA-ref Seashells/<speaker_a>.wav \
+  --speakerB-ref Seashells/<speaker_b>.wav \
+  --save-project Output/oracle_project.json
+
+the-oracle render --project Output/oracle_project.json
+```
+
+GUI launch through the managed launcher:
 
 ```bash
 the-oracle gui
 ```
 
-CLI:
+## Repo Layout
+
+- `Input/` sample dialogue files
+- `Seashells/` repo-local reference voice clips
+- `scripts/` install, doctor, smoke, and model utility entrypoints
+- `src/the_oracle/` application code
+- `tests/` unit and integration-style coverage
+
+## Sample Inputs
+
+The portable sample inputs under `Input/` include:
+
+- `Read Aloud transcript.txt`
+- `What is, reality.txt`
+- `cli_short.txt`
+- `test.txt`
+
+## Development
+
+Create a local development environment with a supported interpreter:
+
+Linux:
 
 ```bash
-the-oracle render \
-  --input examples/demo_dialogue.md \
-  --outdir output \
-  --speakerA-ref /path/to/speaker_a.wav \
-  --speakerB-ref /path/to/speaker_b.wav \
-  --model-variant standard \
-  --cfg-weight 0.5 \
-  --exaggeration 0.5
+python3.12 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -e ".[dev]"
+./.venv/bin/pytest
 ```
 
-Use `--model-variant multilingual --language es` for multilingual rendering. `turbo` is available, but the default recommended path remains `standard`.
+Windows:
 
-Saved project workflow:
-
-```bash
-the-oracle render \
-  --input examples/demo_dialogue.md \
-  --outdir output \
-  --speakerA-ref /path/to/speaker_a.wav \
-  --speakerB-ref /path/to/speaker_b.wav \
-  --save-project output/oracle_project.json
-
-the-oracle render --project output/oracle_project.json
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\pytest.exe
 ```
-
-The desktop app also supports `File > New Project`, `Open Project`, `Save Project`, and `Save Project As` for round-tripping long review/edit sessions without losing repaired text, speaker overrides, emotion edits, or Chatterbox voice settings.
-
-Recurring setup workflow:
-
-```bash
-# In the GUI:
-# Settings > Save Settings...
-# Settings > Save Current as Template...
-# Settings > Load Template
-```
-
-Templates and recent custom reference clips are stored in the user config directory under `~/.config/the_oracle/` unless `XDG_CONFIG_HOME` overrides it.
-
-## Output Layout
-
-Each render creates:
-
-- final tagged FLAC in the selected output directory
-- `render_plan.json`
-- `logs/corrections.json`
-- `logs/corrections.diff`
-- per-speaker profile JSON under `profiles/`
-- cached utterance stems in `cache/utterances/`
-- normalized reference clips in `cache/references/`
-- optional exported stems in `stems/`
-
-## Hardware Notes
-
-- Linux and Windows are both supported at the code level.
-- CPU-only mode works, but first-load and long-form renders are slow.
-- The current verified runtime path in this repository is CPU.
-- Vulkan GPU mode is surfaced in the GUI only as an availability check; it is not claimed as a working execution path unless the installed runtime is explicitly verified.
 
 ## Product Notes
 
 - Chatterbox standard is the default quality-first backend.
 - Multilingual mode requires the multilingual Chatterbox variant and a real language code.
-- Turbo is lower-latency and optional; it is not the default backend.
-- Chatterbox’s Perth watermark is retained in output audio.
-- GUI "default voices" now prefer repo-local clips in `./Seashells`; if that folder is empty the picker falls back to smoke/build reference clips, which are functional but not curated production voices.
-- Better preloadable voice quality within this Chatterbox-only architecture comes from supplying stronger local reference clips, not from switching to a separate packaged voice library.
-- Voice mixing is intentionally deferred; the current pipeline conditions each speaker from one reference payload, so blending multiple voices would require non-trivial pipeline changes.
-- Hybrid CPU+GPU work splitting is not implemented because the current Chatterbox runtime in this repo does not expose a verified, defensible multi-device execution path.
-
-## Demo
-
-Use [examples/demo_dialogue.md](/home/oem/Documents/The_Oracle_TTS/examples/demo_dialogue.md) with two short reference clips to validate the full pipeline before moving to longer material.
+- Turbo is optional and lower-latency, but not the default backend.
+- Better voice quality comes from stronger local reference clips, not from a separate packaged voice library.
+- Voice mixing is intentionally deferred because the current conditioning pipeline assumes one reference payload per speaker.
 
 ## Licensing
 
-This project is publicly visible for inspection and evaluation, but it is not open-source.
-All rights are reserved.
+This project is publicly visible for inspection and evaluation, but it is not open-source. All rights are reserved.
 
 Commercial licensing and leasing inquiries: codysa90@gmail.com

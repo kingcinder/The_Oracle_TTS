@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
 from the_oracle.correction_modes import normalize_correction_mode
+from the_oracle.platform_support import app_config_dir
 
 
 GUI_SETTINGS_VERSION = 1
@@ -21,9 +21,7 @@ class GUISettingsError(ValueError):
 
 
 def user_config_dir() -> Path:
-    xdg_config = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg_config) if xdg_config else Path.home() / ".config"
-    return base / "the_oracle"
+    return app_config_dir("the_oracle")
 
 
 def template_dir() -> Path:
