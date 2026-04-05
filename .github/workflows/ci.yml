@@ -57,6 +57,7 @@ jobs:
             "$glib_pkg" \
             libnss3 \
             libopengl0 \
+            libpulse0 \
             libxcb-cursor0 \
             libxcb-icccm4 \
             libxcb-image0 \
