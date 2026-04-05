@@ -47,6 +47,7 @@ LIBRARY_PACKAGE_CANDIDATES: dict[str, list[str]] = {
     "libgthread-2.0.so.0": ["libglib2.0-0t64", "libglib2.0-0"],
     "libnss3.so": ["libnss3"],
     "libOpenGL.so.0": ["libopengl0"],
+    "libpulse.so.0": ["libpulse0"],
     "libxcb-cursor.so.0": ["libxcb-cursor0"],
     "libxcb-icccm.so.4": ["libxcb-icccm4"],
     "libxcb-image.so.0": ["libxcb-image0"],
