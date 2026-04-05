@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover - fallback for older huggingface_hub versi
 
 from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.project import VoiceSettings
+from the_oracle.platform_support import repo_python_display
 from the_oracle.utils.hashing import hash_payload
 
 
@@ -51,21 +52,22 @@ def _hf_token() -> str | None:
 
 def _format_turbo_error(exc: Exception, *, cached_only: bool = False) -> str:
     prefix = "Turbo checkpoint is not cached locally." if cached_only else "Turbo model initialization failed."
+    download_command = f"{repo_python_display()} scripts/download_models.py --variant turbo --device cpu"
     if isinstance(exc, LocalTokenNotFoundError) or "Token is required (`token=True`)" in str(exc):
         return (
             f"{prefix} chatterbox-tts 0.1.6 forces HF auth for the public turbo checkpoint. "
             "The Oracle bypasses that broken loader, but this environment still does not have a usable turbo checkpoint. "
-            "Connect to the internet and run ./.venv/bin/python scripts/download_models.py --variant turbo --device cpu "
+            f"Connect to the internet and run {download_command} "
             "or set HF_TOKEN if your HF environment requires auth. "
             f"Original error: {type(exc).__name__}: {exc}"
         )
     if isinstance(exc, LocalEntryNotFoundError):
         return (
-            f"{prefix} Connect to the internet and run ./.venv/bin/python scripts/download_models.py --variant turbo --device cpu "
+            f"{prefix} Connect to the internet and run {download_command} "
             "to prefetch the public turbo checkpoint."
         )
     return (
-        f"{prefix} Run ./.venv/bin/python scripts/download_models.py --variant turbo --device cpu while online. "
+        f"{prefix} Run {download_command} while online. "
         f"Original error: {type(exc).__name__}: {exc}"
     )
 
