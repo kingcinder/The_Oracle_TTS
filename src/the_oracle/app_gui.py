@@ -19,8 +19,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
-    QFrame,
-    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -32,7 +30,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
@@ -91,194 +88,202 @@ _BODY_FONT_CANDIDATES = (
 )
 _APP_STYLESHEET = """
 QMainWindow, QDialog {
-    background-color: #090a0d;
-    color: #f3eee4;
+    background-color: #0d1117;
+    color: #edf2f7;
 }
 QWidget#oracleRoot {
-    background-color: qlineargradient(
-        x1: 0, y1: 0, x2: 1, y2: 1,
-        stop: 0 #111319,
-        stop: 0.45 #161921,
-        stop: 1 #090a0d
-    );
+    background-color: #0d1117;
 }
 QWidget#topBarCard, QWidget#contentCard {
-    background-color: rgba(18, 21, 28, 0.94);
-    border: 1px solid rgba(214, 179, 122, 0.16);
-    border-radius: 24px;
+    background-color: #121821;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 14px;
 }
-QWidget#controlRail {
-    background: transparent;
-}
-QWidget#workspacePanel {
+QWidget#settingsDeck, QWidget#workspacePanel {
     background: transparent;
 }
 QLabel {
-    color: #f3eee4;
+    color: #edf2f7;
 }
 QLabel#appKicker {
-    color: #d6b37a;
-    font-size: 11px;
+    color: #7dd3fc;
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 2px;
+    letter-spacing: 1px;
     text-transform: uppercase;
 }
 QLabel#appTitle {
-    color: #fbf7ef;
-    font-size: 26px;
+    color: #f8fafc;
+    font-size: 18px;
     font-weight: 700;
 }
 QLabel#appSummary {
-    color: #aab1bc;
-    font-size: 13px;
+    color: #94a3b8;
+    font-size: 12px;
 }
 QLabel#fieldLabel {
-    color: #cbb696;
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+}
+QCheckBox {
+    color: #e2e8f0;
+    spacing: 6px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid rgba(125, 211, 252, 0.45);
+    background-color: rgba(15, 23, 42, 0.92);
+}
+QCheckBox::indicator:checked {
+    background-color: #38bdf8;
+    border-color: #7dd3fc;
+}
+QLabel#sectionLabel {
+    color: #cbd5e1;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
     text-transform: uppercase;
 }
-QLabel#sectionLabel {
-    color: #d9c3a0;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    margin-top: 4px;
-}
 QGroupBox {
-    margin-top: 14px;
-    padding: 20px 16px 16px 16px;
-    border-radius: 20px;
-    border: 1px solid rgba(214, 179, 122, 0.18);
-    background-color: rgba(24, 27, 34, 0.9);
-    font-size: 13px;
+    margin-top: 8px;
+    padding: 12px 10px 10px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    background-color: rgba(15, 23, 32, 0.96);
+    font-size: 12px;
     font-weight: 600;
-    color: #f3eee4;
+    color: #edf2f7;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
-    left: 16px;
-    padding: 0 8px;
-    color: #d6b37a;
+    left: 10px;
+    padding: 0 4px;
+    color: #f8fafc;
 }
 QMenuBar {
     background: transparent;
-    color: #f3eee4;
+    color: #edf2f7;
     border: none;
-    padding: 4px 10px;
+    padding: 2px 6px;
 }
 QMenuBar::item {
     background: transparent;
-    padding: 8px 12px;
-    border-radius: 10px;
-}
-QMenuBar::item:selected {
-    background-color: rgba(214, 179, 122, 0.16);
-}
-QMenu {
-    background-color: #12141a;
-    border: 1px solid rgba(214, 179, 122, 0.22);
-    border-radius: 12px;
-    padding: 8px;
-}
-QMenu::item {
-    padding: 8px 16px;
+    padding: 6px 10px;
     border-radius: 8px;
 }
+QMenuBar::item:selected {
+    background-color: rgba(56, 189, 248, 0.14);
+}
+QMenu {
+    background-color: #121821;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 10px;
+    padding: 6px;
+}
+QMenu::item {
+    padding: 6px 12px;
+    border-radius: 6px;
+}
 QMenu::item:selected {
-    background-color: rgba(214, 179, 122, 0.16);
+    background-color: rgba(56, 189, 248, 0.14);
 }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QTableWidget {
-    background-color: rgba(10, 11, 15, 0.88);
-    border: 1px solid rgba(214, 179, 122, 0.16);
-    border-radius: 14px;
-    color: #f6f1e7;
-    padding: 10px 12px;
-    selection-background-color: rgba(214, 179, 122, 0.28);
-    selection-color: #fffdf7;
+    background-color: rgba(9, 14, 22, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 9px;
+    color: #f8fafc;
+    padding: 6px 8px;
+    selection-background-color: rgba(56, 189, 248, 0.24);
+    selection-color: #f8fafc;
 }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus, QTableWidget:focus {
-    border: 1px solid rgba(214, 179, 122, 0.72);
+    border: 1px solid rgba(56, 189, 248, 0.78);
 }
 QComboBox::drop-down, QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
     border: none;
-    width: 22px;
+    width: 18px;
 }
 QPushButton {
-    min-height: 38px;
-    padding: 10px 18px;
-    border-radius: 14px;
+    min-height: 30px;
+    padding: 6px 14px;
+    border-radius: 9px;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    background-color: rgba(37, 40, 49, 0.96);
-    color: #f6f1e7;
-    font-size: 13px;
+    background-color: rgba(30, 41, 59, 0.96);
+    color: #f8fafc;
+    font-size: 12px;
     font-weight: 600;
 }
 QPushButton:hover {
-    background-color: rgba(49, 54, 66, 0.98);
-    border-color: rgba(214, 179, 122, 0.35);
+    background-color: rgba(37, 52, 76, 0.98);
+    border-color: rgba(56, 189, 248, 0.35);
 }
 QPushButton:pressed {
-    background-color: rgba(27, 30, 37, 0.98);
+    background-color: rgba(20, 29, 43, 0.98);
 }
 QPushButton[accentButton="true"] {
-    background-color: #d6b37a;
-    color: #161312;
-    border: 1px solid #f2d09a;
+    background-color: #38bdf8;
+    color: #081018;
+    border: 1px solid #7dd3fc;
     font-weight: 700;
 }
 QPushButton[accentButton="true"]:hover {
-    background-color: #e3c18b;
+    background-color: #67d4fb;
 }
 QPushButton[utilityButton="true"] {
-    min-height: 34px;
-    border-radius: 12px;
-    background-color: rgba(20, 22, 29, 0.86);
+    min-height: 30px;
+    border-radius: 9px;
+    background-color: rgba(15, 23, 42, 0.92);
 }
 QPushButton:disabled {
     background-color: rgba(42, 44, 52, 0.45);
-    color: rgba(243, 238, 228, 0.45);
+    color: rgba(237, 242, 247, 0.45);
     border-color: rgba(255, 255, 255, 0.04);
 }
 QHeaderView::section {
-    background-color: rgba(214, 179, 122, 0.12);
-    color: #e8d5b4;
+    background-color: rgba(30, 41, 59, 0.95);
+    color: #cbd5e1;
     border: none;
-    border-bottom: 1px solid rgba(214, 179, 122, 0.18);
-    padding: 12px 10px;
-    font-size: 12px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    padding: 10px 8px;
+    font-size: 11px;
     font-weight: 700;
 }
 QTableWidget {
-    gridline-color: transparent;
+    gridline-color: rgba(148, 163, 184, 0.06);
     alternate-background-color: rgba(255, 255, 255, 0.02);
 }
 QSplitter::handle {
     background: transparent;
 }
 QSplitter::handle:horizontal {
-    width: 12px;
+    width: 8px;
 }
 QSplitter::handle:vertical {
-    height: 12px;
+    height: 8px;
 }
 QTableCornerButton::section {
-    background-color: rgba(214, 179, 122, 0.12);
+    background-color: rgba(30, 41, 59, 0.95);
     border: none;
 }
 QProgressBar {
-    min-height: 18px;
-    border-radius: 9px;
-    border: 1px solid rgba(214, 179, 122, 0.18);
-    background-color: rgba(10, 11, 15, 0.9);
+    min-height: 16px;
+    border-radius: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    background-color: rgba(9, 14, 22, 0.92);
     text-align: center;
-    color: #f8f3ea;
+    color: #f8fafc;
 }
 QProgressBar::chunk {
-    border-radius: 8px;
-    background-color: #d6b37a;
+    border-radius: 7px;
+    background-color: #38bdf8;
 }
 QScrollBar:vertical {
     width: 12px;
@@ -288,7 +293,7 @@ QScrollBar:vertical {
 QScrollBar::handle:vertical {
     min-height: 36px;
     border-radius: 6px;
-    background-color: rgba(214, 179, 122, 0.34);
+    background-color: rgba(56, 189, 248, 0.34);
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
@@ -432,7 +437,7 @@ class SpeakerGroup(QGroupBox):
     def __init__(self, speaker: str, custom_reference_dir: Path) -> None:
         super().__init__(f"Speaker {speaker}")
         self.custom_reference_dir = custom_reference_dir
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self.reference_path = QLineEdit()
         self.reference_picker = QComboBox()
         self.reference_picker.currentIndexChanged.connect(self._handle_reference_selection)
@@ -450,20 +455,27 @@ class SpeakerGroup(QGroupBox):
         self.pause_spin.setRange(0, 2000)
         self.pause_spin.setValue(180)
 
-        form = QFormLayout(self)
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        form.setFormAlignment(Qt.AlignTop)
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(10)
-        form.addRow("Custom Voice Reference Audio", self.reference_picker)
-        form.addRow("Language", self.language_combo)
-        form.addRow("CFG Weight", self.cfg_weight)
-        form.addRow("Exaggeration", self.exaggeration)
-        form.addRow("Temperature", self.temperature)
-        form.addRow("Emotion Intensity", self.emotion_intensity)
-        form.addRow("Naturalness (Heuristic)", self.naturalness)
-        form.addRow("Pause After Speaker Turn (ms)", self.pause_spin)
+        layout = QGridLayout(self)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setHorizontalSpacing(12)
+        layout.setVerticalSpacing(8)
+        self._add_compact_field(layout, 0, 0, "Reference Audio", self.reference_picker)
+        self._add_compact_field(layout, 0, 1, "Language", self.language_combo)
+        self._add_compact_field(layout, 1, 0, "CFG Weight", self.cfg_weight)
+        self._add_compact_field(layout, 1, 1, "Exaggeration", self.exaggeration)
+        self._add_compact_field(layout, 2, 0, "Temperature", self.temperature)
+        self._add_compact_field(layout, 2, 1, "Emotion Intensity", self.emotion_intensity)
+        self._add_compact_field(layout, 3, 0, "Naturalness", self.naturalness)
+        self._add_compact_field(layout, 3, 1, "Pause After Turn", self.pause_spin)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 1)
+
+    def _add_compact_field(self, layout: QGridLayout, row: int, column: int, label_text: str, widget: QWidget) -> None:
+        base_row = row * 2
+        label = QLabel(label_text)
+        label.setObjectName("fieldLabel")
+        layout.addWidget(label, base_row, column)
+        layout.addWidget(widget, base_row + 1, column)
 
     def _double_box(self, minimum: float, maximum: float, value: float, step: float) -> QDoubleSpinBox:
         box = QDoubleSpinBox()
@@ -603,8 +615,8 @@ class MainWindow(QMainWindow):
         root = QWidget(self)
         root.setObjectName("oracleRoot")
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(28, 24, 28, 28)
-        layout.setSpacing(20)
+        layout.setContentsMargins(18, 16, 18, 18)
+        layout.setSpacing(10)
 
         self.input_path = QLineEdit()
         self.outdir_path = QLineEdit()
@@ -614,6 +626,9 @@ class MainWindow(QMainWindow):
         self.outdir_path.textChanged.connect(self._handle_outdir_changed)
         self.speaker_a = SpeakerGroup("A", self.paths.voice_dir)
         self.speaker_b = SpeakerGroup("B", self.paths.voice_dir)
+        self.monologue_mode = QCheckBox("Monologue Mode")
+        self.monologue_mode.setToolTip("Disable Speaker B and render all lines with Speaker A.")
+        self.monologue_mode.toggled.connect(self._handle_monologue_toggled)
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels([
             "Index",
@@ -644,27 +659,28 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setWordWrap(True)
-        self.table.setMinimumHeight(360)
+        self.table.setMinimumHeight(260)
         self.error_panel = QTextEdit()
         self.error_panel.setReadOnly(True)
         self.error_panel.setPlaceholderText("Status and model errors appear here.")
-        self.error_panel.setMinimumHeight(170)
+        self.error_panel.setMinimumHeight(100)
 
         layout.addWidget(self._build_top_bar())
-
-        self.main_splitter = QSplitter(Qt.Horizontal)
-        self.main_splitter.addWidget(self._build_control_column())
-        self.main_splitter.addWidget(self._build_workspace_column())
-        self.main_splitter.setChildrenCollapsible(False)
-        self.main_splitter.setStretchFactor(0, 0)
-        self.main_splitter.setStretchFactor(1, 1)
-        self.main_splitter.setSizes([420, 900])
-        layout.addWidget(self.main_splitter, stretch=1)
+        layout.addWidget(self._build_settings_deck())
+        self.workspace_splitter = QSplitter(Qt.Vertical)
+        self.workspace_splitter.addWidget(self._wrap_card("Dialogue Review", self.table))
+        self.workspace_splitter.addWidget(self._wrap_card("Operations Log", self.error_panel, minimum_height=100))
+        self.workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter.setStretchFactor(0, 1)
+        self.workspace_splitter.setStretchFactor(1, 0)
+        self.workspace_splitter.setSizes([640, 120])
+        layout.addWidget(self.workspace_splitter, stretch=1)
 
         self.setCentralWidget(root)
         self.outdir_path.setText(str(self.paths.output_dir))
         self._refresh_language_options()
         self._refresh_reference_pickers()
+        self._apply_monologue_mode(False)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -704,13 +720,11 @@ class MainWindow(QMainWindow):
 
     def _build_project_settings(self) -> QGroupBox:
         box = QGroupBox("Shared Render Settings")
-        form = QFormLayout(box)
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        form.setFormAlignment(Qt.AlignTop)
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(10)
-        box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        layout = QGridLayout(box)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setHorizontalSpacing(10)
+        layout.setVerticalSpacing(6)
+        box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self.variant_combo = QComboBox()
         self.variant_combo.addItems(list(SUPPORTED_VARIANTS))
         self.variant_combo.currentTextChanged.connect(self._refresh_language_options)
@@ -724,10 +738,13 @@ class MainWindow(QMainWindow):
         self.crossfade_spin = QSpinBox()
         self.crossfade_spin.setRange(0, 500)
         self.crossfade_spin.setValue(RenderSettings().crossfade_ms)
-        form.addRow("Model Variant", self.variant_combo)
-        form.addRow("Correction Mode", self.correction_mode_combo)
-        form.addRow("Loudness", self.loudness_combo)
-        form.addRow("Crossfade (ms)", self.crossfade_spin)
+        self._add_compact_field(layout, 0, 0, "Model Variant", self.variant_combo)
+        self._add_compact_field(layout, 0, 1, "Correction Mode", self.correction_mode_combo)
+        self._add_compact_field(layout, 1, 0, "Loudness", self.loudness_combo)
+        self._add_compact_field(layout, 1, 1, "Crossfade (ms)", self.crossfade_spin)
+        layout.addWidget(self.monologue_mode, 4, 0, 1, 2, alignment=Qt.AlignLeft)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 1)
         return box
 
     def _set_correction_mode(self, value: str) -> None:
@@ -742,38 +759,34 @@ class MainWindow(QMainWindow):
         card = QWidget()
         card.setObjectName("topBarCard")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(22, 20, 22, 20)
-        layout.setSpacing(14)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
 
         top_row = QHBoxLayout()
-        top_row.setSpacing(18)
+        top_row.setSpacing(12)
 
         copy_column = QVBoxLayout()
-        copy_column.setSpacing(4)
+        copy_column.setSpacing(2)
 
-        eyebrow = QLabel("Oracle Control Room")
+        eyebrow = QLabel("Production Workspace")
         eyebrow.setObjectName("appKicker")
 
-        title = QLabel("Direct two voices, inspect every line, and render with discipline.")
+        title = QLabel("The Oracle")
         title.setObjectName("appTitle")
-        title.setWordWrap(True)
-        title.setFont(QFont(_pick_font_family(_DISPLAY_FONT_CANDIDATES), 16, QFont.Bold))
+        title.setFont(QFont(_pick_font_family(_DISPLAY_FONT_CANDIDATES), 14, QFont.Bold))
 
         subtitle = QLabel(
-            "A denser studio layout for actual production work: controlled inputs on the left, review and status on the right."
+            "Analyze, review, preview, and render from one compact desktop surface."
         )
         subtitle.setObjectName("appSummary")
-        subtitle.setWordWrap(True)
 
         copy_column.addWidget(eyebrow)
         copy_column.addWidget(title)
         copy_column.addWidget(subtitle)
-        copy_column.addStretch(1)
         top_row.addLayout(copy_column, stretch=1)
 
         actions = QHBoxLayout()
-        actions.setSpacing(12)
-        actions.addStretch(1)
+        actions.setSpacing(8)
         self.analyze_button = QPushButton("Analyze")
         self.analyze_button.clicked.connect(self.prepare_project)
         self._style_action_button(self.analyze_button)
@@ -785,53 +798,33 @@ class MainWindow(QMainWindow):
         top_row.addLayout(actions, stretch=0)
 
         controls = QGridLayout()
-        controls.setHorizontalSpacing(12)
-        controls.setVerticalSpacing(8)
+        controls.setHorizontalSpacing(10)
+        controls.setVerticalSpacing(6)
         self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
         self._add_path_row(controls, 1, "Output Folder", self.outdir_path, self._pick_outdir)
-        controls.addWidget(self._build_field_label("Output Filename"), 2, 0)
-        controls.addWidget(self.output_name, 2, 1, 1, 2)
+        controls.addWidget(self._build_field_label("Output Filename"), 1, 3)
+        controls.addWidget(self.output_name, 1, 4)
+        controls.setColumnStretch(1, 1)
+        controls.setColumnStretch(4, 1)
 
         layout.addLayout(top_row)
         layout.addLayout(controls)
         return card
 
-    def _build_control_column(self) -> QWidget:
-        rail = QWidget()
-        rail.setObjectName("controlRail")
-        rail.setMinimumWidth(360)
-        rail.setMaximumWidth(460)
-
-        stack = QWidget()
-        stack_layout = QVBoxLayout(stack)
-        stack_layout.setContentsMargins(0, 0, 0, 0)
-        stack_layout.setSpacing(14)
-        stack_layout.addWidget(self._build_section_label("Render Parameters"))
-        stack_layout.addWidget(self._build_project_settings())
-        stack_layout.addWidget(self.speaker_a)
-        stack_layout.addWidget(self.speaker_b)
-        stack_layout.addStretch(1)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setWidget(stack)
-
-        layout = QVBoxLayout(rail)
+    def _build_settings_deck(self) -> QWidget:
+        deck = QWidget()
+        deck.setObjectName("settingsDeck")
+        layout = QVBoxLayout(deck)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(scroll)
-        return rail
+        layout.setSpacing(0)
 
-    def _build_workspace_column(self) -> QWidget:
-        workspace = QWidget()
-        workspace.setObjectName("workspacePanel")
-        layout = QVBoxLayout(workspace)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-        layout.addWidget(self._wrap_card("Dialogue Review", self.table), stretch=1)
-        layout.addWidget(self._wrap_card("Operations Log", self.error_panel, minimum_height=210))
-        return workspace
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(self._build_project_settings(), stretch=1)
+        row.addWidget(self.speaker_a, stretch=1)
+        row.addWidget(self.speaker_b, stretch=1)
+        layout.addLayout(row)
+        return deck
 
     def _build_section_label(self, text: str) -> QLabel:
         label = QLabel(text)
@@ -843,12 +836,17 @@ class MainWindow(QMainWindow):
         label.setObjectName("fieldLabel")
         return label
 
+    def _add_compact_field(self, layout: QGridLayout, row: int, column: int, label_text: str, widget: QWidget) -> None:
+        base_row = row * 2
+        layout.addWidget(self._build_field_label(label_text), base_row, column)
+        layout.addWidget(widget, base_row + 1, column)
+
     def _wrap_card(self, title: str, widget: QWidget, *, minimum_height: int | None = None) -> QWidget:
         card = QWidget()
         card.setObjectName("contentCard")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(14, 12, 14, 14)
+        layout.setSpacing(8)
         layout.addWidget(self._build_section_label(title))
         if minimum_height is not None:
             widget.setMinimumHeight(minimum_height)
@@ -865,8 +863,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(button, row, 2)
 
     def _style_action_button(self, button: QPushButton, accent: bool = False) -> None:
-        button.setMinimumHeight(48)
-        button.setMinimumWidth(170 if not accent else 210)
+        button.setMinimumHeight(36)
+        button.setMinimumWidth(120 if not accent else 148)
         button.setProperty("accentButton", accent)
         button.style().unpolish(button)
         button.style().polish(button)
@@ -917,6 +915,51 @@ class MainWindow(QMainWindow):
         recents = [path for path in load_recent_reference_paths() if Path(path).exists()]
         self.speaker_a.set_reference_choices(defaults, recents, self.speaker_a.reference_path.text())
         self.speaker_b.set_reference_choices(defaults, recents, self.speaker_b.reference_path.text())
+
+    def _is_monologue_mode(self) -> bool:
+        return bool(self.monologue_mode.isChecked())
+
+    def _handle_monologue_toggled(self, enabled: bool) -> None:
+        if self.plan is not None:
+            self._sync_plan_from_table()
+        self._apply_monologue_mode(enabled)
+        if self.plan is not None:
+            self._populate_table(self.plan)
+
+    def _apply_monologue_mode(self, enabled: bool) -> None:
+        self.speaker_b.setVisible(not enabled)
+        self.speaker_b.setEnabled(not enabled)
+        if enabled and self.plan is not None:
+            self._coerce_plan_to_monologue(self.plan)
+
+    def _coerce_plan_to_monologue(self, plan: RenderPlan) -> None:
+        speaker_settings = self._speaker_settings()
+        profile_a = plan.voice_profiles.get("A")
+        if profile_a is None:
+            return
+        cloned_a = replace(
+            profile_a,
+            engine_params=VoiceSettings.from_mapping(speaker_settings["A"].voice_settings),
+        )
+        cloned_b = replace(
+            plan.voice_profiles.get("B", cloned_a),
+            speaker="B",
+            name="Speaker B",
+            reference_audio=list(cloned_a.reference_audio),
+            neutral_reference=cloned_a.neutral_reference,
+            emotion_references=dict(cloned_a.emotion_references),
+            engine_params=VoiceSettings.from_mapping(speaker_settings["B"].voice_settings),
+        )
+        plan.voice_profiles = {**plan.voice_profiles, "A": cloned_a, "B": cloned_b}
+        plan.metadata["monologue_mode"] = True
+        plan.metadata["language"] = cloned_a.engine_params.language
+        for utterance in plan.utterances:
+            utterance.manual_speaker_override = utterance.manual_speaker_override or utterance.speaker != "A"
+            utterance.speaker = "A"
+            utterance.speaker_source = "monologue_mode"
+            utterance.engine_settings = VoiceSettings.from_mapping(cloned_a.engine_params)
+            utterance.parameters = utterance.engine_settings.to_dict()
+            utterance.pause_after_ms = utterance.engine_settings.pause_ms
 
     # --------------------
     # Prewarm management
@@ -980,38 +1023,46 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    def _speaker_settings(self) -> dict[str, SpeakerSettings]:
+    def _ui_speaker_settings(self) -> dict[str, SpeakerSettings]:
         variant = self.variant_combo.currentText()
-        return {
-            "A": SpeakerSettings(
-                reference_path=self.speaker_a.reference_path.text(),
-                voice_settings=VoiceSettings(
-                    variant=variant,
-                    language=self.speaker_a.language_combo.currentData() or "en",
-                    cfg_weight=self.speaker_a.cfg_weight.value(),
-                    exaggeration=self.speaker_a.exaggeration.value(),
-                    temperature=self.speaker_a.temperature.value(),
-                    emotion_intensity=self.speaker_a.emotion_intensity.value(),
-                    naturalness=self.speaker_a.naturalness.value(),
-                    pause_ms=self.speaker_a.pause_spin.value(),
-                    crossfade_ms=self.crossfade_spin.value(),
-                ),
+        speaker_a = SpeakerSettings(
+            reference_path=self.speaker_a.reference_path.text(),
+            voice_settings=VoiceSettings(
+                variant=variant,
+                language=self.speaker_a.language_combo.currentData() or "en",
+                cfg_weight=self.speaker_a.cfg_weight.value(),
+                exaggeration=self.speaker_a.exaggeration.value(),
+                temperature=self.speaker_a.temperature.value(),
+                emotion_intensity=self.speaker_a.emotion_intensity.value(),
+                naturalness=self.speaker_a.naturalness.value(),
+                pause_ms=self.speaker_a.pause_spin.value(),
+                crossfade_ms=self.crossfade_spin.value(),
             ),
-            "B": SpeakerSettings(
-                reference_path=self.speaker_b.reference_path.text(),
-                voice_settings=VoiceSettings(
-                    variant=variant,
-                    language=self.speaker_b.language_combo.currentData() or "en",
-                    cfg_weight=self.speaker_b.cfg_weight.value(),
-                    exaggeration=self.speaker_b.exaggeration.value(),
-                    temperature=self.speaker_b.temperature.value(),
-                    emotion_intensity=self.speaker_b.emotion_intensity.value(),
-                    naturalness=self.speaker_b.naturalness.value(),
-                    pause_ms=self.speaker_b.pause_spin.value(),
-                    crossfade_ms=self.crossfade_spin.value(),
-                ),
+        )
+        speaker_b = SpeakerSettings(
+            reference_path=self.speaker_b.reference_path.text(),
+            voice_settings=VoiceSettings(
+                variant=variant,
+                language=self.speaker_b.language_combo.currentData() or "en",
+                cfg_weight=self.speaker_b.cfg_weight.value(),
+                exaggeration=self.speaker_b.exaggeration.value(),
+                temperature=self.speaker_b.temperature.value(),
+                emotion_intensity=self.speaker_b.emotion_intensity.value(),
+                naturalness=self.speaker_b.naturalness.value(),
+                pause_ms=self.speaker_b.pause_spin.value(),
+                crossfade_ms=self.crossfade_spin.value(),
             ),
-        }
+        )
+        return {"A": speaker_a, "B": speaker_b}
+
+    def _speaker_settings(self) -> dict[str, SpeakerSettings]:
+        settings = self._ui_speaker_settings()
+        if self._is_monologue_mode():
+            settings["B"] = SpeakerSettings(
+                reference_path=settings["A"].reference_path,
+                voice_settings=VoiceSettings.from_mapping(settings["A"].voice_settings),
+            )
+        return settings
 
     def _render_settings(self) -> RenderSettings:
         variant = self.variant_combo.currentText()
@@ -1025,7 +1076,10 @@ class MainWindow(QMainWindow):
             pause_between_turns_ms=self.speaker_a.pause_spin.value(),
             crossfade_ms=self.crossfade_spin.value(),
             device_mode=_DEVICE_MODE,
-            metadata={"output_filename": normalize_output_filename(self.output_name.text())},
+            metadata={
+                "output_filename": normalize_output_filename(self.output_name.text()),
+                "monologue_mode": self._is_monologue_mode(),
+            },
         )
 
     def _pipeline(self) -> OraclePipeline:
@@ -1061,6 +1115,7 @@ class MainWindow(QMainWindow):
                 "crossfade_ms": default_render.crossfade_ms,
                 "output_dir": str(self.paths.output_dir),
                 "output_filename": "",
+                "monologue_mode": False,
             },
             "speakers": {
                 speaker: {
@@ -1099,6 +1154,9 @@ class MainWindow(QMainWindow):
         self.crossfade_spin.setValue(saved_project.render_settings.crossfade_ms)
         self._apply_speaker_group(self.speaker_a, saved_project.speaker_settings["A"])
         self._apply_speaker_group(self.speaker_b, saved_project.speaker_settings["B"])
+        self.monologue_mode.setChecked(bool(saved_project.render_settings.metadata.get("monologue_mode", False)))
+        if self._is_monologue_mode():
+            self._coerce_plan_to_monologue(self.plan)
         self._populate_table(self.plan)
 
     def _current_saved_project(self):
@@ -1107,7 +1165,7 @@ class MainWindow(QMainWindow):
         if not self.plan:
             raise ValueError("No project is available to save.")
         self._sync_plan_from_table()
-        return build_saved_project(self.plan, self._render_settings(), self._speaker_settings())
+        return build_saved_project(self.plan, self._render_settings(), self._ui_speaker_settings())
 
     def _current_gui_settings_payload(self) -> dict:
         return {
@@ -1121,6 +1179,7 @@ class MainWindow(QMainWindow):
                 "crossfade_ms": self.crossfade_spin.value(),
                 "output_dir": self.outdir_path.text() or str(self.paths.output_dir),
                 "output_filename": normalize_output_filename(self.output_name.text()),
+                "monologue_mode": self._is_monologue_mode(),
                 "delete_confirm_enabled": self.delete_confirm_enabled,
             },
             "speakers": {
@@ -1129,7 +1188,7 @@ class MainWindow(QMainWindow):
                     "voice_settings": VoiceSettings.from_mapping(settings.voice_settings).to_dict(),
                     "emotion_reference_paths": dict(settings.emotion_reference_paths),
                 }
-                for speaker, settings in self._speaker_settings().items()
+                for speaker, settings in self._ui_speaker_settings().items()
             },
         }
 
@@ -1143,6 +1202,7 @@ class MainWindow(QMainWindow):
         self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
         self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
         self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
+        self.monologue_mode.setChecked(bool(project.get("monologue_mode", False)))
         self.delete_confirm_enabled = bool(project.get("delete_confirm_enabled", True))
         for speaker, group in (("A", self.speaker_a), ("B", self.speaker_b)):
             config = {**defaults["speakers"][speaker], **payload["speakers"][speaker]}
@@ -1311,6 +1371,8 @@ class MainWindow(QMainWindow):
                 if speaker.reference_path:
                     remember_recent_reference_path(speaker.reference_path)
             self._refresh_reference_pickers()
+            if self._is_monologue_mode():
+                self._coerce_plan_to_monologue(self.plan)
             self._populate_table(self.plan)
             self.error_panel.append("Analysis complete.")
         except Exception as exc:
@@ -1318,12 +1380,14 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Analysis Failed", str(exc))
 
     def _populate_table(self, plan: RenderPlan) -> None:
+        speaker_options = ["A"] if self._is_monologue_mode() else ["A", "B"]
         self.table.setRowCount(len(plan.utterances))
         for row, utterance in enumerate(plan.utterances):
             self.table.setItem(row, 0, QTableWidgetItem(str(utterance.index)))
             speaker_combo = QComboBox()
-            speaker_combo.addItems(["A", "B"])
-            speaker_combo.setCurrentText(utterance.speaker)
+            speaker_combo.addItems(speaker_options)
+            speaker_combo.setCurrentText("A" if self._is_monologue_mode() else utterance.speaker)
+            speaker_combo.setEnabled(not self._is_monologue_mode())
             self.table.setCellWidget(row, 1, speaker_combo)
             self.table.setItem(row, 2, QTableWidgetItem(utterance.original_text))
             repaired = QTableWidgetItem(utterance.repaired_text)
@@ -1426,7 +1490,7 @@ class MainWindow(QMainWindow):
         for row, utterance in enumerate(self.plan.utterances):
             speaker_widget = self.table.cellWidget(row, 1)
             if isinstance(speaker_widget, QComboBox):
-                selected_speaker = speaker_widget.currentText()
+                selected_speaker = "A" if self._is_monologue_mode() else speaker_widget.currentText()
                 utterance.manual_speaker_override = utterance.manual_speaker_override or selected_speaker != utterance.speaker
                 utterance.speaker = selected_speaker
             repaired_item = self.table.item(row, 3)
@@ -1452,6 +1516,9 @@ class MainWindow(QMainWindow):
             for speaker, config in speaker_settings.items()
         }
         self.plan.metadata["language"] = speaker_languages["A"] if len(set(speaker_languages.values())) == 1 else "mixed"
+        self.plan.metadata["monologue_mode"] = self._is_monologue_mode()
+        if self._is_monologue_mode():
+            self._coerce_plan_to_monologue(self.plan)
         self.plan.update_hashes()
 
     def preview_utterance(self, row: int) -> None:

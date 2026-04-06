@@ -105,6 +105,7 @@ def test_loading_profile_payload_replaces_current_settings(qt_app, monkeypatch: 
         window.speaker_a.cfg_weight.setValue(0.9)
         window.speaker_b.reference_path.setText("/tmp/speaker_b.wav")
         window.speaker_b.pause_spin.setValue(420)
+        window.monologue_mode.setChecked(True)
         payload = window._current_gui_settings_payload()
 
         window.variant_combo.setCurrentText("standard")
@@ -117,6 +118,7 @@ def test_loading_profile_payload_replaces_current_settings(qt_app, monkeypatch: 
         window.speaker_a.cfg_weight.setValue(0.5)
         window.speaker_b.reference_path.clear()
         window.speaker_b.pause_spin.setValue(180)
+        window.monologue_mode.setChecked(False)
 
         window._apply_gui_settings_payload(payload)
 
@@ -130,6 +132,7 @@ def test_loading_profile_payload_replaces_current_settings(qt_app, monkeypatch: 
         assert window.speaker_a.cfg_weight.value() == pytest.approx(0.9)
         assert window.speaker_b.reference_path.text() == "/tmp/speaker_b.wav"
         assert window.speaker_b.pause_spin.value() == 420
+        assert window.monologue_mode.isChecked() is True
     finally:
         window.close()
 
@@ -146,6 +149,7 @@ def test_new_project_keeps_current_profile_settings(qt_app, monkeypatch: pytest.
         window.loudness_combo.setCurrentText("medium")
         window.speaker_a.reference_path.setText("/tmp/speaker_a.wav")
         window.speaker_b.reference_path.setText("/tmp/speaker_b.wav")
+        window.monologue_mode.setChecked(True)
 
         window.new_project()
 
@@ -156,6 +160,7 @@ def test_new_project_keeps_current_profile_settings(qt_app, monkeypatch: pytest.
         assert window.loudness_combo.currentText() == "medium"
         assert window.speaker_a.reference_path.text() == "/tmp/speaker_a.wav"
         assert window.speaker_b.reference_path.text() == "/tmp/speaker_b.wav"
+        assert window.monologue_mode.isChecked() is True
         assert window.paths.output_dir == paths.output_dir
     finally:
         window.close()
@@ -177,6 +182,7 @@ def test_reset_to_defaults_restores_profile_baseline(qt_app, monkeypatch: pytest
         window.speaker_a.cfg_weight.setValue(1.0)
         window.speaker_b.reference_path.setText("/tmp/speaker_b.wav")
         window.speaker_b.pause_spin.setValue(360)
+        window.monologue_mode.setChecked(True)
 
         window.reset_settings_to_defaults()
 
@@ -190,6 +196,7 @@ def test_reset_to_defaults_restores_profile_baseline(qt_app, monkeypatch: pytest
         assert window.speaker_b.reference_path.text() == ""
         assert window.speaker_a.cfg_weight.value() == pytest.approx(defaults.cfg_weight)
         assert window.speaker_b.pause_spin.value() == defaults.pause_ms
+        assert window.monologue_mode.isChecked() is False
     finally:
         window.close()
 
@@ -308,10 +315,39 @@ def test_main_window_uses_split_dashboard_layout(qt_app, monkeypatch: pytest.Mon
     window, _paths = _build_window(monkeypatch, tmp_path)
 
     try:
-        assert window.main_splitter.count() == 2
-        assert window.main_splitter.widget(0).maximumWidth() == 460
-        assert window.main_splitter.widget(0).minimumWidth() == 360
+        assert window.workspace_splitter.count() == 2
+        assert window.centralWidget().layout().count() == 3
+        assert window.monologue_mode.isChecked() is False
+        assert window.speaker_b.isHidden() is False
         assert window.table.columnWidth(2) >= 300
         assert window.table.columnWidth(3) >= 300
+    finally:
+        window.close()
+
+
+def test_monologue_mode_hides_speaker_b_and_forces_plan_to_speaker_a(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import the_oracle.app_gui as app_gui
+
+    window, paths = _build_window(monkeypatch, tmp_path)
+
+    try:
+        plan = _minimal_plan(paths)
+        plan.utterances = [
+            app_gui.Utterance(index=0, original_text="Hello", repaired_text="Hello", speaker="A"),
+            app_gui.Utterance(index=1, original_text="World", repaired_text="World", speaker="B"),
+        ]
+        window.plan = plan
+
+        window.monologue_mode.setChecked(True)
+
+        assert window.speaker_b.isHidden() is True
+        assert all(utterance.speaker == "A" for utterance in window.plan.utterances)
+        speaker_widget = window.table.cellWidget(1, 1)
+        assert isinstance(speaker_widget, app_gui.QComboBox)
+        assert speaker_widget.count() == 1
+        assert speaker_widget.currentText() == "A"
+        assert speaker_widget.isEnabled() is False
     finally:
         window.close()
