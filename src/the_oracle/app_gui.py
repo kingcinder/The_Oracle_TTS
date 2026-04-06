@@ -10,7 +10,7 @@ import json
 import threading
 
 from PySide6.QtCore import QThread, Qt, QUrl, Signal, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QFont, QFontDatabase
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -68,6 +68,223 @@ from the_oracle.tts_engines.chatterbox_engine import SUPPORTED_VARIANTS, Chatter
 # Preview and render always use "cpu"; the constant is defined here so
 # it can be updated in one place if a verified GPU path is added later.
 _DEVICE_MODE: str = "cpu"
+
+_DISPLAY_FONT_CANDIDATES = (
+    "Aptos Display",
+    "Segoe UI Variable Display",
+    "SF Pro Display",
+    "Inter",
+    "Noto Sans",
+    "DejaVu Sans",
+)
+_BODY_FONT_CANDIDATES = (
+    "Aptos",
+    "Segoe UI Variable Text",
+    "SF Pro Text",
+    "Inter",
+    "Noto Sans",
+    "DejaVu Sans",
+)
+_APP_STYLESHEET = """
+QMainWindow, QDialog {
+    background-color: #090a0d;
+    color: #f3eee4;
+}
+QWidget#oracleRoot {
+    background-color: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 #111319,
+        stop: 0.45 #161921,
+        stop: 1 #090a0d
+    );
+}
+QWidget#heroCard {
+    background-color: rgba(20, 22, 29, 0.93);
+    border: 1px solid rgba(214, 179, 122, 0.24);
+    border-radius: 26px;
+}
+QLabel {
+    color: #f3eee4;
+}
+QLabel#heroEyebrow {
+    color: #d6b37a;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+}
+QLabel#heroTitle {
+    color: #fbf7ef;
+    font-size: 34px;
+    font-weight: 700;
+}
+QLabel#heroSubtitle {
+    color: #aab1bc;
+    font-size: 14px;
+    line-height: 1.4;
+}
+QLabel#sectionLabel {
+    color: #d9c3a0;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-top: 4px;
+}
+QGroupBox {
+    margin-top: 16px;
+    padding: 24px 18px 18px 18px;
+    border-radius: 22px;
+    border: 1px solid rgba(214, 179, 122, 0.18);
+    background-color: rgba(24, 27, 34, 0.9);
+    font-size: 13px;
+    font-weight: 600;
+    color: #f3eee4;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 16px;
+    padding: 0 8px;
+    color: #d6b37a;
+}
+QMenuBar {
+    background: transparent;
+    color: #f3eee4;
+    border: none;
+    padding: 4px 10px;
+}
+QMenuBar::item {
+    background: transparent;
+    padding: 8px 12px;
+    border-radius: 10px;
+}
+QMenuBar::item:selected {
+    background-color: rgba(214, 179, 122, 0.16);
+}
+QMenu {
+    background-color: #12141a;
+    border: 1px solid rgba(214, 179, 122, 0.22);
+    border-radius: 12px;
+    padding: 8px;
+}
+QMenu::item {
+    padding: 8px 16px;
+    border-radius: 8px;
+}
+QMenu::item:selected {
+    background-color: rgba(214, 179, 122, 0.16);
+}
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QTableWidget {
+    background-color: rgba(10, 11, 15, 0.88);
+    border: 1px solid rgba(214, 179, 122, 0.16);
+    border-radius: 14px;
+    color: #f6f1e7;
+    padding: 10px 12px;
+    selection-background-color: rgba(214, 179, 122, 0.28);
+    selection-color: #fffdf7;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus, QTableWidget:focus {
+    border: 1px solid rgba(214, 179, 122, 0.72);
+}
+QComboBox::drop-down, QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+    border: none;
+    width: 22px;
+}
+QPushButton {
+    min-height: 38px;
+    padding: 10px 18px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: rgba(37, 40, 49, 0.96);
+    color: #f6f1e7;
+    font-size: 13px;
+    font-weight: 600;
+}
+QPushButton:hover {
+    background-color: rgba(49, 54, 66, 0.98);
+    border-color: rgba(214, 179, 122, 0.35);
+}
+QPushButton:pressed {
+    background-color: rgba(27, 30, 37, 0.98);
+}
+QPushButton[accentButton="true"] {
+    background-color: #d6b37a;
+    color: #161312;
+    border: 1px solid #f2d09a;
+    font-weight: 700;
+}
+QPushButton[accentButton="true"]:hover {
+    background-color: #e3c18b;
+}
+QPushButton[utilityButton="true"] {
+    min-height: 34px;
+    border-radius: 12px;
+    background-color: rgba(20, 22, 29, 0.86);
+}
+QPushButton:disabled {
+    background-color: rgba(42, 44, 52, 0.45);
+    color: rgba(243, 238, 228, 0.45);
+    border-color: rgba(255, 255, 255, 0.04);
+}
+QHeaderView::section {
+    background-color: rgba(214, 179, 122, 0.12);
+    color: #e8d5b4;
+    border: none;
+    border-bottom: 1px solid rgba(214, 179, 122, 0.18);
+    padding: 12px 10px;
+    font-size: 12px;
+    font-weight: 700;
+}
+QTableWidget {
+    gridline-color: transparent;
+    alternate-background-color: rgba(255, 255, 255, 0.02);
+}
+QTableCornerButton::section {
+    background-color: rgba(214, 179, 122, 0.12);
+    border: none;
+}
+QProgressBar {
+    min-height: 18px;
+    border-radius: 9px;
+    border: 1px solid rgba(214, 179, 122, 0.18);
+    background-color: rgba(10, 11, 15, 0.9);
+    text-align: center;
+    color: #f8f3ea;
+}
+QProgressBar::chunk {
+    border-radius: 8px;
+    background-color: #d6b37a;
+}
+QScrollBar:vertical {
+    width: 12px;
+    margin: 8px 0 8px 0;
+    background: transparent;
+}
+QScrollBar::handle:vertical {
+    min-height: 36px;
+    border-radius: 6px;
+    background-color: rgba(214, 179, 122, 0.34);
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    height: 0;
+    background: transparent;
+}
+"""
+
+
+def _pick_font_family(candidates: tuple[str, ...]) -> str:
+    families = set(QFontDatabase.families())
+    for candidate in candidates:
+        if candidate in families:
+            return candidate
+    return QFont().defaultFamily()
+
+
+def _configure_application(app: QApplication) -> None:
+    app.setStyle("Fusion")
+    app.setStyleSheet(_APP_STYLESHEET)
+    app.setFont(QFont(_pick_font_family(_BODY_FONT_CANDIDATES), 10))
 
 
 class RenderWorker(QThread):
@@ -353,22 +570,22 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget(self)
+        root.setObjectName("oracleRoot")
         layout = QVBoxLayout(root)
+        layout.setContentsMargins(28, 24, 28, 28)
+        layout.setSpacing(18)
 
-        controls = QGridLayout()
         self.input_path = QLineEdit()
         self.outdir_path = QLineEdit()
         self.output_name = QLineEdit()
         self.output_name.setPlaceholderText("Auto-derived from the input file when using the default Output folder")
         self.input_path.textChanged.connect(self._handle_outdir_changed)
         self.outdir_path.textChanged.connect(self._handle_outdir_changed)
-        self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
-        self._add_path_row(controls, 1, "Output Folder", self.outdir_path, self._pick_outdir)
-        controls.addWidget(QLabel("Output Filename"), 2, 0)
-        controls.addWidget(self.output_name, 2, 1, 1, 2)
-        layout.addLayout(controls)
+        layout.addWidget(self._build_hero_card())
 
+        layout.addWidget(self._build_section_label("Render Parameters"))
         settings_row = QHBoxLayout()
+        settings_row.setSpacing(16)
         settings_row.addWidget(self._build_project_settings())
         self.speaker_a = SpeakerGroup("A", self.paths.voice_dir)
         self.speaker_b = SpeakerGroup("B", self.paths.voice_dir)
@@ -376,19 +593,7 @@ class MainWindow(QMainWindow):
         settings_row.addWidget(self.speaker_b)
         layout.addLayout(settings_row)
 
-        actions = QHBoxLayout()
-        actions.setSpacing(12)
-        actions.addStretch(1)
-        self.analyze_button = QPushButton("Analyze")
-        self.analyze_button.clicked.connect(self.prepare_project)
-        self._style_action_button(self.analyze_button)
-        self.render_button = QPushButton("Render FLAC")
-        self.render_button.clicked.connect(self.render_project)
-        self._style_action_button(self.render_button, accent=True)
-        actions.addWidget(self.analyze_button)
-        actions.addWidget(self.render_button)
-        layout.addLayout(actions)
-
+        layout.addWidget(self._build_section_label("Dialogue Review"))
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels([
             "Index",
@@ -405,12 +610,19 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setMinimumHeight(360)
         layout.addWidget(self.table, stretch=1)
 
+        layout.addWidget(self._build_section_label("Operations Log"))
         self.error_panel = QTextEdit()
         self.error_panel.setReadOnly(True)
         self.error_panel.setPlaceholderText("Status and model errors appear here.")
-        layout.addWidget(QLabel("Status / Errors"))
+        self.error_panel.setMinimumHeight(150)
         layout.addWidget(self.error_panel)
 
         self.setCentralWidget(root)
@@ -484,9 +696,64 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self.correction_mode_combo.setCurrentIndex(idx)
 
+    def _build_hero_card(self) -> QWidget:
+        card = QWidget()
+        card.setObjectName("heroCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(16)
+
+        eyebrow = QLabel("Oracle Studio")
+        eyebrow.setObjectName("heroEyebrow")
+
+        title = QLabel("Voice direction, mastering, and render control in one room.")
+        title.setObjectName("heroTitle")
+        title.setWordWrap(True)
+        title.setFont(QFont(_pick_font_family(_DISPLAY_FONT_CANDIDATES), 18, QFont.Bold))
+
+        subtitle = QLabel(
+            "Shape both speakers, review every line, and render polished FLAC output through a single high-control surface."
+        )
+        subtitle.setObjectName("heroSubtitle")
+        subtitle.setWordWrap(True)
+
+        controls = QGridLayout()
+        controls.setHorizontalSpacing(12)
+        controls.setVerticalSpacing(12)
+        self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
+        self._add_path_row(controls, 1, "Output Folder", self.outdir_path, self._pick_outdir)
+        controls.addWidget(QLabel("Output Filename"), 2, 0)
+        controls.addWidget(self.output_name, 2, 1, 1, 2)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(12)
+        actions.addStretch(1)
+        self.analyze_button = QPushButton("Analyze")
+        self.analyze_button.clicked.connect(self.prepare_project)
+        self._style_action_button(self.analyze_button)
+        self.render_button = QPushButton("Render FLAC")
+        self.render_button.clicked.connect(self.render_project)
+        self._style_action_button(self.render_button, accent=True)
+        actions.addWidget(self.analyze_button)
+        actions.addWidget(self.render_button)
+
+        layout.addWidget(eyebrow)
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addLayout(controls)
+        layout.addLayout(actions)
+        return card
+
+    def _build_section_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("sectionLabel")
+        return label
+
     def _add_path_row(self, layout: QGridLayout, row: int, label: str, field: QLineEdit, callback) -> None:
         button = QPushButton("Browse")
         button.clicked.connect(callback)
+        field.setClearButtonEnabled(True)
+        self._style_utility_button(button)
         layout.addWidget(QLabel(label), row, 0)
         layout.addWidget(field, row, 1)
         layout.addWidget(button, row, 2)
@@ -494,12 +761,14 @@ class MainWindow(QMainWindow):
     def _style_action_button(self, button: QPushButton, accent: bool = False) -> None:
         button.setMinimumHeight(48)
         button.setMinimumWidth(170 if not accent else 210)
-        palette = (
-            "background-color: #19466d; color: white; border: 1px solid #133652;"
-            if accent
-            else "background-color: #f4f7fa; color: #12263a; border: 1px solid #9fb0c0;"
-        )
-        button.setStyleSheet(f"font-size: 15px; font-weight: 600; padding: 8px 18px; border-radius: 6px; {palette}")
+        button.setProperty("accentButton", accent)
+        button.style().unpolish(button)
+        button.style().polish(button)
+
+    def _style_utility_button(self, button: QPushButton) -> None:
+        button.setProperty("utilityButton", True)
+        button.style().unpolish(button)
+        button.style().polish(button)
 
     def _pick_input(self) -> None:
         current_text = self.input_path.text().strip()
@@ -1257,6 +1526,7 @@ class MainWindow(QMainWindow):
 def launch_gui() -> None:
     launch_t0 = perf_counter()
     app = QApplication.instance() or QApplication([])
+    _configure_application(app)
     launch_marks: list[tuple[str, float]] = [("qt_app_created", perf_counter() - launch_t0)]
     window = MainWindow()
     launch_marks.append(("mainwindow_built", perf_counter() - launch_t0))
