@@ -302,3 +302,16 @@ def test_prewarm_thread_skips_heavy_backend_init(monkeypatch: pytest.MonkeyPatch
     assert isinstance(timing, dict)
     assert "prewarm_start" in timing
     assert "prewarm_complete" in timing
+
+
+def test_main_window_uses_split_dashboard_layout(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window, _paths = _build_window(monkeypatch, tmp_path)
+
+    try:
+        assert window.main_splitter.count() == 2
+        assert window.main_splitter.widget(0).maximumWidth() == 460
+        assert window.main_splitter.widget(0).minimumWidth() == 360
+        assert window.table.columnWidth(2) >= 300
+        assert window.table.columnWidth(3) >= 300
+    finally:
+        window.close()

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
+    QFrame,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -31,7 +32,10 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -98,30 +102,42 @@ QWidget#oracleRoot {
         stop: 1 #090a0d
     );
 }
-QWidget#heroCard {
-    background-color: rgba(20, 22, 29, 0.93);
-    border: 1px solid rgba(214, 179, 122, 0.24);
-    border-radius: 26px;
+QWidget#topBarCard, QWidget#contentCard {
+    background-color: rgba(18, 21, 28, 0.94);
+    border: 1px solid rgba(214, 179, 122, 0.16);
+    border-radius: 24px;
+}
+QWidget#controlRail {
+    background: transparent;
+}
+QWidget#workspacePanel {
+    background: transparent;
 }
 QLabel {
     color: #f3eee4;
 }
-QLabel#heroEyebrow {
+QLabel#appKicker {
     color: #d6b37a;
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 3px;
+    letter-spacing: 2px;
     text-transform: uppercase;
 }
-QLabel#heroTitle {
+QLabel#appTitle {
     color: #fbf7ef;
-    font-size: 34px;
+    font-size: 26px;
     font-weight: 700;
 }
-QLabel#heroSubtitle {
+QLabel#appSummary {
     color: #aab1bc;
-    font-size: 14px;
-    line-height: 1.4;
+    font-size: 13px;
+}
+QLabel#fieldLabel {
+    color: #cbb696;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
 }
 QLabel#sectionLabel {
     color: #d9c3a0;
@@ -132,9 +148,9 @@ QLabel#sectionLabel {
     margin-top: 4px;
 }
 QGroupBox {
-    margin-top: 16px;
-    padding: 24px 18px 18px 18px;
-    border-radius: 22px;
+    margin-top: 14px;
+    padding: 20px 16px 16px 16px;
+    border-radius: 20px;
     border: 1px solid rgba(214, 179, 122, 0.18);
     background-color: rgba(24, 27, 34, 0.9);
     font-size: 13px;
@@ -238,6 +254,15 @@ QHeaderView::section {
 QTableWidget {
     gridline-color: transparent;
     alternate-background-color: rgba(255, 255, 255, 0.02);
+}
+QSplitter::handle {
+    background: transparent;
+}
+QSplitter::handle:horizontal {
+    width: 12px;
+}
+QSplitter::handle:vertical {
+    height: 12px;
 }
 QTableCornerButton::section {
     background-color: rgba(214, 179, 122, 0.12);
@@ -407,6 +432,7 @@ class SpeakerGroup(QGroupBox):
     def __init__(self, speaker: str, custom_reference_dir: Path) -> None:
         super().__init__(f"Speaker {speaker}")
         self.custom_reference_dir = custom_reference_dir
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.reference_path = QLineEdit()
         self.reference_picker = QComboBox()
         self.reference_picker.currentIndexChanged.connect(self._handle_reference_selection)
@@ -425,6 +451,11 @@ class SpeakerGroup(QGroupBox):
         self.pause_spin.setValue(180)
 
         form = QFormLayout(self)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
         form.addRow("Custom Voice Reference Audio", self.reference_picker)
         form.addRow("Language", self.language_combo)
         form.addRow("CFG Weight", self.cfg_weight)
@@ -573,7 +604,7 @@ class MainWindow(QMainWindow):
         root.setObjectName("oracleRoot")
         layout = QVBoxLayout(root)
         layout.setContentsMargins(28, 24, 28, 28)
-        layout.setSpacing(18)
+        layout.setSpacing(20)
 
         self.input_path = QLineEdit()
         self.outdir_path = QLineEdit()
@@ -581,19 +612,8 @@ class MainWindow(QMainWindow):
         self.output_name.setPlaceholderText("Auto-derived from the input file when using the default Output folder")
         self.input_path.textChanged.connect(self._handle_outdir_changed)
         self.outdir_path.textChanged.connect(self._handle_outdir_changed)
-        layout.addWidget(self._build_hero_card())
-
-        layout.addWidget(self._build_section_label("Render Parameters"))
-        settings_row = QHBoxLayout()
-        settings_row.setSpacing(16)
-        settings_row.addWidget(self._build_project_settings())
         self.speaker_a = SpeakerGroup("A", self.paths.voice_dir)
         self.speaker_b = SpeakerGroup("B", self.paths.voice_dir)
-        settings_row.addWidget(self.speaker_a)
-        settings_row.addWidget(self.speaker_b)
-        layout.addLayout(settings_row)
-
-        layout.addWidget(self._build_section_label("Dialogue Review"))
         self.table = QTableWidget(0, 9)
         self.table.setHorizontalHeaderLabels([
             "Index",
@@ -606,24 +626,40 @@ class MainWindow(QMainWindow):
             "Preview",
             "+/-",
         ])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
+        self.table.setColumnWidth(2, 340)
+        self.table.setColumnWidth(3, 340)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setWordWrap(True)
         self.table.setMinimumHeight(360)
-        layout.addWidget(self.table, stretch=1)
-
-        layout.addWidget(self._build_section_label("Operations Log"))
         self.error_panel = QTextEdit()
         self.error_panel.setReadOnly(True)
         self.error_panel.setPlaceholderText("Status and model errors appear here.")
-        self.error_panel.setMinimumHeight(150)
-        layout.addWidget(self.error_panel)
+        self.error_panel.setMinimumHeight(170)
+
+        layout.addWidget(self._build_top_bar())
+
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.addWidget(self._build_control_column())
+        self.main_splitter.addWidget(self._build_workspace_column())
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes([420, 900])
+        layout.addWidget(self.main_splitter, stretch=1)
 
         self.setCentralWidget(root)
         self.outdir_path.setText(str(self.paths.output_dir))
@@ -669,6 +705,12 @@ class MainWindow(QMainWindow):
     def _build_project_settings(self) -> QGroupBox:
         box = QGroupBox("Shared Render Settings")
         form = QFormLayout(box)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(10)
+        box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.variant_combo = QComboBox()
         self.variant_combo.addItems(list(SUPPORTED_VARIANTS))
         self.variant_combo.currentTextChanged.connect(self._refresh_language_options)
@@ -696,34 +738,38 @@ class MainWindow(QMainWindow):
         if idx >= 0:
             self.correction_mode_combo.setCurrentIndex(idx)
 
-    def _build_hero_card(self) -> QWidget:
+    def _build_top_bar(self) -> QWidget:
         card = QWidget()
-        card.setObjectName("heroCard")
+        card.setObjectName("topBarCard")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(24, 22, 24, 22)
-        layout.setSpacing(16)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(14)
 
-        eyebrow = QLabel("Oracle Studio")
-        eyebrow.setObjectName("heroEyebrow")
+        top_row = QHBoxLayout()
+        top_row.setSpacing(18)
 
-        title = QLabel("Voice direction, mastering, and render control in one room.")
-        title.setObjectName("heroTitle")
+        copy_column = QVBoxLayout()
+        copy_column.setSpacing(4)
+
+        eyebrow = QLabel("Oracle Control Room")
+        eyebrow.setObjectName("appKicker")
+
+        title = QLabel("Direct two voices, inspect every line, and render with discipline.")
+        title.setObjectName("appTitle")
         title.setWordWrap(True)
-        title.setFont(QFont(_pick_font_family(_DISPLAY_FONT_CANDIDATES), 18, QFont.Bold))
+        title.setFont(QFont(_pick_font_family(_DISPLAY_FONT_CANDIDATES), 16, QFont.Bold))
 
         subtitle = QLabel(
-            "Shape both speakers, review every line, and render polished FLAC output through a single high-control surface."
+            "A denser studio layout for actual production work: controlled inputs on the left, review and status on the right."
         )
-        subtitle.setObjectName("heroSubtitle")
+        subtitle.setObjectName("appSummary")
         subtitle.setWordWrap(True)
 
-        controls = QGridLayout()
-        controls.setHorizontalSpacing(12)
-        controls.setVerticalSpacing(12)
-        self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
-        self._add_path_row(controls, 1, "Output Folder", self.outdir_path, self._pick_outdir)
-        controls.addWidget(QLabel("Output Filename"), 2, 0)
-        controls.addWidget(self.output_name, 2, 1, 1, 2)
+        copy_column.addWidget(eyebrow)
+        copy_column.addWidget(title)
+        copy_column.addWidget(subtitle)
+        copy_column.addStretch(1)
+        top_row.addLayout(copy_column, stretch=1)
 
         actions = QHBoxLayout()
         actions.setSpacing(12)
@@ -736,25 +782,85 @@ class MainWindow(QMainWindow):
         self._style_action_button(self.render_button, accent=True)
         actions.addWidget(self.analyze_button)
         actions.addWidget(self.render_button)
+        top_row.addLayout(actions, stretch=0)
 
-        layout.addWidget(eyebrow)
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
+        controls = QGridLayout()
+        controls.setHorizontalSpacing(12)
+        controls.setVerticalSpacing(8)
+        self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
+        self._add_path_row(controls, 1, "Output Folder", self.outdir_path, self._pick_outdir)
+        controls.addWidget(self._build_field_label("Output Filename"), 2, 0)
+        controls.addWidget(self.output_name, 2, 1, 1, 2)
+
+        layout.addLayout(top_row)
         layout.addLayout(controls)
-        layout.addLayout(actions)
         return card
+
+    def _build_control_column(self) -> QWidget:
+        rail = QWidget()
+        rail.setObjectName("controlRail")
+        rail.setMinimumWidth(360)
+        rail.setMaximumWidth(460)
+
+        stack = QWidget()
+        stack_layout = QVBoxLayout(stack)
+        stack_layout.setContentsMargins(0, 0, 0, 0)
+        stack_layout.setSpacing(14)
+        stack_layout.addWidget(self._build_section_label("Render Parameters"))
+        stack_layout.addWidget(self._build_project_settings())
+        stack_layout.addWidget(self.speaker_a)
+        stack_layout.addWidget(self.speaker_b)
+        stack_layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(stack)
+
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(scroll)
+        return rail
+
+    def _build_workspace_column(self) -> QWidget:
+        workspace = QWidget()
+        workspace.setObjectName("workspacePanel")
+        layout = QVBoxLayout(workspace)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+        layout.addWidget(self._wrap_card("Dialogue Review", self.table), stretch=1)
+        layout.addWidget(self._wrap_card("Operations Log", self.error_panel, minimum_height=210))
+        return workspace
 
     def _build_section_label(self, text: str) -> QLabel:
         label = QLabel(text)
         label.setObjectName("sectionLabel")
         return label
 
+    def _build_field_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("fieldLabel")
+        return label
+
+    def _wrap_card(self, title: str, widget: QWidget, *, minimum_height: int | None = None) -> QWidget:
+        card = QWidget()
+        card.setObjectName("contentCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 18)
+        layout.setSpacing(12)
+        layout.addWidget(self._build_section_label(title))
+        if minimum_height is not None:
+            widget.setMinimumHeight(minimum_height)
+        layout.addWidget(widget, stretch=1)
+        return card
+
     def _add_path_row(self, layout: QGridLayout, row: int, label: str, field: QLineEdit, callback) -> None:
         button = QPushButton("Browse")
         button.clicked.connect(callback)
         field.setClearButtonEnabled(True)
         self._style_utility_button(button)
-        layout.addWidget(QLabel(label), row, 0)
+        layout.addWidget(self._build_field_label(label), row, 0)
         layout.addWidget(field, row, 1)
         layout.addWidget(button, row, 2)
 
