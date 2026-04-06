@@ -88,13 +88,13 @@ def repo_python_display() -> str:
 
 def repo_bootstrap_display(repo_root: str | Path | None = None) -> str:
     if is_windows():
-        return r".\bootstrap_oracle_tts.ps1"
+        return r".\bootstrap_windows.cmd"
     return "./bootstrap_oracle_tts.sh"
 
 
 def repo_run_display(repo_root: str | Path | None = None) -> str:
     if is_windows():
-        return r".\run_oracle_tts.ps1"
+        return r".\run_windows.cmd"
     return "./run_oracle_tts.sh"
 
 

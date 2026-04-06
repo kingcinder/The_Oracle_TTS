@@ -38,7 +38,27 @@ For source-only bootstrap without desktop integration:
 
 ### Windows
 
-Install Python 3.11 or 3.12 and `ffmpeg`, then run from PowerShell:
+Install Python 3.11 or 3.12 and `ffmpeg`, then run from `cmd.exe`:
+
+```cmd
+bootstrap_windows.cmd
+```
+
+That wrapper creates or reuses `.venv`, then runs the managed bootstrap through `.venv\Scripts\python.exe`.
+
+Windows doctor:
+
+```cmd
+doctor_windows.cmd
+```
+
+Windows run:
+
+```cmd
+run_windows.cmd
+```
+
+The existing PowerShell entrypoints remain available if you prefer them:
 
 ```powershell
 .\install_oracle_tts.ps1
@@ -77,6 +97,13 @@ Windows:
 ```powershell
 .\doctor_oracle_tts.ps1
 .\run_oracle_tts.ps1
+```
+
+CMD-first equivalents:
+
+```cmd
+doctor_windows.cmd
+run_windows.cmd
 ```
 
 The doctor checks:

@@ -135,6 +135,45 @@ def _probe_environment(repo_root: Path, extra_env: dict[str, str] | None = None)
     return env
 
 
+def _set_windows_path(env: dict[str, str], value: str) -> None:
+    if is_windows():
+        env["Path"] = value
+        env["PATH"] = value
+        return
+    env["PATH"] = value
+
+
+def _windows_persisted_path_entries() -> list[str]:
+    if not is_windows():
+        return []
+    try:
+        import winreg
+    except Exception:
+        return []
+
+    entries: list[str] = []
+    seen: set[str] = set()
+
+    def _append_from_registry(root: Any, subkey: str) -> None:
+        try:
+            with winreg.OpenKey(root, subkey) as handle:
+                value, _ = winreg.QueryValueEx(handle, "Path")
+        except FileNotFoundError:
+            return
+        except OSError:
+            return
+        for entry in path_entries(value):
+            normalized = entry.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            entries.append(entry)
+
+    _append_from_registry(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")
+    _append_from_registry(winreg.HKEY_CURRENT_USER, r"Environment")
+    return entries
+
+
 def _run_python_probe(
     repo_root: Path,
     code: str,
@@ -244,12 +283,38 @@ def _entrypoint_status(repo_root: Path) -> dict[str, Any]:
     if help_target:
         help_result = _run_command([help_target, "--help"], cwd=repo_root, timeout=30)
 
+    persisted_path_entries = _windows_persisted_path_entries() if is_windows() else []
+
     if is_windows():
-        fresh_shell = _run_command(
-            ["cmd", "/d", "/c", "where the-oracle >nul 2>nul && the-oracle --help >nul 2>nul"],
-            cwd=repo_root,
-            timeout=30,
-        )
+        if persisted_path_entries and shutil.which("powershell"):
+            fresh_shell = _run_command(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    (
+                        "$machine=[Environment]::GetEnvironmentVariable('Path','Machine'); "
+                        "$user=[Environment]::GetEnvironmentVariable('Path','User'); "
+                        "$merged=@(); "
+                        "$seen=@{}; "
+                        "foreach($part in (($machine+';'+$user) -split ';')) { "
+                        "if($part -and -not $seen.ContainsKey($part.ToLowerInvariant())) { "
+                        "$seen[$part.ToLowerInvariant()]=$true; "
+                        "$merged += $part } }; "
+                        "$env:Path=($merged -join ';'); "
+                        "cmd /d /c \"where the-oracle >nul 2>nul && the-oracle --help >nul 2>nul\"; "
+                        "exit $LASTEXITCODE"
+                    ),
+                ],
+                cwd=repo_root,
+                timeout=30,
+            )
+        else:
+            fresh_shell = _run_command(
+                ["cmd", "/d", "/c", "where the-oracle >nul 2>nul && the-oracle --help >nul 2>nul"],
+                cwd=repo_root,
+                timeout=30,
+            )
     elif shutil.which("bash"):
         fresh_shell = _run_command(
             ["bash", "-lc", "command -v the-oracle && the-oracle --help >/dev/null"],
@@ -259,9 +324,12 @@ def _entrypoint_status(repo_root: Path) -> dict[str, Any]:
     else:
         fresh_shell = {"ok": help_result["ok"], "stdout": help_target or "", "stderr": help_result["stderr"]}
     normalized_entries = {entry.lower() if is_windows() else entry for entry in path_entries()}
+    persisted_normalized_entries = {
+        entry.lower() if is_windows() else entry for entry in persisted_path_entries
+    }
     launcher_dir = str(managed_launcher_dir())
     launcher_entry = launcher_dir.lower() if is_windows() else launcher_dir
-    path_has_local_bin = launcher_entry in normalized_entries
+    path_has_local_bin = launcher_entry in normalized_entries or launcher_entry in persisted_normalized_entries
 
     return {
         "ok": bool(help_target) and help_result["ok"] and fresh_shell["ok"],
@@ -276,6 +344,7 @@ def _entrypoint_status(repo_root: Path) -> dict[str, Any]:
         "fresh_shell_path": fresh_shell["stdout"].strip(),
         "fresh_shell_error": fresh_shell["stderr"].strip() or ("the-oracle is not available in a fresh shell PATH" if not fresh_shell["ok"] else ""),
         "path_has_local_bin": path_has_local_bin,
+        "persisted_path_has_local_bin": launcher_entry in persisted_normalized_entries,
     }
 
 
@@ -505,9 +574,9 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
     steps: list[str] = []
     if not report["python"]["ok"]:
         if is_windows():
-            steps.append(r"Install Python 3.12, make sure the `py` launcher can find it, then rerun .\bootstrap_oracle_tts.ps1.")
+            steps.append(r"Install Python 3.11 or 3.12, make sure the `py` launcher can find it, then rerun .\bootstrap_windows.cmd.")
         else:
-            steps.append("Install Python 3.12 with venv support: sudo apt install python3.12 python3.12-venv")
+            steps.append("Install Python 3.11 or 3.12 with venv support, then rerun ./bootstrap_oracle_tts.sh.")
 
     runtime_packages: list[str] = []
     if not report["ffmpeg"]["ok"] and not ci_mode:
