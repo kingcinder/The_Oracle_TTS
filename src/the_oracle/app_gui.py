@@ -63,6 +63,7 @@ from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings, U
 from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
 from the_oracle.voice_catalog import VoiceChoice, default_voice_choices
+from the_oracle.voice_recorder import VoiceRecorderDialog
 from the_oracle.tts_engines.chatterbox_engine import SUPPORTED_VARIANTS, ChatterboxEngine
 
 # CPU is the only verified Chatterbox execution path in this project.
@@ -241,6 +242,21 @@ QPushButton[utilityButton="true"] {
     min-height: 30px;
     border-radius: 9px;
     background-color: rgba(15, 23, 42, 0.92);
+}
+QPushButton[transportButton="true"] {
+    min-height: 62px;
+    padding: 12px 18px;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 700;
+}
+QPushButton[recordButton="true"] {
+    background-color: #ef4444;
+    border: 1px solid #f87171;
+    color: #fff7f7;
+}
+QPushButton[recordButton="true"]:hover {
+    background-color: #f05252;
 }
 QPushButton:disabled {
     background-color: rgba(42, 44, 52, 0.45);
@@ -567,6 +583,7 @@ class MainWindow(QMainWindow):
         self.preview_worker: PreviewWorker | None = None
         self.progress_dialog: RenderProgressDialog | None = None
         self.preview_dialog: RenderProgressDialog | None = None
+        self.voice_recorder_dialog: VoiceRecorderDialog | None = None
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
@@ -695,6 +712,11 @@ class MainWindow(QMainWindow):
         for action in (new_action, open_action, save_action, save_as_action):
             file_menu.addAction(action)
 
+        tools_menu = self.menuBar().addMenu("Tools")
+        voice_recorder_action = QAction("Voice Recorder", self)
+        voice_recorder_action.triggered.connect(self.open_voice_recorder)
+        tools_menu.addAction(voice_recorder_action)
+
         settings_menu = self.menuBar().addMenu("Settings")
         reset_defaults_action = QAction("Reset to Defaults", self)
         reset_defaults_action.triggered.connect(self.reset_settings_to_defaults)
@@ -787,12 +809,16 @@ class MainWindow(QMainWindow):
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
+        self.recorder_button = QPushButton("Voice Recorder")
+        self.recorder_button.clicked.connect(self.open_voice_recorder)
+        self._style_utility_button(self.recorder_button)
         self.analyze_button = QPushButton("Analyze")
         self.analyze_button.clicked.connect(self.prepare_project)
         self._style_action_button(self.analyze_button)
         self.render_button = QPushButton("Render FLAC")
         self.render_button.clicked.connect(self.render_project)
         self._style_action_button(self.render_button, accent=True)
+        actions.addWidget(self.recorder_button)
         actions.addWidget(self.analyze_button)
         actions.addWidget(self.render_button)
         top_row.addLayout(actions, stretch=0)
@@ -873,6 +899,13 @@ class MainWindow(QMainWindow):
         button.setProperty("utilityButton", True)
         button.style().unpolish(button)
         button.style().polish(button)
+
+    def open_voice_recorder(self) -> None:
+        if self.voice_recorder_dialog is None:
+            self.voice_recorder_dialog = VoiceRecorderDialog(self.paths, parent=self)
+        self.voice_recorder_dialog.show()
+        self.voice_recorder_dialog.raise_()
+        self.voice_recorder_dialog.activateWindow()
 
     def _pick_input(self) -> None:
         current_text = self.input_path.text().strip()
