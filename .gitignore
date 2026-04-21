@@ -42,6 +42,8 @@ NEXT_CODEX_PROMPT.txt
 # Runtime directories - contents ignored but directories kept for structure
 # Input/ - user dialogue source files (keep .txt samples, ignore runtime)
 Input/test/
+Input/*
+!Input/READ_THIS_TO_RECORD_SEASHELLS.txt
 Input/**/*.pkl
 Input/**/*.json
 Input/**/*.diff
@@ -51,6 +53,7 @@ Input/**/*.wav
 !Input/test/.gitkeep
 
 # Output/ - rendered audio and cache (all runtime-generated)
+Output/*
 Output/**/*.flac
 Output/**/*.wav
 Output/**/*.pkl

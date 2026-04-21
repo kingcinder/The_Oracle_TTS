@@ -228,10 +228,6 @@ Windows:
 ## Sample Inputs
 
 - `READ_THIS_TO_RECORD_SEASHELLS.txt`
-- `Read Aloud transcript.txt`
-- `What is, reality.txt`
-- `cli_short.txt`
-- `test.txt`
 
 ## Development
 
