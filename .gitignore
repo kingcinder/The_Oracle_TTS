@@ -64,6 +64,7 @@ Profiles/**/*.json
 # Seashells/ - curated voice references (keep .wav, ignore cache)
 Seashells/.oracle_preview/
 Seashells/**/*.pkl
+Seashells/Cody's Seashell1.wav
 
 # user_settings/ - GUI settings (runtime-generated)
 user_settings/**/*.json

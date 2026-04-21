@@ -146,6 +146,9 @@ Recorder details:
 - output location: `Seashells/`
 - sample-rate menu: common mic/recording frequencies ranging from low-grade headset territory through studio-oriented rates, filtered to rates actually supported by the selected microphone
 - output filename: sanitized from the chosen clip name
+- included boilerplate script: `Input/READ_THIS_TO_RECORD_SEASHELLS.txt`
+- included canonical reference clip: `Seashells/Cody's Seashell.wav`
+- derivative/private variants beyond the one original Cody Seashell asset are intentionally excluded from the repository product surface
 
 ## CLI Usage
 
@@ -217,10 +220,18 @@ Windows:
 - `Input/` sample dialogue and read-aloud scripts
 - `Output/` renders, manifests, logs, and smoke outputs
 - `Profiles/` saved GUI settings profiles
-- `Seashells/` repo-local reference voice clips
+- `Seashells/` repo-local reference voice clips, including the original `Cody's Seashell.wav`
 - `scripts/` bootstrap, doctor, smoke, and model utility entrypoints
 - `src/the_oracle/` application code
 - `tests/` unit and integration-style validation
+
+## Sample Inputs
+
+- `READ_THIS_TO_RECORD_SEASHELLS.txt`
+- `Read Aloud transcript.txt`
+- `What is, reality.txt`
+- `cli_short.txt`
+- `test.txt`
 
 ## Development
 
