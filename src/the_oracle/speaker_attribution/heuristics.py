@@ -67,10 +67,17 @@ SIGNATURE_STOPWORDS = {
 }
 NAME_CAPTURE_PATTERN = r"[A-Z][A-Za-z0-9'&.-]*(?:\s+[A-Z][A-Za-z0-9'&.-]*){0,2}"
 SELF_IDENTIFY_NAME_RE = re.compile(
-    rf"\b(?:i am|i'm|im|this is|it is)\s+(?P<name>{NAME_CAPTURE_PATTERN})\b",
-    re.IGNORECASE,
+    rf"\b(?:(?i:i am|i'm|im|this is|it is))\s+(?P<name>{NAME_CAPTURE_PATTERN})\b",
 )
-NAME_HERE_RE = re.compile(rf"\b(?P<name>{NAME_CAPTURE_PATTERN})\s+here\b", re.IGNORECASE)
+NAME_HERE_RE = re.compile(rf"\b(?P<name>{NAME_CAPTURE_PATTERN})\s+(?i:here)\b")
+TEXT_NORMALIZATION_TABLE = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+    }
+)
 
 
 @dataclass(slots=True)
@@ -86,8 +93,12 @@ class SpeakerDecision:
     reason: str
 
 
+def _normalize_text(text: str) -> str:
+    return text.translate(TEXT_NORMALIZATION_TABLE)
+
+
 def _tokenize(text: str) -> list[str]:
-    return TOKEN_RE.findall(text.lower())
+    return TOKEN_RE.findall(_normalize_text(text).lower())
 
 
 def _stable_hash_bytes(value: str) -> bytes:
@@ -102,8 +113,9 @@ def _bucket_for(value: str, dimensions: int) -> tuple[int, float]:
 
 
 def _embed_text(text: str, dimensions: int = 96) -> np.ndarray:
+    normalized_text = _normalize_text(text)
     vector = np.zeros(dimensions + 8, dtype=np.float32)
-    tokens = _tokenize(text)
+    tokens = _tokenize(normalized_text)
     for token in tokens:
         bucket, sign = _bucket_for(token, dimensions)
         vector[bucket] += sign
@@ -112,14 +124,14 @@ def _embed_text(text: str, dimensions: int = 96) -> np.ndarray:
         vector[bucket] += 0.7 * sign
 
     token_count = max(1, len(tokens))
-    question_flag = 1.0 if "?" in text else 0.0
-    exclaim_flag = 1.0 if "!" in text else 0.0
-    quote_flag = 1.0 if '"' in text or "'" in text else 0.0
-    first_person = len(FIRST_PERSON_RE.findall(text)) / token_count
-    second_person = len(SECOND_PERSON_RE.findall(text)) / token_count
+    question_flag = 1.0 if "?" in normalized_text else 0.0
+    exclaim_flag = 1.0 if "!" in normalized_text else 0.0
+    quote_flag = 1.0 if '"' in normalized_text or "'" in normalized_text else 0.0
+    first_person = len(FIRST_PERSON_RE.findall(normalized_text)) / token_count
+    second_person = len(SECOND_PERSON_RE.findall(normalized_text)) / token_count
     short_flag = 1.0 if token_count <= 6 else 0.0
     long_flag = min(1.0, token_count / 40.0)
-    uppercase_ratio = sum(1 for char in text if char.isupper()) / max(1, sum(1 for char in text if char.isalpha()))
+    uppercase_ratio = sum(1 for char in normalized_text if char.isupper()) / max(1, sum(1 for char in normalized_text if char.isalpha()))
     vector[dimensions:] = np.asarray(
         [
             question_flag,
@@ -187,6 +199,7 @@ def _mentions_name(text: str, name: str) -> bool:
 
 
 def _vocative_mentions_name(text: str, name: str) -> bool:
+    text = _normalize_text(text)
     normalized_name = _normalize_name(name)
     if not normalized_name:
         return False
@@ -209,6 +222,7 @@ def _self_identifies(text: str, name: str) -> bool:
 
 
 def _extract_self_identified_name(text: str) -> str | None:
+    text = _normalize_text(text)
     for pattern in (SELF_IDENTIFY_NAME_RE, NAME_HERE_RE):
         match = pattern.search(text)
         if not match:
@@ -225,7 +239,7 @@ def _content_tokens(text: str) -> list[str]:
 
 
 def _is_reply_like(text: str) -> bool:
-    stripped = text.strip()
+    stripped = _normalize_text(text).strip()
     if not stripped:
         return False
     if RESPONSE_CUE_RE.search(stripped):
@@ -234,8 +248,8 @@ def _is_reply_like(text: str) -> bool:
 
 
 def _is_continuation(prev_text: str, current_text: str) -> bool:
-    previous = prev_text.strip()
-    current = current_text.strip()
+    previous = _normalize_text(prev_text).strip()
+    current = _normalize_text(current_text).strip()
     if not previous or not current:
         return False
     if previous.endswith((",", ";", ":", "-", "—", "–")):

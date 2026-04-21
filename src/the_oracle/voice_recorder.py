@@ -24,11 +24,23 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from the_oracle import __version__
 from the_oracle.app_paths import OraclePaths
 from the_oracle.audio.export_flac import write_flac
 
 
-VOICE_RECORDING_SAMPLE_RATE = 48_000
+COMMON_MIC_SAMPLE_RATES = (
+    8_000,
+    11_025,
+    16_000,
+    22_050,
+    24_000,
+    32_000,
+    44_100,
+    48_000,
+    88_200,
+    96_000,
+)
 VOICE_RECORDING_CHANNELS = 1
 _DEFAULT_CLIP_NAME = "voice_sample"
 
@@ -47,25 +59,52 @@ def build_voice_recording_path(voice_dir: str | Path, clip_name: str) -> Path:
     return Path(voice_dir).expanduser().resolve() / f"{sanitize_voice_clip_name(clip_name)}.flac"
 
 
-def build_recording_format(device: QAudioDevice) -> QAudioFormat:
+def format_sample_rate_label(sample_rate: int) -> str:
+    if sample_rate % 1000 == 0:
+        return f"{sample_rate // 1000} kHz"
+    return f"{sample_rate / 1000:.1f} kHz"
+
+
+def _sample_format_candidates(device: QAudioDevice) -> list[QAudioFormat.SampleFormat]:
     preferred = device.preferredFormat()
-    candidates = [
+    return [
         preferred.sampleFormat(),
         QAudioFormat.SampleFormat.Int16,
         QAudioFormat.SampleFormat.Float,
         QAudioFormat.SampleFormat.Int32,
         QAudioFormat.SampleFormat.UInt8,
     ]
+
+
+def build_recording_format(device: QAudioDevice, sample_rate: int) -> QAudioFormat:
+    candidates = _sample_format_candidates(device)
     for sample_format in candidates:
         if sample_format == QAudioFormat.SampleFormat.Unknown:
             continue
         audio_format = QAudioFormat()
-        audio_format.setSampleRate(VOICE_RECORDING_SAMPLE_RATE)
+        audio_format.setSampleRate(sample_rate)
         audio_format.setChannelCount(VOICE_RECORDING_CHANNELS)
         audio_format.setSampleFormat(sample_format)
         if device.isFormatSupported(audio_format):
             return audio_format
-    raise ValueError(f"{device.description()} does not support mono {VOICE_RECORDING_SAMPLE_RATE} Hz capture.")
+    raise ValueError(f"{device.description()} does not support mono {sample_rate} Hz capture.")
+
+
+def supported_recording_sample_rates(device: QAudioDevice) -> list[int]:
+    preferred_rate = device.preferredFormat().sampleRate()
+    candidates: list[int] = []
+    if preferred_rate > 0:
+        candidates.append(preferred_rate)
+    candidates.extend(rate for rate in COMMON_MIC_SAMPLE_RATES if rate not in candidates)
+
+    supported: list[int] = []
+    for sample_rate in candidates:
+        try:
+            build_recording_format(device, sample_rate)
+        except ValueError:
+            continue
+        supported.append(sample_rate)
+    return sorted(set(supported))
 
 
 def pcm_bytes_to_mono_float32(raw: bytes, audio_format: QAudioFormat) -> np.ndarray:
@@ -103,9 +142,10 @@ def pcm_bytes_to_mono_float32(raw: bytes, audio_format: QAudioFormat) -> np.ndar
 @dataclass(slots=True)
 class QtAudioCaptureSession:
     device: QAudioDevice
+    sample_rate: int
 
     def __post_init__(self) -> None:
-        self.audio_format = build_recording_format(self.device)
+        self.audio_format = build_recording_format(self.device, self.sample_rate)
         self._buffer_bytes = QByteArray()
         self._buffer = QBuffer(self._buffer_bytes)
         self._audio_source: QAudioSource | None = None
@@ -167,7 +207,7 @@ class VoiceRecorderDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.paths = paths
-        self._capture_factory = capture_factory or (lambda device: QtAudioCaptureSession(device))
+        self._capture_factory = capture_factory or (lambda device, sample_rate: QtAudioCaptureSession(device, sample_rate))
         self._audio_devices = audio_devices or _SystemAudioDevices()
         self._capture_session = None
         self._last_recording_path: Path | None = None
@@ -191,9 +231,7 @@ class VoiceRecorderDialog(QDialog):
 
         title = QLabel("Record Custom Voice References")
         title.setObjectName("appTitle")
-        subtitle = QLabel(
-            f"Capture mono {VOICE_RECORDING_SAMPLE_RATE} Hz reference audio directly into {self.paths.voice_dir.name}."
-        )
+        subtitle = QLabel(f"Capture mono FLAC reference audio directly into {self.paths.voice_dir.name}.")
         subtitle.setObjectName("appSummary")
         layout.addWidget(title)
         layout.addWidget(subtitle)
@@ -204,17 +242,25 @@ class VoiceRecorderDialog(QDialog):
 
         self.prompt_path = QLineEdit()
         self.prompt_path.setReadOnly(True)
+        self.prompt_path.setToolTip("The source script displayed while recording a custom voice sample.")
         self.prompt_browse = QPushButton("Choose Text")
         self.prompt_browse.clicked.connect(self._pick_prompt_file)
         self.prompt_browse.setProperty("utilityButton", True)
+        self.prompt_browse.setToolTip("Browse for a text or markdown file to display in the recorder.")
 
         self.clip_name = QLineEdit()
         self.clip_name.setPlaceholderText("voice_sample")
+        self.clip_name.setToolTip("The saved FLAC filename written into Seashells.")
 
         self.mic_combo = QComboBox()
+        self.mic_combo.currentIndexChanged.connect(self._refresh_sample_rates_for_selected_mic)
+        self.mic_combo.setToolTip("Select the microphone device used for recording.")
+        self.sample_rate_combo = QComboBox()
+        self.sample_rate_combo.setToolTip("Choose a supported mono recording frequency for the selected microphone.")
         self.refresh_mics_button = QPushButton("Refresh Mics")
         self.refresh_mics_button.clicked.connect(self.refresh_microphones)
         self.refresh_mics_button.setProperty("utilityButton", True)
+        self.refresh_mics_button.setToolTip("Rescan the system for newly connected or changed microphones.")
 
         self.output_path_label = QLabel(str(build_voice_recording_path(self.paths.voice_dir, _DEFAULT_CLIP_NAME)))
         self.output_path_label.setObjectName("appSummary")
@@ -227,8 +273,10 @@ class VoiceRecorderDialog(QDialog):
         controls.addWidget(self._field_label("Microphone"), 2, 0)
         controls.addWidget(self.mic_combo, 2, 1)
         controls.addWidget(self.refresh_mics_button, 2, 2)
-        controls.addWidget(self._field_label("Saves To"), 3, 0)
-        controls.addWidget(self.output_path_label, 3, 1, 1, 2)
+        controls.addWidget(self._field_label("Sample Rate"), 3, 0)
+        controls.addWidget(self.sample_rate_combo, 3, 1)
+        controls.addWidget(self._field_label("Saves To"), 4, 0)
+        controls.addWidget(self.output_path_label, 4, 1, 1, 2)
 
         self.prompt_view = QTextEdit()
         self.prompt_view.setReadOnly(True)
@@ -248,6 +296,10 @@ class VoiceRecorderDialog(QDialog):
             button.setProperty("transportButton", True)
         self.record_button.setProperty("recordButton", True)
         self.playback_button.setProperty("accentButton", True)
+        self.record_button.setToolTip("Begin recording a new mono FLAC reference clip.")
+        self.stop_button.setToolTip("Stop the current recording or stop playback.")
+        self.playback_button.setToolTip("Play back the last saved FLAC reference clip.")
+        self.pause_button.setToolTip("Pause or resume the active recording or playback session.")
         self.record_button.clicked.connect(self.start_recording)
         self.stop_button.clicked.connect(self.stop_transport)
         self.playback_button.clicked.connect(self.playback_recording)
@@ -281,6 +333,7 @@ class VoiceRecorderDialog(QDialog):
         for device in inputs:
             self.mic_combo.addItem(device.description(), device)
         if not inputs:
+            self.sample_rate_combo.clear()
             self.status_label.setText("No microphones detected.")
             self._sync_transport_buttons()
             return
@@ -291,7 +344,9 @@ class VoiceRecorderDialog(QDialog):
                 if device is not None and bytes(device.id()) == target_id:
                     self.mic_combo.setCurrentIndex(index)
                     break
-        self.status_label.setText(f"{len(inputs)} microphone(s) available.")
+        self._refresh_sample_rates_for_selected_mic()
+        if self.sample_rate_combo.count() > 0:
+            self.status_label.setText(f"{len(inputs)} microphone(s) available.")
         self._sync_transport_buttons()
 
     def _selected_device_id(self) -> bytes | None:
@@ -302,6 +357,33 @@ class VoiceRecorderDialog(QDialog):
 
     def _selected_device(self):
         return self.mic_combo.currentData()
+
+    def _selected_sample_rate(self) -> int | None:
+        data = self.sample_rate_combo.currentData()
+        if data is None:
+            return None
+        return int(data)
+
+    def _refresh_sample_rates_for_selected_mic(self) -> None:
+        current_rate = self._selected_sample_rate()
+        device = self._selected_device()
+        self.sample_rate_combo.clear()
+        if device is None:
+            self._sync_transport_buttons()
+            return
+        sample_rates = supported_recording_sample_rates(device)
+        for sample_rate in sample_rates:
+            self.sample_rate_combo.addItem(format_sample_rate_label(sample_rate), sample_rate)
+        preferred_rate = device.preferredFormat().sampleRate()
+        desired_rate = current_rate if current_rate in sample_rates else preferred_rate
+        target_index = self.sample_rate_combo.findData(desired_rate)
+        if target_index < 0 and self.sample_rate_combo.count() > 0:
+            target_index = self.sample_rate_combo.count() - 1
+        if target_index >= 0:
+            self.sample_rate_combo.setCurrentIndex(target_index)
+        if self.sample_rate_combo.count() == 0:
+            self.status_label.setText(f"{device.description()} does not report a supported common mono recording rate.")
+        self._sync_transport_buttons()
 
     def _pick_prompt_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -333,17 +415,23 @@ class VoiceRecorderDialog(QDialog):
         if device is None:
             QMessageBox.critical(self, "Recorder", "No microphone is available to record from.")
             return
+        sample_rate = self._selected_sample_rate()
+        if sample_rate is None:
+            QMessageBox.critical(self, "Recorder", "No supported sample rate is available for the selected microphone.")
+            return
         clip_name = sanitize_voice_clip_name(self.clip_name.text())
         self.clip_name.setText(clip_name)
         try:
-            self._capture_session = self._capture_factory(device)
+            self._capture_session = self._capture_factory(device, sample_rate)
             self._capture_session.start()
         except Exception as exc:
             self._capture_session = None
             QMessageBox.critical(self, "Recorder", str(exc))
             self.status_label.setText(f"Record failed: {exc}")
             return
-        self.status_label.setText(f"Recording to {clip_name}.flac from {device.description()}.")
+        self.status_label.setText(
+            f"Recording to {clip_name}.flac from {device.description()} at {format_sample_rate_label(sample_rate)}."
+        )
         self._sync_transport_buttons()
 
     def stop_transport(self) -> None:
@@ -351,9 +439,9 @@ class VoiceRecorderDialog(QDialog):
             destination = self._recording_destination()
             metadata = {
                 "title": sanitize_voice_clip_name(destination.stem),
-                "software": "The Oracle Voice Recorder",
+                "software": f"The Oracle Voice Recorder {__version__}",
                 "prompt_file": self.prompt_path.text(),
-                "sample_rate": str(VOICE_RECORDING_SAMPLE_RATE),
+                "sample_rate": str(self._selected_sample_rate() or ""),
                 "channels": "1",
             }
             try:
@@ -411,6 +499,7 @@ class VoiceRecorderDialog(QDialog):
 
     def _sync_transport_buttons(self) -> None:
         has_mic = self.mic_combo.count() > 0
+        has_sample_rate = self.sample_rate_combo.count() > 0
         is_recording = self._capture_session is not None
         is_paused = bool(is_recording and self._capture_session.is_paused)
         playing_state = getattr(QMediaPlayer.PlaybackState, "PlayingState", None)
@@ -419,9 +508,8 @@ class VoiceRecorderDialog(QDialog):
         is_playing = playback_state == playing_state
         is_playback_paused = playback_state == paused_state
 
-        self.record_button.setEnabled(has_mic and not is_recording and not is_playing and not is_playback_paused)
+        self.record_button.setEnabled(has_mic and has_sample_rate and not is_recording and not is_playing and not is_playback_paused)
         self.stop_button.setEnabled(is_recording or is_playing or is_playback_paused)
         self.playback_button.setEnabled((self._last_recording_path or self._recording_destination()).exists() and not is_recording)
         self.pause_button.setEnabled(is_recording or is_playing or is_playback_paused)
         self.pause_button.setText("Resume" if is_paused else "Pause")
-

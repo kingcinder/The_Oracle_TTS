@@ -187,3 +187,16 @@ def test_plaintext_ingest_cleans_stage_suffixes_from_labels(tmp_path: Path) -> N
     document = ingest_text_file(source)
 
     assert [segment.explicit_speaker for segment in document.segments] == ["ALICE", "Bob"]
+
+
+def test_plaintext_ingest_handles_utf8_bom_and_smart_quotes(tmp_path: Path) -> None:
+    source = tmp_path / "smart_quotes.txt"
+    source.write_text(
+        'Alice said, “I’m ready.” Bob replied, “You’re late.”',
+        encoding="utf-8-sig",
+    )
+
+    document = ingest_text_file(source)
+
+    assert [segment.explicit_speaker for segment in document.segments] == ["Alice", "Bob"]
+    assert [segment.text for segment in document.segments] == ["I'm ready.", "You're late."]

@@ -196,6 +196,13 @@ QMenu::item {
 QMenu::item:selected {
     background-color: rgba(56, 189, 248, 0.14);
 }
+QToolTip {
+    background-color: #111827;
+    color: #f8fafc;
+    border: 1px solid rgba(125, 211, 252, 0.32);
+    border-radius: 8px;
+    padding: 6px 8px;
+}
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QTableWidget {
     background-color: rgba(9, 14, 22, 0.95);
     border: 1px solid rgba(148, 163, 184, 0.16);
@@ -470,6 +477,14 @@ class SpeakerGroup(QGroupBox):
         self.pause_spin = QSpinBox()
         self.pause_spin.setRange(0, 2000)
         self.pause_spin.setValue(180)
+        self.reference_picker.setToolTip("Choose a built-in, recent, or custom reference clip for this speaker.")
+        self.language_combo.setToolTip("Language conditioning for multilingual mode. Standard and turbo stay in English.")
+        self.cfg_weight.setToolTip("Higher values stay closer to the reference voice identity.")
+        self.exaggeration.setToolTip("Controls how strongly expressive emphasis is applied.")
+        self.temperature.setToolTip("Higher values add variation; lower values make delivery steadier.")
+        self.emotion_intensity.setToolTip("Scales the inferred emotional contour applied to the line.")
+        self.naturalness.setToolTip("Biases pacing and synthesis toward a looser, less rigid delivery.")
+        self.pause_spin.setToolTip("Silence inserted after this speaker finishes a turn.")
 
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 6, 0, 0)
@@ -750,16 +765,20 @@ class MainWindow(QMainWindow):
         self.variant_combo = QComboBox()
         self.variant_combo.addItems(list(SUPPORTED_VARIANTS))
         self.variant_combo.currentTextChanged.connect(self._refresh_language_options)
+        self.variant_combo.setToolTip("Choose the Chatterbox model family. Standard is the default quality-first path.")
         self.correction_mode_combo = QComboBox()
         for label, value in CORRECTION_MODE_OPTIONS:
             self.correction_mode_combo.addItem(label, value)
         self._set_correction_mode(RenderSettings().correction_mode)
+        self.correction_mode_combo.setToolTip("Controls how aggressively the text repair pass normalizes the script.")
         self.loudness_combo = QComboBox()
         self.loudness_combo.addItems(["off", "light", "medium"])
         self.loudness_combo.setCurrentText(RenderSettings().loudness_preset)
+        self.loudness_combo.setToolTip("Applies gentle output leveling after dialogue assembly.")
         self.crossfade_spin = QSpinBox()
         self.crossfade_spin.setRange(0, 500)
         self.crossfade_spin.setValue(RenderSettings().crossfade_ms)
+        self.crossfade_spin.setToolTip("Milliseconds of overlap between adjacent turns during final assembly.")
         self._add_compact_field(layout, 0, 0, "Model Variant", self.variant_combo)
         self._add_compact_field(layout, 0, 1, "Correction Mode", self.correction_mode_combo)
         self._add_compact_field(layout, 1, 0, "Loudness", self.loudness_combo)
@@ -812,12 +831,15 @@ class MainWindow(QMainWindow):
         self.recorder_button = QPushButton("Voice Recorder")
         self.recorder_button.clicked.connect(self.open_voice_recorder)
         self._style_utility_button(self.recorder_button)
+        self.recorder_button.setToolTip("Open the in-house recorder for making reference clips in Seashells.")
         self.analyze_button = QPushButton("Analyze")
         self.analyze_button.clicked.connect(self.prepare_project)
         self._style_action_button(self.analyze_button)
+        self.analyze_button.setToolTip("Parse the script, infer speakers, and build a reviewable render plan.")
         self.render_button = QPushButton("Render FLAC")
         self.render_button.clicked.connect(self.render_project)
         self._style_action_button(self.render_button, accent=True)
+        self.render_button.setToolTip("Render the reviewed plan into a final FLAC output.")
         actions.addWidget(self.recorder_button)
         actions.addWidget(self.analyze_button)
         actions.addWidget(self.render_button)

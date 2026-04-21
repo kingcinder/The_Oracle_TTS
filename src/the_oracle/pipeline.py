@@ -11,6 +11,7 @@ from pathlib import Path
 from time import perf_counter, time
 from typing import Any, Callable
 
+from the_oracle import __version__
 from the_oracle.app_paths import normalize_output_filename
 from the_oracle.audio.assemble import AudioSegment, assemble_dialogue, load_audio, save_wav
 from the_oracle.audio.export_flac import next_available_output_path, write_flac
@@ -506,7 +507,7 @@ class OraclePipeline:
             "artist": "The Oracle",
             "comment": f"Rendered with Chatterbox ({variant})",
             "date": date.today().isoformat(),
-            "software": "The Oracle 0.2.0",
+            "software": f"The Oracle {__version__}",
             "engine": "chatterbox",
             "chatterbox_version": chatterbox_version(),
             "model_variant": variant,

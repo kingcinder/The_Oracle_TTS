@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from the_oracle import __version__
 from the_oracle.models.project import VoiceSettings
 from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
@@ -15,8 +16,9 @@ from the_oracle.utils.logging import configure_logging
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="the-oracle",
-        description="The Oracle renders two-speaker dialogue into FLAC with Chatterbox.",
+        description="The Oracle renders conversation and monologue scripts into FLAC with Chatterbox.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("gui", help="Launch the desktop GUI.")

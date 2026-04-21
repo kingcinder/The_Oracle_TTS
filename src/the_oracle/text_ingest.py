@@ -78,6 +78,8 @@ _QUOTE_TRANSLATION = str.maketrans(
         "\u201d": '"',
         "\u201e": '"',
         "\u201f": '"',
+        "\u2018": "'",
+        "\u2019": "'",
     }
 )
 
@@ -104,7 +106,7 @@ class TextIngestor:
 
     def ingest(self, source_path: str | Path) -> IngestedDocument:
         path = Path(source_path)
-        raw_text = path.read_text(encoding="utf-8")
+        raw_text = path.read_text(encoding="utf-8-sig", errors="replace")
         if path.suffix.lower() == ".md":
             readable_text = self._extract_markdown_text(raw_text)
         else:

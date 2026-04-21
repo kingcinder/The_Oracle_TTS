@@ -94,6 +94,19 @@ def test_self_identification_creates_latent_name_anchors() -> None:
     assert [item.speaker for item in result.utterances] == ["A", "B", "B", "A"]
 
 
+def test_smart_apostrophes_preserve_self_identification_and_address_cues() -> None:
+    utterances = [
+        Utterance(index=0, original_text="I’m Alice."),
+        Utterance(index=1, original_text="Bob here."),
+        Utterance(index=2, original_text="You’re late, Alice."),
+        Utterance(index=3, original_text="I’m already on it."),
+    ]
+
+    result = SpeakerAttributor().attribute(utterances)
+
+    assert [item.speaker for item in result.utterances] == ["A", "B", "B", "A"]
+
+
 def test_non_adjacent_consistency_prefers_same_speaker_style_cluster() -> None:
     utterances = [
         Utterance(index=0, original_text="I catalogued the quote spans and normalized the punctuation."),
