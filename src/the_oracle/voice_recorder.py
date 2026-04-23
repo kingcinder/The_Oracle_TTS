@@ -76,18 +76,26 @@ def _sample_format_candidates(device: QAudioDevice) -> list[QAudioFormat.SampleF
     ]
 
 
+def _channel_count_candidates(device: QAudioDevice) -> list[int]:
+    preferred_channels = max(1, device.preferredFormat().channelCount())
+    candidates = [VOICE_RECORDING_CHANNELS]
+    if preferred_channels not in candidates:
+        candidates.append(preferred_channels)
+    return candidates
+
+
 def build_recording_format(device: QAudioDevice, sample_rate: int) -> QAudioFormat:
-    candidates = _sample_format_candidates(device)
-    for sample_format in candidates:
-        if sample_format == QAudioFormat.SampleFormat.Unknown:
-            continue
-        audio_format = QAudioFormat()
-        audio_format.setSampleRate(sample_rate)
-        audio_format.setChannelCount(VOICE_RECORDING_CHANNELS)
-        audio_format.setSampleFormat(sample_format)
-        if device.isFormatSupported(audio_format):
-            return audio_format
-    raise ValueError(f"{device.description()} does not support mono {sample_rate} Hz capture.")
+    for channel_count in _channel_count_candidates(device):
+        for sample_format in _sample_format_candidates(device):
+            if sample_format == QAudioFormat.SampleFormat.Unknown:
+                continue
+            audio_format = QAudioFormat()
+            audio_format.setSampleRate(sample_rate)
+            audio_format.setChannelCount(channel_count)
+            audio_format.setSampleFormat(sample_format)
+            if device.isFormatSupported(audio_format):
+                return audio_format
+    raise ValueError(f"{device.description()} does not support {sample_rate} Hz capture in mono or preferred channel modes.")
 
 
 def supported_recording_sample_rates(device: QAudioDevice) -> list[int]:

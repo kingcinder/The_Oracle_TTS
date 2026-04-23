@@ -97,6 +97,21 @@ class _FakeAudioDevice:
         )
 
 
+class _StereoOnlyFloatDevice(_FakeAudioDevice):
+    def __init__(self, name: str = "USB PnP Audio Device") -> None:
+        super().__init__(name=name)
+        self._preferred.setSampleRate(48_000)
+        self._preferred.setChannelCount(2)
+        self._preferred.setSampleFormat(QAudioFormat.SampleFormat.Float)
+
+    def isFormatSupported(self, audio_format: QAudioFormat) -> bool:
+        return (
+            audio_format.sampleRate() in COMMON_MIC_SAMPLE_RATES
+            and audio_format.channelCount() == 2
+            and audio_format.sampleFormat() == QAudioFormat.SampleFormat.Float
+        )
+
+
 class _FakeAudioDevices:
     def __init__(self) -> None:
         self.device = _FakeAudioDevice()
@@ -149,12 +164,24 @@ def test_supported_recording_sample_rates_cover_common_frequency_catalog() -> No
     assert supported == list(COMMON_MIC_SAMPLE_RATES)
 
 
+def test_supported_recording_sample_rates_cover_stereo_only_float_devices() -> None:
+    supported = supported_recording_sample_rates(_StereoOnlyFloatDevice())
+    assert supported == list(COMMON_MIC_SAMPLE_RATES)
+
+
 @pytest.mark.parametrize("sample_rate", COMMON_MIC_SAMPLE_RATES)
 def test_build_recording_format_supports_each_common_rate(sample_rate: int) -> None:
     audio_format = build_recording_format(_FakeAudioDevice(), sample_rate)
     assert audio_format.sampleRate() == sample_rate
     assert audio_format.channelCount() == VOICE_RECORDING_CHANNELS
     assert audio_format.sampleFormat() == QAudioFormat.SampleFormat.Int16
+
+
+def test_build_recording_format_falls_back_to_preferred_channels_when_mono_is_unsupported() -> None:
+    audio_format = build_recording_format(_StereoOnlyFloatDevice(), 48_000)
+    assert audio_format.sampleRate() == 48_000
+    assert audio_format.channelCount() == 2
+    assert audio_format.sampleFormat() == QAudioFormat.SampleFormat.Float
 
 
 def test_pcm_bytes_to_mono_float32_downmixes_stereo_int16() -> None:
