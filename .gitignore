@@ -57,6 +57,10 @@ Input/**/*.diff
 Input/**/*.log
 Input/**/*.flac
 Input/**/*.wav
+# Ad-hoc/debug dialogue files (curated samples stay tracked)
+Input/inspect_*.txt
+Input/visible_*.txt
+Input/*_tmp*.txt
 !Input/test/.gitkeep
 
 # Output/ - rendered audio and cache (all runtime-generated)
@@ -67,6 +71,7 @@ Output/**/*.pkl
 Output/**/*.json
 Output/**/*.diff
 Output/**/*.log
+Output/**/*.png
 
 # Profiles/ - voice profiles (runtime-generated)
 Profiles/**/*.json
