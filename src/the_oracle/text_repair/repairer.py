@@ -18,10 +18,10 @@ class RepairResult:
 
 
 class TextRepairPipeline:
-    def __init__(self) -> None:
-        self.punctuator = PunctuationRestorer()
+    def __init__(self, *, use_language_tool: bool = True, use_punctuation_model: bool = True) -> None:
+        self.punctuator = PunctuationRestorer(use_model=use_punctuation_model)
         self.speller = SpellCorrector()
-        self.grammar = GrammarCorrector()
+        self.grammar = GrammarCorrector(use_language_tool=use_language_tool)
 
     def repair(self, text: str, mode: str = "moderate") -> RepairResult:
         normalized_mode = (mode or "moderate").strip().lower()

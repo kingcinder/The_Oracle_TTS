@@ -15,13 +15,19 @@ from the_oracle.app_paths import normalize_output_filename
 from the_oracle.audio.assemble import AudioSegment, assemble_dialogue, load_audio, save_wav
 from the_oracle.audio.export_flac import next_available_output_path, write_flac
 from the_oracle.device_support import resolve_chatterbox_device
-from the_oracle.emotion.goemotions import GoEmotionsClassifier
+from the_oracle.emotion.goemotions import EmotionResult, GoEmotionsClassifier, SUPPORTED_EMOTIONS
 from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings
 from the_oracle.speaker_attribution.heuristics import AnchorAssignments, DualSpeakerAttributor
 from the_oracle.text_ingest import TextIngestor
+from the_oracle.text_repair.directives import apply_directives, parse_directives
 from the_oracle.text_repair.repairer import TextRepairPipeline
 from the_oracle.tts_engines.chatterbox_engine import ChatterboxEngine, ChatterboxConditioning, SUPPORTED_VARIANTS
+from the_oracle.tts_engines.vulkan_backend import (
+    SUPPORTED_BACKENDS,
+    AudioCppVulkanEngine,
+    _vulkan_batch_max_requests,
+)
 from the_oracle.utils.chunking import chunk_utterance, TextChunk
 from the_oracle.utils.hashing import build_chunk_hash, hash_file
 from the_oracle.utils.logging import get_logger
@@ -48,6 +54,18 @@ def chatterbox_version() -> str:
         return "not-installed"
 
 
+def _chunk_engine_key(backend: str, variant: str) -> str:
+    """Stem-cache engine key for a chunk hash.
+
+    The pytorch key stays byte-identical to the historical
+    ``chatterbox:{variant}`` form so existing caches survive; vulkan renders are
+    keyed separately so the two backends never collide in the shared stem cache.
+    """
+    if backend == "vulkan":
+        return f"vulkan:chatterbox:{variant}"
+    return f"chatterbox:{variant}"
+
+
 @dataclass(slots=True)
 class SpeakerSettings:
     reference_path: str
@@ -65,12 +83,41 @@ class RenderSettings:
     pause_between_turns_ms: int = 180
     crossfade_ms: int = 20
     device_mode: str = "cpu"
+    inference_backend: str = "pytorch"
+    audio_cpp_device: int | None = None
+    audio_cpp_threads: int | None = None
+    audio_cpp_timeout: int | None = None
+    audio_cpp_max_batch: int | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     anchors: AnchorAssignments | None = None
     target_wpm: float | None = None
 
     def __post_init__(self) -> None:
         self.correction_mode = normalize_correction_mode(self.correction_mode)
+        if self.inference_backend not in SUPPORTED_BACKENDS:
+            raise ValueError(
+                f"Unsupported inference backend: {self.inference_backend!r}. "
+                f"Choose from {SUPPORTED_BACKENDS}."
+            )
+        # Vulkan device/threads knobs are only meaningful for the audio.cpp
+        # backend; reject negative values early so a bad CLI flag or manifest
+        # cannot turn into a confusing audio.cpp error mid-render.
+        if self.audio_cpp_device is not None and self.audio_cpp_device < 0:
+            raise ValueError(
+                f"audio_cpp_device must be a non-negative Vulkan device index, got {self.audio_cpp_device!r}."
+            )
+        if self.audio_cpp_threads is not None and self.audio_cpp_threads < 1:
+            raise ValueError(
+                f"audio_cpp_threads must be a positive thread count, got {self.audio_cpp_threads!r}."
+            )
+        if self.audio_cpp_timeout is not None and self.audio_cpp_timeout < 1:
+            raise ValueError(
+                f"audio_cpp_timeout must be a positive timeout in seconds, got {self.audio_cpp_timeout!r}."
+            )
+        if self.audio_cpp_max_batch is not None and self.audio_cpp_max_batch < 1:
+            raise ValueError(
+                f"audio_cpp_max_batch must be a positive request count, got {self.audio_cpp_max_batch!r}."
+            )
 
 
 @dataclass(slots=True)
@@ -97,6 +144,7 @@ class SynthesisTask:
     model_variant: str
     device_mode: str
     export_stems: bool
+    inference_backend: str = "pytorch"
 
 
 @dataclass(slots=True)
@@ -274,8 +322,27 @@ def _run_tasks_with_worker_pool(
     return sorted_results, mode
 
 
-def _should_use_worker_pool(settings: RenderSettings, resolved_device: str) -> bool:
-    return settings.model_variant == "standard" and resolved_device == "cpu"
+def _should_use_worker_pool(
+    settings: RenderSettings,
+    resolved_device: str,
+    *,
+    force_sequential: bool = False,
+) -> bool:
+    # GUI renders stay in the QThread's process. Spawning PyTorch/Perth worker
+    # processes from a live Qt process is not safe on Ubuntu: each spawned child
+    # imports native torch/audio extensions and can terminate the parent with
+    # SIGSEGV (the terminal reports this as exit status 245). The explicit flag
+    # is transient and keeps this GUI-only policy out of saved manifests.
+    if force_sequential:
+        return False
+    # The Vulkan backend runs inline: it already parallelizes via one audio.cpp
+    # subprocess per utterance, and the multiprocessing pool would try to pickle
+    # an engine that owns no reusable model anyway.
+    return (
+        settings.model_variant == "standard"
+        and resolved_device == "cpu"
+        and settings.inference_backend == "pytorch"
+    )
 
 
 @dataclass(slots=True)
@@ -316,7 +383,7 @@ def synthesize_task(
     chunk_hash = build_chunk_hash(
         speaker=task.speaker,
         repaired_text=task.text,
-        engine_key=f"chatterbox:{task.model_variant}",
+        engine_key=_chunk_engine_key(task.inference_backend, task.model_variant),
         engine_params=task.voice_settings.to_dict(),
         engine_version=engine.engine_version,
         reference_audio_hash=task.reference_audio_hash,
@@ -357,6 +424,206 @@ def synthesize_task(
     )
 
 
+def _build_stem_result(
+    task: SynthesisTask,
+    stem_path: Path,
+    chunk_hash: str,
+    project_cache: ProjectCache,
+    *,
+    cache_hit: bool,
+    synthesize_seconds: float,
+    segment_total_seconds: float | None = None,
+) -> SynthesisResult:
+    """Load a stem from disk and build the standard result for it.
+
+    Shared by the batched Vulkan path (both its cache-hit and freshly
+    synthesized tasks) so its results carry the same shape the render loop and
+    timing log expect. When ``segment_total_seconds`` is omitted it is derived
+    as synthesize + load time, matching ``synthesize_task``'s accounting.
+    """
+    load_start = perf_counter()
+    audio, sample_rate = load_audio(stem_path)
+    load_audio_seconds = perf_counter() - load_start
+    duration_seconds = len(audio) / sample_rate
+    exported_stem_path = ""
+    if task.export_stems:
+        exported_stem_path = str(
+            project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{task.speaker}.wav")
+        )
+    if segment_total_seconds is None:
+        segment_total_seconds = synthesize_seconds + load_audio_seconds
+    return SynthesisResult(
+        utterance_index=task.utterance_index,
+        speaker=task.speaker,
+        stem_path=stem_path,
+        exported_stem_path=exported_stem_path,
+        duration_seconds=duration_seconds,
+        chunk_hash=chunk_hash,
+        cache_hit=cache_hit,
+        synthesize_seconds=round(synthesize_seconds, 6),
+        load_audio_seconds=round(load_audio_seconds, 6),
+        segment_total_seconds=round(segment_total_seconds, 6),
+        sample_rate=sample_rate,
+    )
+
+
+def _failed_stem_result(task: SynthesisTask, error: str) -> SynthesisResult:
+    """Failure-marker result, matching the worker/inline per-task convention."""
+    return SynthesisResult(
+        utterance_index=task.utterance_index,
+        speaker=task.speaker,
+        stem_path=Path(""),
+        exported_stem_path="",
+        duration_seconds=0.0,
+        chunk_hash="",
+        cache_hit=False,
+        synthesize_seconds=0.0,
+        load_audio_seconds=0.0,
+        segment_total_seconds=0.0,
+        sample_rate=0,
+        error=error,
+    )
+
+
+def synthesize_tasks_batched(
+        tasks: list[SynthesisTask],
+        engine: AudioCppVulkanEngine,
+        conditioning_cache: dict[Any, Any],
+        project_cache: ProjectCache,
+        on_synth_start: Callable[[], None] | None = None,
+        batch_stats: dict[str, int] | None = None,
+        on_request_complete: Callable[[int], None] | None = None,
+    ) -> list[SynthesisResult]:
+    """Synthesize cache-missing tasks through audio.cpp, one model load per group.
+
+    The single biggest cost of the Vulkan backend is the per-utterance
+    subprocess spawn: every fresh ``audiocpp_cli`` reloads the multi-GB GGUF
+    and recompiles Vulkan shaders. This helper partitions the group into cache
+    hits (stems already on disk, reused without touching the engine) and cache
+    misses, then sends every miss to ``engine.synthesize_batch`` via
+    ``--request-sequence``. Misses are split into bounded batches (default 32
+    requests, override with ``ORACLE_AUDIOCPP_MAX_BATCH``) so an enormous
+    render never ships one gigantic requests.json, and a failed subprocess only
+    takes down its own batch -- every task in it is marked failed (never
+    silently hidden) while the remaining batches keep rendering, matching the
+    render loop's partial-failure semantics.
+
+    ``batch_stats`` (when given) is filled with ``{"processes": 0|N,
+    "requests": M}`` so the caller can record how many audio.cpp processes a
+    render actually spawned.
+
+    ``on_request_complete(task_index)`` (when given) is called as each
+    utterance's synthesis finishes while its batch subprocess is still
+    running, so callers (e.g. the GUI) can advance progress live instead of
+    jumping at the end of the whole batch. The task index is the task's
+    ``utterance_index`` (the render loop's lookup key).
+
+    Groups are capped at the engine's ``batch_limit`` (constructor arg, else
+    ``ORACLE_AUDIOCPP_MAX_BATCH``), keeping the pipeline's grouping in
+    lockstep with the engine's own defense-in-depth guard.
+    """
+    if not tasks:
+        return []
+    results: list[SynthesisResult] = []
+    pending: list[tuple[SynthesisTask, Path, str, Any]] = []  # (task, stem, hash, conditioning)
+    for task in tasks:
+        chunk_hash = build_chunk_hash(
+            speaker=task.speaker,
+            repaired_text=task.text,
+            engine_key=_chunk_engine_key(task.inference_backend, task.model_variant),
+            engine_params=task.voice_settings.to_dict(),
+            engine_version=engine.engine_version,
+            reference_audio_hash=task.reference_audio_hash,
+        )
+        stem_path = project_cache.stem_path(chunk_hash)
+        if stem_path.exists():
+            results.append(
+                _build_stem_result(task, stem_path, chunk_hash, project_cache, cache_hit=True, synthesize_seconds=0.0)
+            )
+            continue
+        try:
+            cached_reference = engine.prepare_reference(project_cache, task.speaker, str(task.reference_path))
+            cache_key = _conditioning_cache_key(task, cached_reference.original_hash)
+            conditioning = conditioning_cache.get(cache_key)
+            if conditioning is None:
+                conditioning = engine.prepare_conditioning(
+                    project_cache, task.speaker, cached_reference, task.voice_settings
+                )
+                conditioning_cache[cache_key] = conditioning
+        except Exception as exc:
+            LOGGER.error("Synthesis failed for task %s: %s", task.utterance_index, exc)
+            results.append(_failed_stem_result(task, str(exc)))
+            continue
+        pending.append((task, stem_path, chunk_hash, conditioning))
+
+    if pending:
+        # Split the cache-missing stems into bounded groups so an enormous
+        # render never ships one gigantic --request-sequence JSON (audio.cpp
+        # may have practical per-batch limits) and a failed subprocess only
+        # takes down its own group, never the whole render. The engine's
+        # batch_limit is the single source of truth (constructor arg wins over
+        # ORACLE_AUDIOCPP_MAX_BATCH), so grouping always matches the engine's
+        # own defense-in-depth cap.
+        batch_limit = getattr(engine, "batch_limit", None) or _vulkan_batch_max_requests()
+        groups = [
+            pending[offset : offset + batch_limit] for offset in range(0, len(pending), batch_limit)
+        ]
+        if batch_stats is not None:
+            batch_stats["processes"] = len(groups)
+            batch_stats["requests"] = len(pending)
+        if on_synth_start:
+            on_synth_start()
+        for group in groups:
+            try:
+                group_start = perf_counter()
+                outputs = engine.synthesize_batch(
+                    [
+                        (task.text, conditioning, task.voice_settings)
+                        for task, _stem, _hash, conditioning in group
+                    ],
+                    on_request_complete=(
+                        (lambda local_index, group=group: on_request_complete(group[local_index][0].utterance_index))
+                        if on_request_complete is not None
+                        else None
+                    ),
+                )
+
+            except Exception as exc:
+                LOGGER.error("Vulkan batch synthesis failed for %d tasks: %s", len(group), exc)
+                for task, _stem, _hash, _conditioning in group:
+                    results.append(_failed_stem_result(task, str(exc)))
+                continue
+            group_elapsed = perf_counter() - group_start
+            # audio.cpp's per-request [TIMING] wall_ms is the most truthful
+            # per-item time; fall back to dividing the group's wall time
+            # evenly when the binary did not emit timing lines.
+            fallback_per_item = group_elapsed / max(1, len(outputs))
+            for (task, stem_path, chunk_hash, _conditioning), (audio, sample_rate, wall_ms) in zip(
+                group, outputs, strict=True
+            ):
+                synthesize_seconds = (wall_ms / 1000.0) if wall_ms > 0 else fallback_per_item
+                try:
+                    save_wav(stem_path, audio, sample_rate)
+                    results.append(
+                        _build_stem_result(
+                            task,
+                            stem_path,
+                            chunk_hash,
+                            project_cache,
+                            cache_hit=False,
+                            synthesize_seconds=synthesize_seconds,
+                        )
+                    )
+                except Exception as exc:
+                    LOGGER.error("Synthesis failed for task %s: %s", task.utterance_index, exc)
+                    results.append(_failed_stem_result(task, str(exc)))
+    elif batch_stats is not None:
+        batch_stats["processes"] = 0
+        batch_stats["requests"] = 0
+
+    return sorted(results, key=lambda result: result.utterance_index)
+
+
 def _compute_eta(
     render_start: float,
     completed_index: int,
@@ -380,16 +647,40 @@ def _compute_eta(
 
 
 class OraclePipeline:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        use_transformers: bool = True,
+        use_language_tool: bool = True,
+        use_punctuation_model: bool = True,
+    ) -> None:
+        """Create an analysis/render pipeline.
+
+        The desktop GUI opts out of the optional native stacks during analysis:
+        loading transformer/PyTorch and LanguageTool from the Qt process can
+        crash some Ubuntu/Mesa/PySide6 combinations, while the deterministic
+        local fallbacks provide the same safe review flow. The CLI keeps the
+        historical feature-rich defaults.
+        """
         self.ingestor = TextIngestor()
-        self.repair = TextRepairPipeline()
+        repair_kwargs: dict[str, bool] = {}
+        if not use_language_tool:
+            repair_kwargs["use_language_tool"] = False
+        if not use_punctuation_model:
+            repair_kwargs["use_punctuation_model"] = False
+        self.repair = TextRepairPipeline(**repair_kwargs)
         self.attributor = DualSpeakerAttributor()
+        self._use_transformers = use_transformers
         self._emotions: GoEmotionsClassifier | None = None
 
     def _emotion_classifier(self) -> GoEmotionsClassifier:
         if self._emotions is None:
-            self._emotions = GoEmotionsClassifier()
+            if self._use_transformers:
+                self._emotions = GoEmotionsClassifier()
+            else:
+                self._emotions = GoEmotionsClassifier(use_transformers=False)
         return self._emotions
+
 
     def available_model_variants(self) -> list[str]:
         return list(SUPPORTED_VARIANTS)
@@ -436,7 +727,15 @@ class OraclePipeline:
         settings: RenderSettings,
     ) -> RenderPlan:
         document = self.ingestor.ingest(input_path)
-        repaired_segments = [self.repair.repair(segment.text, mode=settings.correction_mode) for segment in document.segments]
+        # Directives are author hints written in the source, so they must be
+        # parsed before text repair: the repair pipeline may normalise or
+        # rephrase parenthetical/bracket syntax and would otherwise destroy
+        # them. The cleaned text is what gets repaired, and directives are
+        # re-applied after emotion detection below.
+        parsed_segments = [parse_directives(segment.text) for segment in document.segments]
+        repaired_segments = [
+            self.repair.repair(cleaned, mode=settings.correction_mode) for cleaned, _directives in parsed_segments
+        ]
         decisions = self.attributor.assign(
             [segment.text for segment in document.segments],
             explicit_speakers=[segment.explicit_speaker for segment in document.segments],
@@ -446,13 +745,31 @@ class OraclePipeline:
         variant = settings.model_variant
 
         utterances: list[Utterance] = []
-        for segment, repaired, decision in zip(document.segments, repaired_segments, decisions, strict=True):
+        for segment, (_cleaned, directives), repaired, decision in zip(
+            document.segments, parsed_segments, repaired_segments, decisions, strict=True
+        ):
             base = self._coerce_voice_settings(speaker_settings[decision.speaker].voice_settings)
             base.variant = variant
             base.language = base.language if variant == "multilingual" else "en"
             base.crossfade_ms = settings.crossfade_ms
-            emotion = self._emotion_classifier().classify(repaired.text)
+            cleaned_text = repaired.text
+            emotion = self._emotion_classifier().classify(cleaned_text)
+            explicit_emotion = directives.pop("emotion", None)
+            if explicit_emotion is not None:
+                if explicit_emotion in SUPPORTED_EMOTIONS:
+                    emotion = EmotionResult(explicit_emotion, 1.0)
+                else:
+                    # Unknown labels from author-typed directives fall back to
+                    # the classifier result instead of injecting an invalid
+                    # label into rendering and the GUI emotion picker.
+                    LOGGER.warning(
+                        "Ignoring unknown emotion directive %r for segment %s, using detected %s",
+                        explicit_emotion,
+                        segment.index,
+                        emotion.label,
+                    )
             merged = self._apply_emotion_and_naturalness(base, emotion.label)
+            merged = apply_directives(merged, directives)
             merged.variant = variant
             merged.language = base.language if variant == "multilingual" else "en"
             merged.pause_ms = max(0, int(round(merged.pause_ms)))
@@ -466,7 +783,7 @@ class OraclePipeline:
                 Utterance(
                     index=segment.index,
                     original_text=segment.text,
-                    repaired_text=repaired.text,
+                    repaired_text=cleaned_text,
                     speaker=decision.speaker,
                     emotion=emotion.label,
                     emotion_confidence=emotion.confidence,
@@ -504,7 +821,11 @@ class OraclePipeline:
         metadata = {
             "title": document.title,
             "artist": "The Oracle",
-            "comment": f"Rendered with Chatterbox ({variant})",
+            "comment": (
+                f"Rendered with Chatterbox ({variant}) via audio.cpp Vulkan"
+                if settings.inference_backend == "vulkan"
+                else f"Rendered with Chatterbox ({variant})"
+            ),
             "date": date.today().isoformat(),
             "software": "The Oracle 0.2.0",
             "engine": "chatterbox",
@@ -516,6 +837,11 @@ class OraclePipeline:
             "reference_clips_used": "true",
             "watermark": "Perth watermark embedded by Chatterbox",
             "device_mode": settings.device_mode,
+            "inference_backend": settings.inference_backend,
+            "audio_cpp_device": str(settings.audio_cpp_device) if settings.audio_cpp_device is not None else "",
+            "audio_cpp_threads": str(settings.audio_cpp_threads) if settings.audio_cpp_threads is not None else "",
+            "audio_cpp_timeout": str(settings.audio_cpp_timeout) if settings.audio_cpp_timeout is not None else "",
+            "audio_cpp_max_batch": str(settings.audio_cpp_max_batch) if settings.audio_cpp_max_batch is not None else "",
             "target_wpm": str(settings.target_wpm) if settings.target_wpm is not None else "",
             **settings.metadata,
         }
@@ -540,6 +866,7 @@ class OraclePipeline:
         *,
         prewarmed_engine: ChatterboxEngine | None = None,
         render_click_wall: float | None = None,
+        force_sequential: bool = False,
     ) -> Path:
         start_time = perf_counter()
         start_wall = time()
@@ -587,9 +914,33 @@ class OraclePipeline:
 
         previous_plan = self._load_previous_plan(project_cache)
         render_start = perf_counter()
-        should_parallelize = _should_use_worker_pool(settings, resolve_chatterbox_device(settings.device_mode))
-        adjusted_device = resolve_chatterbox_device(settings.device_mode)
-        engine = prewarmed_engine or ChatterboxEngine(variant=variant, device=adjusted_device)
+        backend = settings.inference_backend
+        # device_mode is a PyTorch-path concept; for the Vulkan backend we use
+        # "cpu" here so --device-mode vulkan cannot trip the stale
+        # "not verified" error before the audio.cpp backend is even reached.
+        should_parallelize = _should_use_worker_pool(
+            settings,
+            "cpu" if backend == "vulkan" else resolve_chatterbox_device(settings.device_mode),
+            force_sequential=force_sequential,
+        )
+        if backend == "vulkan":
+            engine_cls = AudioCppVulkanEngine
+            engine_device = "vulkan"
+        else:
+            engine_cls = ChatterboxEngine
+            engine_device = resolve_chatterbox_device(settings.device_mode)
+        # The Vulkan device/threads knobs ride the settings (CLI flags or saved
+        # manifest), not just ORACLE_AUDIOCPP_DEVICE/THREADS. Constructor args
+        # win over the env vars inside the engine.
+        engine_kwargs: dict[str, Any] = {}
+        if backend == "vulkan":
+            engine_kwargs = {
+                "device_index": settings.audio_cpp_device,
+                "threads": settings.audio_cpp_threads,
+                "timeout": settings.audio_cpp_timeout,
+                "batch_limit": settings.audio_cpp_max_batch,
+            }
+        engine = prewarmed_engine or engine_cls(variant=variant, device=engine_device, **engine_kwargs)
         engine_version = engine.engine_version
 
         # Hash references up front without loading the model so we can short-circuit
@@ -636,6 +987,7 @@ class OraclePipeline:
                     voice_settings=profile.engine_params,
                     model_variant=settings.model_variant,
                     device_mode=settings.device_mode,
+                    inference_backend=backend,
                     export_stems=settings.export_stems,
                 )
                 raw_tasks.append(task)
@@ -643,7 +995,7 @@ class OraclePipeline:
                 task_chunk_hashes[task_index] = build_chunk_hash(
                     speaker=task.speaker,
                     repaired_text=task.text,
-                    engine_key=f"chatterbox:{settings.model_variant}",
+                    engine_key=_chunk_engine_key(backend, settings.model_variant),
                     engine_params=task.voice_settings.to_dict(),
                     engine_version=engine_version,
                     reference_audio_hash=task.reference_audio_hash,
@@ -671,13 +1023,14 @@ class OraclePipeline:
                         model_variant=settings.model_variant,
                         device_mode=settings.device_mode,
                         export_stems=settings.export_stems,
+                        inference_backend=backend,
                     )
                     raw_tasks.append(task)
                     task_to_utterance_map[task_index] = utterance
                     task_chunk_hashes[task_index] = build_chunk_hash(
                         speaker=task.speaker,
                         repaired_text=task.text,
-                        engine_key=f"chatterbox:{settings.model_variant}",
+                        engine_key=_chunk_engine_key(backend, settings.model_variant),
                         engine_params=task.voice_settings.to_dict(),
                         engine_version=engine_version,
                         reference_audio_hash=task.reference_audio_hash,
@@ -698,6 +1051,17 @@ class OraclePipeline:
                 break
 
         inline_first_synth_wall: list[float] = []
+        # Task indices whose progress was already reported live by the Vulkan
+        # batch path (per-request on_request_complete events). The results loop
+        # skips re-emitting a duplicate "ready" event for those so the GUI's
+        # segment counter advances once instead of visibly rewinding after the
+        # batch already reached N/N.
+        live_reported_task_indices: set[int] = set()
+        # ONE progress counter shared by the live per-request batch events and
+        # the results loop, so current_segment/current_step advance
+        # monotonically even when cache-hit results (emitted only by the loop)
+        # interleave with live-reported misses (emitted during the batch).
+        emitted_progress_count: list[int] = [0]
         worker_timing_summary: dict[str, float] | None = None
         mode_metadata = "sequential"
 
@@ -771,7 +1135,11 @@ class OraclePipeline:
         if not all_cached:
             emit_progress(
                 stage="Loading model",
-                detail=f"Loading Chatterbox {variant} on {adjusted_device}",
+                detail=(
+                    f"Loading Chatterbox {variant} via audio.cpp Vulkan backend"
+                    if backend == "vulkan"
+                    else f"Loading Chatterbox {variant} on {engine_device}"
+                ),
                 current_step=completed_steps,
                 total_steps=total_steps,
                 total_segments=total_segments,
@@ -894,10 +1262,57 @@ class OraclePipeline:
                     raw_tasks,
                     ChatterboxEngine,
                     variant,
-                    adjusted_device,
+                    engine_device,
                     project_dir,
                     stream=True,
                 )
+            elif backend == "vulkan":
+                # The Vulkan backend batches: cache-missing stems ride
+                # audio.cpp --request-sequence processes (one model load and
+                # Vulkan shader compile per group of up to the
+                # ORACLE_AUDIOCPP_MAX_BATCH cap) instead of a fresh audiocpp_cli
+                # per utterance.
+                batch_stats: dict[str, int] = {}
+
+                def _on_batch_request_complete(task_index: int) -> None:
+                    # Emit live progress as each utterance's audio lands while
+                    # the batch subprocess is still running, so the GUI bar
+                    # advances during the render instead of jumping at the
+                    # end. The shared emitted_progress_count advances from the
+                    # pre-dispatch step count, and the results loop below
+                    # skips re-emitting a duplicate "ready" event for these
+                    # tasks (tracked in live_reported_task_indices) so the
+                    # segment counter never rewinds, then completes the
+                    # remaining steps (including cache-hit stems).
+                    emitted_progress_count[0] += 1
+                    live_reported_task_indices.add(task_index)
+                    utterance = task_to_utterance_map.get(task_index)
+                    emit_progress(
+                        stage="Rendering segment",
+                        detail=f"Synthesized segment {emitted_progress_count[0]}/{len(raw_tasks)} ({utterance.speaker if utterance else '?'})",
+                        current_step=completed_steps + emitted_progress_count[0],
+                        total_steps=total_steps,
+                        current_segment=emitted_progress_count[0],
+                        total_segments=len(raw_tasks),
+                    )
+
+                result_iterator = iter(
+                    synthesize_tasks_batched(
+                        raw_tasks,
+                        engine,
+                        inline_conditioning_cache,
+                        project_cache,
+                        on_synth_start=lambda: inline_first_synth_wall.append(time())
+                        if not inline_first_synth_wall
+                        else None,
+                        batch_stats=batch_stats,
+                        on_request_complete=_on_batch_request_complete,
+                    )
+                )
+                mode_metadata = "sequential"
+                if batch_stats.get("processes", 0):
+                    timeline["vulkan_batch_processes"] = float(batch_stats["processes"])
+                    timeline["vulkan_batch_requests"] = float(batch_stats["requests"])
             else:
                 result_iterator = iter(_run_tasks_inline(raw_tasks))
                 mode_metadata = "sequential"
@@ -933,6 +1348,12 @@ class OraclePipeline:
         failed_row_indices: set[int] = set()  # Track which rows had failures
         worker_timing_summary: dict[str, float] | None = None
         completed_tasks = 0
+        # Step-count baseline for the results loop's emitted progress. For the
+        # Vulkan path this equals the step count at dispatch time (the live
+        # events already advanced the shared emitted_progress_count from the
+        # same base), so post-batch emits continue monotonically instead of
+        # rewinding to a lower step than the last live event.
+        loop_step_baseline = completed_steps
         for result in result_iterator:
             utterance = task_to_utterance_map.get(result.utterance_index)
             if utterance is None:
@@ -1024,15 +1445,20 @@ class OraclePipeline:
             completed_tasks += 1
             completed_steps += 1
             eta = 0.0 if mode_metadata == "parallel" else _compute_eta(render_start, completed_tasks, len(raw_tasks))
-            emit_progress(
-                stage="Rendering segment",
-                detail=f"Segment {result.utterance_index}/{len(raw_tasks)} ready ({utterance.speaker})",
-                current_step=completed_steps,
-                total_steps=total_steps,
-                current_segment=completed_tasks,
-                total_segments=len(raw_tasks),
-                eta_seconds=eta,
-            )
+            if result.utterance_index not in live_reported_task_indices:
+                # Continue the shared counter so cache-hit stems (never
+                # live-reported) emit the next step after the last live event
+                # instead of rewriting a lower step/segment.
+                emitted_progress_count[0] += 1
+                emit_progress(
+                    stage="Rendering segment",
+                    detail=f"Segment {result.utterance_index}/{len(raw_tasks)} ready ({utterance.speaker})",
+                    current_step=loop_step_baseline + emitted_progress_count[0],
+                    total_steps=total_steps,
+                    current_segment=emitted_progress_count[0],
+                    total_segments=len(raw_tasks),
+                    eta_seconds=eta,
+                )
 
         timeline["results_ready_seconds"] = round(perf_counter() - start_time, 6)
         if inline_first_synth_wall:
@@ -1205,6 +1631,11 @@ class OraclePipeline:
         profile: VoiceProfile,
         model_variant: str,
         device_mode: str = "cpu",
+        inference_backend: str = "pytorch",
+        audio_cpp_device: int | None = None,
+        audio_cpp_threads: int | None = None,
+        audio_cpp_timeout: int | None = None,
+        audio_cpp_max_batch: int | None = None,
         progress_callback=None,
     ) -> Path:
         start_time = perf_counter()
@@ -1227,8 +1658,20 @@ class OraclePipeline:
 
         reference_path = profile.primary_reference.resolve()
         project_cache = ProjectCache(reference_path.parent / ".oracle_preview")
-        engine = ChatterboxEngine(variant=model_variant, device=resolve_chatterbox_device(device_mode))
-        emit_preview_progress("Loading model", f"Loading Chatterbox {model_variant} on {engine.device}", 0)
+        if inference_backend == "vulkan":
+            engine = AudioCppVulkanEngine(
+                variant=model_variant,
+                device="vulkan",
+                device_index=audio_cpp_device,
+                threads=audio_cpp_threads,
+                timeout=audio_cpp_timeout,
+                batch_limit=audio_cpp_max_batch,
+            )
+            device_label = "audio.cpp Vulkan backend"
+        else:
+            engine = ChatterboxEngine(variant=model_variant, device=resolve_chatterbox_device(device_mode))
+            device_label = engine.device
+        emit_preview_progress("Loading model", f"Loading Chatterbox {model_variant} on {device_label}", 0)
         ensure_model_ready = getattr(engine, "ensure_model_ready", None)
         if callable(ensure_model_ready):
             ensure_model_ready()

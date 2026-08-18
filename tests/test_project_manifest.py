@@ -2,10 +2,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from the_oracle.project_manifest import ProjectManifestError, build_saved_project, load_project_manifest, save_project_manifest
 from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
 from the_oracle.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference
-from the_oracle.models.project import VoiceSettings
+from the_oracle.models.project import RenderPlan, VoiceSettings
 
 
 def _sample_project(tmp_path: Path):
@@ -38,6 +40,7 @@ def _sample_project(tmp_path: Path):
     return pipeline, plan, settings, speakers
 
 
+@pytest.mark.slow  # prepare_plan runs the full repair pipeline (LanguageTool download)
 def test_project_manifest_round_trip_preserves_key_fields(tmp_path: Path) -> None:
     _pipeline, plan, settings, speakers = _sample_project(tmp_path)
     manifest_path = tmp_path / "project.json"
@@ -60,6 +63,7 @@ def test_project_manifest_round_trip_preserves_key_fields(tmp_path: Path) -> Non
     assert loaded.speaker_settings["A"].voice_settings["pause_ms"] == speakers["A"].voice_settings.pause_ms
 
 
+@pytest.mark.slow  # prepare_plan runs the full repair pipeline (LanguageTool download)
 def test_modified_utterance_state_survives_round_trip(tmp_path: Path) -> None:
     _pipeline, plan, settings, speakers = _sample_project(tmp_path)
     plan.utterances[0].speaker = "B"
@@ -82,6 +86,63 @@ def test_modified_utterance_state_survives_round_trip(tmp_path: Path) -> None:
     assert utterance.manual_emotion_override is True
 
 
+def test_manifest_round_trips_audio_cpp_knobs(tmp_path: Path) -> None:
+    plan = RenderPlan(
+        title="t",
+        source_path="in.txt",
+        output_dir=str(tmp_path / "output"),
+        engine="chatterbox",
+        correction_mode="moderate",
+    )
+    settings = RenderSettings(
+        inference_backend="vulkan",
+        audio_cpp_device=2,
+        audio_cpp_threads=6,
+        audio_cpp_max_batch=16,
+    )
+    speakers = {
+        "A": SpeakerSettings(reference_path="a.wav", voice_settings=VoiceSettings()),
+        "B": SpeakerSettings(reference_path="b.wav", voice_settings=VoiceSettings()),
+    }
+
+    manifest_path = tmp_path / "project.json"
+    save_project_manifest(manifest_path, build_saved_project(plan, settings, speakers))
+    loaded = load_project_manifest(manifest_path)
+
+    assert loaded.render_settings.inference_backend == "vulkan"
+    assert loaded.render_settings.audio_cpp_device == 2
+    assert loaded.render_settings.audio_cpp_threads == 6
+    assert loaded.render_settings.audio_cpp_max_batch == 16
+
+
+def test_manifest_without_audio_cpp_knobs_loads_with_defaults(tmp_path: Path) -> None:
+    """Manifests saved before the knobs existed (no keys in render_settings)
+    must still load, with the new fields defaulting to None."""
+    plan = RenderPlan(
+        title="t",
+        source_path="in.txt",
+        output_dir=str(tmp_path / "output"),
+        engine="chatterbox",
+        correction_mode="moderate",
+    )
+    speakers = {
+        "A": SpeakerSettings(reference_path="a.wav", voice_settings=VoiceSettings()),
+        "B": SpeakerSettings(reference_path="b.wav", voice_settings=VoiceSettings()),
+    }
+    payload = build_saved_project(plan, RenderSettings(), speakers).to_dict()
+    payload["render_settings"].pop("audio_cpp_device", None)
+    payload["render_settings"].pop("audio_cpp_threads", None)
+    payload["render_settings"].pop("audio_cpp_max_batch", None)
+
+    manifest_path = tmp_path / "project.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    loaded = load_project_manifest(manifest_path)
+
+    assert loaded.render_settings.audio_cpp_device is None
+    assert loaded.render_settings.audio_cpp_threads is None
+    assert loaded.render_settings.audio_cpp_max_batch is None
+
+
 def test_loading_incomplete_manifest_fails_clearly(tmp_path: Path) -> None:
     manifest_path = tmp_path / "broken.json"
     manifest_path.write_text(json.dumps({"manifest_version": 1, "title": "broken"}), encoding="utf-8")
@@ -94,6 +155,7 @@ def test_loading_incomplete_manifest_fails_clearly(tmp_path: Path) -> None:
         raise AssertionError("Expected ProjectManifestError for incomplete manifest")
 
 
+@pytest.mark.slow  # prepare_plan runs the full repair pipeline (LanguageTool download)
 def test_loaded_project_renders_with_deterministic_engine(tmp_path: Path) -> None:
     pipeline, plan, settings, speakers = _sample_project(tmp_path)
     manifest_path = tmp_path / "project.json"

@@ -58,6 +58,11 @@ class SmokeRenderResult:
 
 
 class _SmokeEmotionClassifier:
+    def __init__(self, **_kwargs) -> None:
+        # Match GoEmotionsClassifier's optional constructor flags so the smoke
+        # double works with both feature-rich and offline pipeline modes.
+        pass
+
     def classify(self, text: str):
         return type("EmotionResult", (), {"label": "neutral", "confidence": 1.0})()
 
@@ -94,7 +99,7 @@ class _DeterministicChatterboxEngine:
     sample_rate = 24000
     engine_version = "deterministic-smoke-v1"
 
-    def __init__(self, variant: str = "standard", device: str | None = None) -> None:
+    def __init__(self, variant: str = "standard", device: str | None = None, **_kwargs) -> None:
         self.variant = variant
         self.device = device or "cpu"
 
@@ -182,7 +187,15 @@ def run_deterministic_smoke_render(output_root: str | Path, source_format: str =
         patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
         patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
     ):
-        pipeline = OraclePipeline()
+        # Smoke verification must be deterministic and offline. Constructing
+        # the feature-rich default pipeline can trigger LanguageTool's first-use
+        # 259 MB download, which is surprising for a local verification command
+        # and can leave a background downloader running after the smoke exits.
+        pipeline = OraclePipeline(
+            use_transformers=False,
+            use_language_tool=False,
+            use_punctuation_model=False,
+        )
         shared_voice = VoiceSettings(variant="standard", language="en")
         speaker_settings = {
             "A": SpeakerSettings(reference_path=str(speaker_a), voice_settings=shared_voice),

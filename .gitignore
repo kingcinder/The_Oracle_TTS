@@ -18,6 +18,9 @@ __pycache__/
 examples/
 third_party/
 
+# audio.cpp clone (build-time dependency, vendored by scripts/build_audio_cpp.sh)
+audio.cpp/
+
 # Temporary development folders
 tmp_gui_repo/
 
@@ -30,6 +33,12 @@ gha-creds-*.json
 # Legacy/backup files
 README.md.bak.*
 The_Oracle_TTS.md
+
+# Local NVR research preserved during repo restore (not part of The Oracle)
+NVR_research_backup/
+
+# Freebuff client database
+.freebuff/
 bootstrap_dualvoice_engines.sh
 codex_round_two_chatterbox_checklist.md
 codex_round_two_chatterbox_prompt.txt
@@ -53,6 +62,7 @@ Input/**/*.wav
 # Output/ - rendered audio and cache (all runtime-generated)
 Output/**/*.flac
 Output/**/*.wav
+Output/**/*.srt
 Output/**/*.pkl
 Output/**/*.json
 Output/**/*.diff

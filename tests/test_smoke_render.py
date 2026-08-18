@@ -5,6 +5,8 @@ from unittest.mock import patch
 import soundfile as sf
 import pytest
 
+pytestmark = pytest.mark.slow
+
 from the_oracle.models.project import VoiceProfile
 from the_oracle.models.project import VoiceSettings
 from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
@@ -103,7 +105,11 @@ def test_render_progress_reports_stage_updates(tmp_path: Path) -> None:
         patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
         patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
     ):
-        pipeline = OraclePipeline()
+        pipeline = OraclePipeline(
+            use_transformers=False,
+            use_language_tool=False,
+            use_punctuation_model=False,
+        )
         plan = pipeline.prepare_plan(dialogue, tmp_path / "output", speaker_settings, render_settings)
         output_path = pipeline.render(plan, render_settings, progress_callback=events.append)
 
@@ -133,7 +139,11 @@ def test_render_preview_creates_preview_files_for_both_speakers(tmp_path: Path) 
         patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
         patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
     ):
-        pipeline = OraclePipeline()
+        pipeline = OraclePipeline(
+            use_transformers=False,
+            use_language_tool=False,
+            use_punctuation_model=False,
+        )
         plan = pipeline.prepare_plan(dialogue, tmp_path / "output", speaker_settings, render_settings)
         preview_a = pipeline.render_preview(plan.utterances[0], plan.voice_profiles["A"], "standard")
         preview_b = pipeline.render_preview(plan.utterances[1], plan.voice_profiles["B"], "standard")
@@ -150,7 +160,11 @@ def test_render_preview_rejects_blank_reference_path_before_reading_dot(tmp_path
     utterance = type("PreviewUtterance", (), {"speaker": "A", "index": 0, "engine_settings": VoiceSettings(), "text_for_tts": lambda self: "Preview text"})()
     profile = VoiceProfile(name="Speaker A", speaker="A", neutral_reference=Path(""), engine_params=VoiceSettings())
 
-    pipeline = OraclePipeline()
+    pipeline = OraclePipeline(
+        use_transformers=False,
+        use_language_tool=False,
+        use_punctuation_model=False,
+    )
 
     with pytest.raises(ValueError, match="has no reference audio configured"):
         pipeline.render_preview(utterance, profile, "standard")
@@ -170,7 +184,11 @@ def test_render_preview_reports_honest_stage_progress(tmp_path: Path) -> None:
         patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
         patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
     ):
-        pipeline = OraclePipeline()
+        pipeline = OraclePipeline(
+            use_transformers=False,
+            use_language_tool=False,
+            use_punctuation_model=False,
+        )
         plan = pipeline.prepare_plan(dialogue, tmp_path / "output", speaker_settings, RenderSettings(model_variant="standard"))
         preview_result = pipeline.render_preview(
             plan.utterances[0],

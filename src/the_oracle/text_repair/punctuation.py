@@ -12,8 +12,11 @@ QUESTION_PREFIXES = ("who", "what", "when", "where", "why", "how", "did", "do", 
 
 
 class PunctuationRestorer:
-    def __init__(self) -> None:
-        self._model = self._try_load_punctuator()
+    def __init__(self, *, use_model: bool = True) -> None:
+        # The optional punctuation model pulls in transformers/PyTorch. The
+        # desktop GUI uses the deterministic fallback to keep native ML code
+        # out of the Qt process; the CLI retains the historical default.
+        self._model = self._try_load_punctuator() if use_model else None
 
     def _try_load_punctuator(self):
         try:

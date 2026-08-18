@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Tuple
 
+import pytest
+
+pytestmark = pytest.mark.slow
+
 from the_oracle.models.cache import ProjectCache
 from the_oracle.models.project import Utterance, VoiceSettings
 from the_oracle.pipeline import (

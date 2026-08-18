@@ -1,0 +1,3 @@
+Speaker A: The local Oracle audio test is starting.
+Speaker B: The render path should create a real audio file on this Ubuntu system.
+Speaker A: This final sentence confirms that the output was generated successfully.
