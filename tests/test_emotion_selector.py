@@ -8,6 +8,8 @@ from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, Voice
 
 from tests.test_app_gui_profiles import _build_window
 
+pytestmark = pytest.mark.slow
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 

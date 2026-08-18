@@ -166,10 +166,117 @@ def desktop_file_path() -> Path:
     return base / "applications" / "the-oracle.desktop"
 
 
+def desktop_dir() -> Path:
+    """The user's Desktop directory, honoring the freedesktop user-dirs spec.
+
+    Reads ``XDG_DESKTOP_DIR`` from ``~/.config/user-dirs.dirs`` (the
+    localized Desktop location on GNOME/KDE) and falls back to ``~/Desktop``
+    when the setting or file is absent.
+    """
+    user_dirs = Path.home() / ".config" / "user-dirs.dirs"
+    try:
+        for line in user_dirs.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("XDG_DESKTOP_DIR="):
+                value = stripped.split("=", 1)[1].strip().strip('"')
+                if value:
+                    # expandvars covers "$HOME/..."; expanduser also handles a
+                    # literal "~/..." some user-dirs variants write.
+                    return Path(os.path.expandvars(value)).expanduser()
+    except OSError:
+        pass
+    return Path.home() / "Desktop"
+
+
+def desktop_shortcut_path() -> Path:
+    """Where the desktop launcher shortcut lives (same filename as the
+    applications-menu entry so both are clearly The Oracle's)."""
+    return desktop_dir() / "the-oracle.desktop"
+
+
 def start_menu_launcher_path() -> Path:
     appdata = os.environ.get("APPDATA")
     root = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
     return root / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "The Oracle.cmd"
+
+
+def desktop_entry_contents(*, trusted: bool = False) -> str:
+    """The [Desktop Entry] body shared by the applications-menu entry and the
+    desktop shortcut, so the two can never drift apart.
+
+    ``Exec`` points at the absolute managed-launcher path rather than the
+    bare ``the-oracle`` command, so the entry still works when
+    ``~/.local/bin`` is missing from PATH (a fresh login may not have it).
+    """
+    # The freedesktop Desktop Entry spec only recognizes double-quote quoting
+    # for Exec arguments (single quotes are reserved characters), so use the
+    # full path wrapped in double quotes instead of shlex.quote.
+    exec_line = f'Exec="{managed_launcher_path()}" gui'
+    lines = [
+        "[Desktop Entry]",
+        "Name=The Oracle",
+        "Comment=Chatterbox-based two-speaker TTS",
+        exec_line,
+        "Terminal=false",
+        "Type=Application",
+        "Categories=AudioVideo;Utility;",
+        "StartupNotify=true",
+    ]
+    if trusted:
+        # GNOME only launches desktop files marked trusted; the applications-
+        # menu copy does not need this key.
+        lines.append("Trusted=true")
+    lines.append(f"# {LINUX_DESKTOP_MARKER}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def refresh_desktop_database(applications_dir: Path) -> None:
+    """Best-effort refresh so the entry shows up in the app list immediately.
+
+    ``update-desktop-database`` ships with desktop-file-utils; when absent the
+    entry still appears after the next session login.
+    """
+    if not shutil.which("update-desktop-database"):
+        return
+    try:
+        subprocess.run(["update-desktop-database", str(applications_dir)], check=False)
+    except OSError:
+        pass
+
+
+def mark_desktop_shortcut_trusted(shortcut_path: Path) -> None:
+    """Best-effort GNOME trust grant for a desktop .desktop file.
+
+    Nautilus/GNOME Shell key trust off the gio ``metadata::trusted``
+    attribute rather than the ``Trusted=true`` key (which is the KDE
+    convention). Setting both covers every desktop. Silently skips when
+    ``gio`` is unavailable; a missing trust mark only means Nautilus shows
+    an "Allow Launching" prompt, never a failure.
+    """
+    if not shutil.which("gio"):
+        return
+    try:
+        subprocess.run(["gio", "set", str(shortcut_path), "metadata::trusted", "true"], check=False)
+    except OSError:
+        pass
+
+
+def install_desktop_shortcut() -> Path:
+    """Put a launcher on the user's Desktop.
+
+    The desktop copy is marked ``Trusted=true``, made executable, and (when
+    ``gio`` exists) granted GNOME's ``metadata::trusted`` attribute so it runs
+    on double-click instead of prompting about an untrusted launcher. Returns
+    the created path.
+    """
+    shortcut_path = desktop_shortcut_path()
+    shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+    shortcut_path.write_text(desktop_entry_contents(trusted=True), encoding="utf-8")
+    shortcut_path.chmod(0o755)
+    mark_desktop_shortcut_trusted(shortcut_path)
+    passed(f"Installed desktop shortcut at {shortcut_path}")
+    return shortcut_path
 
 
 def install_desktop_launcher() -> None:
@@ -191,24 +298,10 @@ def install_desktop_launcher() -> None:
         return
     launcher_path = desktop_file_path()
     launcher_path.parent.mkdir(parents=True, exist_ok=True)
-    launcher_path.write_text(
-        "\n".join(
-            [
-                "[Desktop Entry]",
-                "Name=The Oracle",
-                "Comment=Chatterbox-based two-speaker TTS",
-                "Exec=the-oracle gui",
-                "Terminal=false",
-                "Type=Application",
-                "Categories=AudioVideo;Utility;",
-                "StartupNotify=true",
-                f"# {LINUX_DESKTOP_MARKER}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    launcher_path.write_text(desktop_entry_contents(), encoding="utf-8")
     passed(f"Installed desktop entry at {launcher_path}")
+    refresh_desktop_database(launcher_path.parent)
+    install_desktop_shortcut()
 
 
 def remove_if_managed(path: Path, marker: str) -> None:
@@ -289,6 +382,7 @@ def uninstall() -> int:
         remove_if_managed(start_menu_launcher_path(), WINDOWS_START_MENU_MARKER)
     elif is_linux():
         remove_if_managed(desktop_file_path(), LINUX_DESKTOP_MARKER)
+        remove_if_managed(desktop_shortcut_path(), LINUX_DESKTOP_MARKER)
     venv_dir = REPO_ROOT / ".venv"
     if venv_dir.exists():
         shutil.rmtree(venv_dir)

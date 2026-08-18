@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
+# Every entry is matched as a whole word (\b boundaries), so inflected
+# forms must be listed explicitly to keep the lexical fallback effective:
+# "laughing" needs "laugh" and "laughing" both present, "raging" needs
+# "rage" and "raging", and so on.
 LEXICON = {
-    "anger": {"furious", "angry", "annoyed", "snapped", "yelled", "rage"},
-    "fear": {"afraid", "scared", "terrified", "worried", "panic", "nervous"},
-    "joy": {"happy", "joy", "laugh", "smiled", "delighted", "glad"},
-    "sadness": {"sad", "upset", "hurt", "cry", "grief", "mourn"},
-    "surprise": {"surprised", "suddenly", "unexpected", "astonished"},
+    "anger": {"furious", "angry", "angrily", "annoyed", "annoying", "annoys", "snapped", "yell", "yelled", "yelling", "rage", "raging", "mad", "irritated", "irritating"},
+    "fear": {"afraid", "scared", "scare", "scares", "scary", "terrified", "terrifying", "worry", "worried", "worries", "worrying", "panic", "panicked", "panicking", "nervous", "dread", "dreaded", "dreadful"},
+    "joy": {"happy", "happily", "joy", "joyful", "laugh", "laughs", "laughed", "laughing", "smile", "smiles", "smiled", "smiling", "delighted", "delightful", "glad", "yay", "cheerful", "cheering", "excited", "exciting"},
+    "sadness": {"sad", "sadly", "sadder", "sadness", "upset", "hurt", "hurting", "cry", "cries", "cried", "crying", "grief", "grieving", "mourn", "mourned", "mourning", "tears", "tearful", "heartbroken"},
+    "surprise": {"surprised", "surprising", "surprises", "surprise", "suddenly", "unexpected", "astonished", "astonishing", "wow", "wowser", "amazed", "amazing"},
 }
 SUPPORTED_EMOTIONS = [*LEXICON.keys(), "curiosity", "neutral"]
+
+# Precompiled whole-word patterns (one per emotion) so classify() does not
+# recompile regexes on every utterance.
+_LEXICON_PATTERNS: dict[str, re.Pattern[str]] = {
+    label: re.compile(rf"\b(?:{'|'.join(re.escape(word) for word in words)})\b")
+    for label, words in LEXICON.items()
+}
 
 
 @dataclass(slots=True)
@@ -22,9 +34,13 @@ class EmotionResult:
 
 
 class GoEmotionsClassifier:
-    def __init__(self, model_name: str = "SamLowe/roberta-base-go_emotions") -> None:
+    def __init__(
+        self,
+        model_name: str = "SamLowe/roberta-base-go_emotions",
+        use_transformers: bool = True,
+    ) -> None:
         self.model_name = model_name
-        self._pipeline = self._try_load_pipeline(model_name)
+        self._pipeline = self._try_load_pipeline(model_name) if use_transformers else None
 
     def _try_load_pipeline(self, model_name: str):
         try:
@@ -45,8 +61,11 @@ class GoEmotionsClassifier:
                 pass
 
         lowered = text.lower()
-        for label, words in LEXICON.items():
-            if any(word in lowered for word in words):
+        # Whole-word matching so short lexicon tokens like "mad" don't fire on
+        # substrings of unrelated words ("made", "madam"); inflected and
+        # exclamation forms are listed explicitly in LEXICON.
+        for label, pattern in _LEXICON_PATTERNS.items():
+            if pattern.search(lowered):
                 return EmotionResult(label, 0.62)
         if lowered.endswith("?"):
             return EmotionResult("curiosity", 0.58)

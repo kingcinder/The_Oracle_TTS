@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 from the_oracle.models.project import VoiceProfile, VoiceSettings
 from the_oracle.pipeline import (
     OraclePipeline,

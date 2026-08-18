@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -97,7 +98,10 @@ def _run_command(
             timeout=timeout,
             check=False,
         )
-    except FileNotFoundError as exc:
+    except OSError as exc:
+        # FileNotFoundError and PermissionError are both OSError subclasses;
+        # a missing *or non-executable* probe binary must never crash the
+        # doctor -- it returns a structured failure like any other probe.
         return {
             "ok": False,
             "returncode": 127,
@@ -481,6 +485,165 @@ def _real_engine_smoke_status(repo_root: Path) -> dict[str, Any]:
     return {"ok": bool(readiness.get("ready")), **readiness}
 
 
+_VULKAN_PATCH_MARKER = "ORACLE VENDORED PATCH"
+
+
+def _vulkaninfo_summary() -> tuple[bool, str]:
+    """Return (vulkan_device_visible, vulkaninfo_text).
+
+    ``vulkaninfo --summary`` exits 0 only when at least one device is visible,
+    so the exit code is the device-visibility probe.
+    """
+    if not shutil.which("vulkaninfo"):
+        return False, ""
+    result = _run_command(["vulkaninfo", "--summary"], timeout=15)
+    return result["ok"], f"{result['stdout']}\n{result['stderr']}"
+
+
+def _first_device_name(vulkaninfo_text: str) -> str:
+    for line in vulkaninfo_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("deviceName"):
+            return stripped.split("=", 1)[-1].strip()
+    return ""
+
+
+_AUDIOCPP_DEVICE_LINE = re.compile(r'^Vulkan:(\d+)\s+"([^"]+)"')
+
+
+def _audiocpp_devices(binary: Path | None) -> list[dict[str, Any]]:
+    """Return the Vulkan devices audio.cpp reports via ``--list-devices``.
+
+    Each entry is ``{"index": <n>, "name": "..."}`` where ``<n>`` is the value
+    to pass as ``ORACLE_AUDIOCPP_DEVICE`` / ``--device <n>``. audio.cpp's own
+    indexes are what the backend uses, so this is the authoritative answer for
+    multi-GPU machines (vulkaninfo alone cannot tell us which index audio.cpp
+    picks). Empty when the binary is missing or reports nothing.
+    """
+    if binary is None or not Path(binary).exists():
+        return []
+    result = _run_command([str(binary), "--backend", "vulkan", "--list-devices"], timeout=30)
+    if not result["ok"]:
+        return []
+    devices: list[dict[str, Any]] = []
+    seen_indexes: set[int] = set()
+    # ggml builds often print device discovery lines to stderr; parse both
+    # streams so a stream change can't silently report zero devices, and
+    # dedupe by index in case a build echoes the same device to both.
+    for stream in (result["stdout"], result["stderr"]):
+        for line in (stream or "").splitlines():
+            match = _AUDIOCPP_DEVICE_LINE.match(line.strip())
+            if match:
+                index = int(match.group(1))
+                if index in seen_indexes:
+                    continue
+                seen_indexes.add(index)
+                devices.append({"index": index, "name": match.group(2)})
+    return devices
+
+
+def _vulkan_patches_applied(repo_root: Path) -> bool | None:
+    """None when audio.cpp is not cloned; True/False when it is."""
+    markers = [
+        repo_root / "audio.cpp" / "external" / "ggml" / "src" / "ggml-vulkan" / "ggml-vulkan.cpp",
+        repo_root / "audio.cpp" / "external" / "sentencepiece" / "CMakeLists.txt",
+    ]
+    if not markers[0].exists():
+        return None
+    try:
+        return all(_VULKAN_PATCH_MARKER in path.read_text(encoding="utf-8", errors="ignore") for path in markers)
+    except Exception:
+        return False
+
+
+def _vulkan_caveat(*, rdna1_device: bool, patched: bool | None, binary_built: bool) -> str:
+    notes: list[str] = []
+    if rdna1_device:
+        notes.append(
+            "RDNA1 (gfx1010/gfx1012) GPU detected: audio.cpp's ggml can hit "
+            "VK_ERROR_DEVICE_LOST during buffer init unless the vendored "
+            "ORACLE_VENDORED ggml patch is applied (whisper.cpp#3611)."
+        )
+    if binary_built and patched is False:
+        notes.append(
+            "The vendored RDNA1 ggml patch is NOT applied to audio.cpp/external/ggml; "
+            "re-run scripts/patch_audio_cpp_ggml.sh and rebuild before using "
+            "--inference-backend vulkan on RDNA1."
+        )
+    if notes:
+        notes.append("Fall back to --inference-backend pytorch if the device-lost error still fires.")
+    return " ".join(notes)
+
+
+def _vulkan_backend_status(repo_root: Path) -> dict[str, Any]:
+    """Informational (opt-in) check: binary, model env, Vulkan device, RDNA1 caveat.
+
+    The Vulkan backend is opt-in (inference_backend: vulkan, default pytorch), so
+    this never gates overall_ready -- it reports readiness and surfaces the RDNA1
+    device-lost caveat when an RDNA1 GPU or an unpatched clone is detected.
+    """
+    _prepend_repo_src(repo_root)
+    try:
+        from the_oracle.tts_engines.vulkan_backend import _vulkan_batch_max_requests, find_audiocpp_binary
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "binary_built": False,
+            "binary": "",
+            "cli_override": "",
+            "model_override_set": False,
+            "model_path": "",
+            "model_file_exists": False,
+            "vulkan_device": False,
+            "device_name": "",
+            "rdna1_device": False,
+            "vendored_patch_applied": None,
+            "device_index_env": "",
+            "threads_env": "",
+            "batch_env": "",
+            "effective_batch_cap": 32,
+            "audio_cpp_devices": [],
+            "caveat": "",
+        }
+
+    binary = find_audiocpp_binary()
+    model_env = os.environ.get("ORACLE_AUDIOCPP_MODEL", "")
+    model_path = Path(model_env).expanduser() if model_env else None
+    # Mirrors AudioCppVulkanEngine.ensure_model_ready: the env var must point
+    # at an existing path (a single-file GGUF or a multi-file package target
+    # directory both qualify), not merely be non-empty.
+    model_file_exists = bool(model_path and model_path.exists())
+    device_available, vulkaninfo_text = _vulkaninfo_summary()
+    lowered = vulkaninfo_text.lower()
+    rdna1_device = any(token in lowered for token in ("rdna1", "navi1", "navi10", "navi14"))
+    patched = _vulkan_patches_applied(repo_root)
+    # The effective per-subprocess request cap: same single source of truth as
+    # the engine (ORACLE_AUDIOCPP_MAX_BATCH, clamped >= 1, default 32).
+    batch_env = os.environ.get("ORACLE_AUDIOCPP_MAX_BATCH", "")
+    effective_batch_cap = _vulkan_batch_max_requests()
+    return {
+        "ok": bool(binary) and model_file_exists and device_available,
+        "binary_built": binary is not None,
+        "binary": str(binary) if binary else "",
+        "cli_override": os.environ.get("ORACLE_AUDIOCPP_CLI", ""),
+        "model_override_set": bool(model_env),
+        "model_path": str(model_path) if model_path else "",
+        "model_file_exists": model_file_exists,
+        "vulkan_device": device_available,
+        "device_name": _first_device_name(vulkaninfo_text),
+        "rdna1_device": rdna1_device,
+        "vendored_patch_applied": patched,
+        "device_index_env": os.environ.get("ORACLE_AUDIOCPP_DEVICE", ""),
+        "threads_env": os.environ.get("ORACLE_AUDIOCPP_THREADS", ""),
+        "batch_env": batch_env,
+        "effective_batch_cap": effective_batch_cap,
+        "audio_cpp_devices": _audiocpp_devices(binary),
+        "caveat": _vulkan_caveat(rdna1_device=rdna1_device, patched=patched, binary_built=binary is not None),
+        "error": "",
+    }
+
+
 def _turbo_status(repo_root: Path, timeout: float) -> dict[str, Any]:
     code = f"""
 from __future__ import annotations
@@ -542,6 +705,56 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
 
     if not report["turbo"]["ok"] and not ci_mode:
         steps.append(f"Optional turbo prefetch: {repo_python_display()} scripts/download_models.py --variant turbo --device cpu")
+
+    vulkan = report["vulkan_backend"]
+    if vulkan["binary_built"] and not vulkan["model_override_set"]:
+        steps.append(
+            "Vulkan backend: fetch the Chatterbox model automatically with "
+            "`the-oracle setup-vulkan` (or select the Vulkan backend in the GUI, which "
+            "does the same), or manually with scripts/download_audio_cpp_model.sh "
+            "(or scripts/build_audio_cpp.sh --with-model), then set ORACLE_AUDIOCPP_MODEL "
+            "to the printed path (see README 'Vulkan Backend (audio.cpp)')."
+        )
+    elif vulkan["binary_built"] and vulkan.get("model_file_exists") is False:
+        steps.append(
+            f"Vulkan backend: ORACLE_AUDIOCPP_MODEL points at a missing model file "
+            f"({vulkan.get('model_path') or '?'}); re-run `the-oracle setup-vulkan` "
+            f"or scripts/download_audio_cpp_model.sh to re-fetch, or fix the variable "
+            f"before rendering on Vulkan."
+        )
+    if vulkan["vendored_patch_applied"] is False:
+        steps.append(
+            "Vulkan backend: re-run scripts/patch_audio_cpp_ggml.sh to (re)apply the vendored "
+            "RDNA1 ggml patch, then rebuild with scripts/build_audio_cpp.sh."
+        )
+    audio_cpp_devices = vulkan.get("audio_cpp_devices") or []
+    if len(audio_cpp_devices) > 1 and not vulkan.get("device_index_env"):
+        indexes = ", ".join(str(device["index"]) for device in audio_cpp_devices)
+        steps.append(
+            f"Vulkan backend: {len(audio_cpp_devices)} GPUs detected by audio.cpp "
+            f"(indexes {indexes}); set ORACLE_AUDIOCPP_DEVICE to choose which one renders."
+        )
+    # The per-subprocess request cap is sensible in roughly 1-128; warn when
+    # it is outside that, since a tiny cap destroys batching and a huge one
+    # risks an oversized requests.json. The reported effective cap is clamped
+    # >= 1 (engine semantics), so check the raw env value for the lower bound:
+    # a user setting 0 or -5 silently clamps to 1 and must still be surfaced.
+    effective_batch_cap = vulkan.get("effective_batch_cap", 32)
+    batch_env = vulkan.get("batch_env") or ""
+    raw_cap: int | None = None
+    try:
+        if batch_env:
+            raw_cap = int(batch_env)
+    except ValueError:
+        raw_cap = None
+    cap_too_small = raw_cap is not None and raw_cap < 1
+    cap_too_large = effective_batch_cap > 128
+    if cap_too_small or cap_too_large:
+        steps.append(
+            f"Vulkan backend: effective batch cap is {effective_batch_cap} "
+            f"(ORACLE_AUDIOCPP_MAX_BATCH={batch_env or 'unset'}); set it "
+            f"to a value in the sensible 1-128 range or unset it for the default 32."
+        )
     if report["voice_sources"]["primary_source"] != "seashells":
         steps.append("Add curated local reference clips to ./Seashells so the GUI stops defaulting to smoke/build fallback voices.")
 
@@ -588,6 +801,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "voice_sources": voice_catalog_audit(repo_root),
         "deterministic_smoke": _deterministic_smoke_status(repo_root),
         "real_engine_smoke": _real_engine_smoke_status(repo_root),
+        "vulkan_backend": _vulkan_backend_status(repo_root),
     }
     required_checks = [
         report["python"]["ok"],
@@ -688,6 +902,50 @@ def _print_human_report(report: dict[str, Any]) -> None:
     else:
         detail = real_engine.get("error") or str(real_engine.get("chatterbox_import", {}))
         print(f"{_status(False)} Real-engine smoke readiness: {detail}")
+
+    # Opt-in backend: never a hard FAIL (machines without Vulkan are fine), but
+    # readiness and the RDNA1 device-lost caveat are surfaced for the user.
+    vulkan = report["vulkan_backend"]
+    vulkan_label = "PASS" if vulkan["ok"] else "WARN"
+    model_state = "set"
+    if not vulkan["model_override_set"]:
+        model_state = "unset"
+    elif vulkan.get("model_file_exists") is False:
+        model_state = f"set but file missing ({vulkan.get('model_path') or '?'})"
+    parts = [
+        f"binary={'built' if vulkan['binary_built'] else 'not built'}",
+        f"ORACLE_AUDIOCPP_MODEL={model_state}",
+        f"vulkan device={'yes' if vulkan['vulkan_device'] else 'no'}",
+    ]
+    if vulkan["device_name"]:
+        parts.append(vulkan["device_name"])
+    if vulkan["rdna1_device"]:
+        parts.append("RDNA1")
+    if vulkan.get("device_index_env"):
+        parts.append(f"device={vulkan['device_index_env']} (env)")
+    if vulkan.get("threads_env"):
+        parts.append(f"threads={vulkan['threads_env']} (env)")
+    # The effective cap always derives from the env var (or the 32 default) --
+    # per-render settings like the GUI spin box live in user-chosen settings
+    # files, which the env-level doctor does not read.
+    if vulkan.get("batch_env"):
+        parts.append(f"batch cap={vulkan.get('effective_batch_cap', 32)} (env)")
+    if vulkan["vendored_patch_applied"] is None:
+        parts.append("vendored patches=not cloned")
+    else:
+        parts.append(f"vendored patches={'applied' if vulkan['vendored_patch_applied'] else 'MISSING'}")
+    print(f"{vulkan_label} Vulkan backend (audio.cpp, opt-in): {', '.join(parts)}")
+    if vulkan["caveat"]:
+        print(f"      {vulkan['caveat']}")
+    if not vulkan["ok"] and vulkan["error"]:
+        print(f"      {vulkan['error']}")
+    audio_cpp_devices = vulkan.get("audio_cpp_devices") or []
+    if audio_cpp_devices:
+        labels = ", ".join(f"{device['index']}={device['name']}" for device in audio_cpp_devices)
+        print(f"      audio.cpp Vulkan devices: {labels}")
+        if len(audio_cpp_devices) > 1 and not vulkan.get("device_index_env"):
+            indexes = ", ".join(str(device["index"]) for device in audio_cpp_devices)
+            print(f"      Multi-GPU: set ORACLE_AUDIOCPP_DEVICE to one of [{indexes}] to pick a device.")
 
     print("")
     print("Next steps:")

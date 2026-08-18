@@ -1,6 +1,10 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+pytestmark = pytest.mark.slow  # runs the full repair pipeline (LanguageTool download)
+
 from the_oracle.models.project import VoiceSettings
 from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
 from the_oracle.smoke import _write_reference

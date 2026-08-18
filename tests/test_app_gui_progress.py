@@ -7,6 +7,8 @@ from PySide6.QtWidgets import QApplication
 from the_oracle.app_gui import RenderProgressDialog
 from the_oracle.pipeline import RenderProgress
 
+pytestmark = pytest.mark.slow
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 

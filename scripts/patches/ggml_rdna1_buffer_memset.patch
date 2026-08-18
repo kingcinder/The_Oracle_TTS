@@ -1,0 +1,24 @@
+diff --git a/external/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/external/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 334651a..08858f1 100644
+--- a/external/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/external/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -7313,7 +7313,18 @@ static void ggml_vk_buffer_memset(vk_buffer& dst, size_t offset, uint32_t c, siz
+     }
+ 
+     std::lock_guard<std::recursive_mutex> guard(dst->device->mutex);
+-    vk_context subctx = ggml_vk_create_temporary_context(dst->device->transfer_queue.cmd_pool);
++    // ===== BEGIN ORACLE VENDORED PATCH (RDNA1 buffer memset) =====
++    // AMD RDNA1 (gfx1010/gfx1012) SDMA transfer queues reject vkCmdFillBuffer
++    // (EINVAL), surfacing as VK_ERROR_DEVICE_LOST during buffer init
++    // (ggml-org/whisper.cpp#3611). Run the memset on the compute queue for
++    // RDNA1; vk_command_pool binds its queue so ggml_vk_submit follows it.
++    // Vendored against ggml 748c5e2.
++    // Re-check this block after any audio.cpp/ggml update.
++    // ===== END ORACLE VENDORED PATCH (RDNA1 buffer memset) =====
++    vk_context subctx = ggml_vk_create_temporary_context(
++        dst->device->architecture == vk_device_architecture::AMD_RDNA1
++            ? dst->device->compute_queue.cmd_pool
++            : dst->device->transfer_queue.cmd_pool);
+     ggml_vk_ctx_begin(dst->device, subctx);
+     subctx->s->buffer->buf.fillBuffer(dst->buffer, offset, size, c);
+     ggml_vk_ctx_end(subctx);

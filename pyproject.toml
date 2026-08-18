@@ -37,6 +37,7 @@ chatterbox = [
 ]
 dev = [
   "pytest==8.3.5",
+  "pytest-xdist==3.6.1",
 ]
 
 [project.scripts]
@@ -55,3 +56,6 @@ the_oracle = ["text_repair/data/*.txt"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "slow: long-running tests (GUI, integration, or model-heavy) that the fast suite skips",
+]

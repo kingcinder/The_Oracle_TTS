@@ -13,6 +13,7 @@ from the_oracle.platform_support import app_config_dir
 
 GUI_SETTINGS_VERSION = 1
 _SUPPORTED_DEVICE_MODES = {"cpu"}
+_SUPPORTED_INFERENCE_BACKENDS = {"pytorch", "vulkan"}
 _LOG = logging.getLogger(__name__)
 
 
@@ -62,6 +63,83 @@ def list_templates() -> list[str]:
     return sorted(path.stem for path in template_dir().glob("*.json"))
 
 
+def app_settings_path() -> Path:
+    """Path of the app-level settings file (backend memory + audio.cpp paths).
+
+    Unlike profiles/templates, this file is written automatically (not by a
+    Save dialog) and read at every app launch, so the chosen inference backend
+    and the resolved ``ORACLE_AUDIOCPP_CLI``/``ORACLE_AUDIOCPP_MODEL`` paths
+    survive across sessions without any manual wiring.
+    """
+    path = user_config_dir()
+    path.mkdir(parents=True, exist_ok=True)
+    return path / "app_settings.json"
+
+
+def _normalize_path_string(value: Any) -> str:
+    """Coerce a persisted filesystem path to a plain string ("" when absent)."""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _normalize_remember_backend(value: Any) -> bool:
+    """Coerce the remember-backend flag to a bool (default: True).
+
+    ``bool("false")`` is True, so a hand-edited file that spells the flag as
+    a string would otherwise flip the semantics; string values are parsed
+    textually and anything else is truthy-checked.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off"}
+    return bool(value)
+
+
+def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Coerce an app-settings payload to the supported schema.
+
+    A hand-edited or older file must never crash the app at launch: every
+    field is normalized (unsupported backend -> pytorch, bad device index ->
+    None, non-bool remember flag -> True) and unknown keys are dropped.
+    """
+    data = payload if isinstance(payload, dict) else {}
+    return {
+        "version": 1,
+        "remember_backend": _normalize_remember_backend(data.get("remember_backend", True)),
+        "inference_backend": _normalize_inference_backend(data.get("inference_backend", "pytorch")),
+        "audio_cpp_device": _normalize_audio_cpp_device(data.get("audio_cpp_device")),
+        "audio_cpp_threads": _normalize_audio_cpp_threads(data.get("audio_cpp_threads")),
+        "audio_cpp_timeout": _normalize_audio_cpp_timeout(data.get("audio_cpp_timeout")),
+        "audio_cpp_max_batch": _normalize_audio_cpp_max_batch(data.get("audio_cpp_max_batch")),
+        "audio_cpp_cli": _normalize_path_string(data.get("audio_cpp_cli")),
+        "audio_cpp_model": _normalize_path_string(data.get("audio_cpp_model")),
+    }
+
+
+def load_app_settings() -> dict[str, Any]:
+    """Load the persisted app settings (backend memory + audio.cpp paths).
+
+    Returns the normalized default payload when the file is missing or
+    unreadable, so a fresh install or a corrupted file simply starts with
+    defaults instead of crashing the GUI.
+    """
+    path = app_settings_path()
+    if not path.exists():
+        return _normalize_app_settings({})
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _normalize_app_settings({})
+    return _normalize_app_settings(payload)
+
+
+def save_app_settings(payload: dict[str, Any]) -> Path:
+    """Persist the app settings, normalizing so the file always round-trips."""
+    path = app_settings_path()
+    path.write_text(json.dumps(_normalize_app_settings(payload), indent=2, ensure_ascii=True), encoding="utf-8")
+    return path
+
+
 def load_recent_reference_paths(limit: int = 10) -> list[str]:
     path = recent_references_path()
     if not path.exists():
@@ -96,6 +174,86 @@ def _normalize_device_mode(value: str) -> str:
     return candidate
 
 
+def _normalize_audio_cpp_device(value: Any) -> int | None:
+    """Coerce audio_cpp_device to a non-negative int (Vulkan device index) or None.
+
+    None / missing means "let audio.cpp pick"; anything non-numeric or
+    negative is replaced with None so a hand-edited file cannot produce an
+    invalid RenderSettings at load time.
+    """
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _normalize_audio_cpp_threads(value: Any) -> int | None:
+    """Coerce audio_cpp_threads to a positive int or None.
+
+    None / missing means "audio.cpp's own default"; anything non-numeric or
+    non-positive is replaced with None.
+    """
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 1 else None
+
+
+def _normalize_audio_cpp_timeout(value: Any) -> int | None:
+    """Coerce audio_cpp_timeout to a positive int (seconds) or None.
+
+    None / missing means "the engine's default (600s)"; anything non-numeric
+    or non-positive is replaced with None so a hand-edited file cannot produce
+    an invalid RenderSettings at load time.
+    """
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 1 else None
+
+
+def _normalize_audio_cpp_max_batch(value: Any) -> int | None:
+    """Coerce audio_cpp_max_batch to a positive int (request count) or None.
+
+    None / missing means "the engine's default (32)"; anything non-numeric
+    or non-positive is replaced with None so a hand-edited file cannot produce
+    an invalid RenderSettings at load time.
+    """
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 1 else None
+
+
+def _normalize_inference_backend(value: str) -> str:
+    """Coerce inference_backend to a supported value.
+
+    The Vulkan backend is opt-in; "vulkan" is kept when present so saved
+    settings round-trip faithfully. Any other value (e.g. an old or typo'd
+    entry) is silently replaced with the default "pytorch".
+    """
+    candidate = str(value).strip().lower()
+    if candidate not in _SUPPORTED_INFERENCE_BACKENDS:
+        _LOG.debug(
+            "Unsupported inference_backend %r in settings file, replacing with 'pytorch'.",
+            value,
+        )
+        return "pytorch"
+    return candidate
+
+
 def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     required = {"version", "project", "speakers"}
     missing = sorted(required - set(payload))
@@ -112,6 +270,11 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "correction_mode": normalize_correction_mode(str(project.get("correction_mode", "moderate"))),
         "loudness_preset": str(project.get("loudness_preset", "light")),
         "crossfade_ms": int(project.get("crossfade_ms", 20)),
+        "inference_backend": _normalize_inference_backend(project.get("inference_backend", "pytorch")),
+        "audio_cpp_device": _normalize_audio_cpp_device(project.get("audio_cpp_device")),
+        "audio_cpp_threads": _normalize_audio_cpp_threads(project.get("audio_cpp_threads")),
+        "audio_cpp_timeout": _normalize_audio_cpp_timeout(project.get("audio_cpp_timeout")),
+        "audio_cpp_max_batch": _normalize_audio_cpp_max_batch(project.get("audio_cpp_max_batch")),
         "output_dir": str(project.get("output_dir", "")),
         "output_filename": str(project.get("output_filename", "")),
     }

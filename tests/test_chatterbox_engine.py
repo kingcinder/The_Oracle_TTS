@@ -2,6 +2,10 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+pytestmark = pytest.mark.slow
+
 from the_oracle.tts_engines import chatterbox_engine
 
 
