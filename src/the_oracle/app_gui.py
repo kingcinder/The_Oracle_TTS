@@ -845,6 +845,93 @@ class RenderProgressDialog(QDialog):
         return f"{seconds}s"
 
 
+class LivePanel(QWidget):
+    """Persistent right-side sidebar that mirrors the render progress dialog
+    so the user always sees the last backend/render state without a modal.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedWidth(260)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        header = QLabel("Live")
+        header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px 0;")
+        outer.addWidget(header)
+
+        self.backend_label = QLabel("Backend: idle")
+        self.backend_label.setWordWrap(True)
+        self.synth_label = QLabel("")
+        self.synth_label.setWordWrap(True)
+        self.stage_label = QLabel("")
+        self.stage_label.setWordWrap(True)
+        self.segment_label = QLabel("")
+        self.eta_label = QLabel("")
+        self.eta_label.setWordWrap(True)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+
+        outer.addWidget(self.backend_label)
+        outer.addWidget(self.synth_label)
+        outer.addWidget(self.stage_label)
+        outer.addWidget(self.segment_label)
+        outer.addWidget(self.eta_label)
+        outer.addWidget(self.progress_bar)
+        outer.addStretch(1)
+
+    def update_from_progress(self, progress: RenderProgress) -> None:
+        """Update the sidebar with live render data (same logic as
+        RenderProgressDialog.update_progress but writes to our own labels)."""
+        if progress.fraction is not None:
+            percent = int(round(progress.fraction * 100))
+        else:
+            percent = 0 if progress.total_steps <= 0 else int(round((progress.current_step / progress.total_steps) * 100))
+        self.progress_bar.setValue(max(0, min(100, percent)))
+
+        # Backend line
+        if progress.backend:
+            label = "Vulkan (audio.cpp)" if progress.backend == "vulkan" else "PyTorch (CPU)"
+            if progress.device_label:
+                label += f" — {progress.device_label}"
+            self.backend_label.setText(f"Backend: {label}")
+
+        # Render time
+        if progress.synth_seconds_total is not None:
+            text = f"Render time: {RenderProgressDialog._format_seconds(progress.synth_seconds_total)} total"
+            if progress.synth_seconds_latest is not None:
+                text += f"\nlast {RenderProgressDialog._format_seconds(progress.synth_seconds_latest)}"
+            self.synth_label.setText(text)
+
+        self.stage_label.setText(f"{progress.stage}: {progress.detail}")
+
+        if progress.total_segments > 0:
+            self.segment_label.setText(f"Segments: {progress.current_segment}/{progress.total_segments}")
+        elif progress.total_steps > 0:
+            self.segment_label.setText(f"Steps: {progress.current_step}/{progress.total_steps}")
+        else:
+            self.segment_label.setText("Segments: preparing...")
+
+        if progress.eta_seconds is None:
+            self.eta_label.setText(f"Elapsed: {RenderProgressDialog._format_seconds(progress.elapsed_seconds)}\nETA: calculating...")
+        else:
+            self.eta_label.setText(
+                f"Elapsed: {RenderProgressDialog._format_seconds(progress.elapsed_seconds)}\n"
+                f"ETA: {RenderProgressDialog._format_seconds(progress.eta_seconds)}"
+            )
+
+    def set_idle(self) -> None:
+        """Reset to the idle state after a render finishes or fails."""
+        self.backend_label.setText("Backend: idle")
+        self.synth_label.setText("")
+        self.stage_label.setText("")
+        self.segment_label.setText("")
+        self.eta_label.setText("")
+        self.progress_bar.setValue(0)
+
+
 class SpeakerGroup(QGroupBox):
     def __init__(self, speaker: str, custom_reference_dir: Path) -> None:
         super().__init__(f"Speaker {speaker}")
@@ -1047,7 +1134,14 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget(self)
-        layout = QVBoxLayout(root)
+        hbox = QHBoxLayout(root)
+        hbox.setContentsMargins(0, 0, 0, 0)
+
+        left = QWidget()
+        layout = QVBoxLayout(left)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.live_panel = LivePanel()
 
         controls = QGridLayout()
         self.input_path = QLineEdit()
@@ -1123,6 +1217,9 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Status / Errors")
         layout.addWidget(self.status_label)
         layout.addWidget(self.error_panel)
+
+        hbox.addWidget(left, stretch=1)
+        hbox.addWidget(self.live_panel)
 
         self.setCentralWidget(root)
         self.outdir_path.setText(str(self.paths.output_dir))
@@ -3049,6 +3146,7 @@ class MainWindow(QMainWindow):
         self.render_worker.start()
 
     def _update_render_progress(self, progress: RenderProgress) -> None:
+        self.live_panel.update_from_progress(progress)
         if self.progress_dialog is not None:
             self.progress_dialog.update_progress(progress)
 
@@ -3101,6 +3199,7 @@ class MainWindow(QMainWindow):
             self.render_worker = None
 
     def _update_preview_progress(self, progress: RenderProgress) -> None:
+        self.live_panel.update_from_progress(progress)
         if self.preview_dialog is not None:
             self.preview_dialog.update_progress(progress)
 
