@@ -773,11 +773,15 @@ class RenderProgressDialog(QDialog):
         self.setModal(False)
         self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
+        self.backend_label = QLabel("Backend: ...")
+        self.synth_label = QLabel("")
         self.stage_label = QLabel("Starting render...")
         self.segment_label = QLabel("Segments: 0/0")
         self.eta_label = QLabel("ETA: calculating...")
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
+        layout.addWidget(self.backend_label)
+        layout.addWidget(self.synth_label)
         layout.addWidget(self.stage_label)
         layout.addWidget(self.segment_label)
         layout.addWidget(self.eta_label)
@@ -786,13 +790,31 @@ class RenderProgressDialog(QDialog):
 
     def reset(self) -> None:
         self.progress_bar.setValue(0)
+        self.backend_label.setText("Backend: ...")
+        self.synth_label.setText("")
         self.stage_label.setText("Starting render...")
         self.segment_label.setText("Segments: 0/0")
         self.eta_label.setText("ETA: calculating...")
 
+    def _backend_panel_text(self, progress: RenderProgress) -> str:
+        """Live backend/device line: the active inference backend plus the
+        device it renders on (the GPU name for Vulkan, CPU for PyTorch)."""
+        if not progress.backend:
+            return "Backend: ..."
+        label = "Vulkan (audio.cpp)" if progress.backend == "vulkan" else "PyTorch (CPU)"
+        if progress.device_label:
+            label += f" — {progress.device_label}"
+        return f"Backend: {label}"
+
     def update_progress(self, progress: RenderProgress) -> None:
         percent = 0 if progress.total_steps <= 0 else int(round((progress.current_step / progress.total_steps) * 100))
         self.progress_bar.setValue(max(0, min(100, percent)))
+        self.backend_label.setText(self._backend_panel_text(progress))
+        if progress.synth_seconds_total is not None:
+            text = f"Render time: {self._format_seconds(progress.synth_seconds_total)} total"
+            if progress.synth_seconds_latest is not None:
+                text += f" · last {self._format_seconds(progress.synth_seconds_latest)}"
+            self.synth_label.setText(text)
         self.stage_label.setText(f"{progress.stage}: {progress.detail}")
         if progress.total_segments > 0:
             self.segment_label.setText(f"Segments: {progress.current_segment}/{progress.total_segments}")

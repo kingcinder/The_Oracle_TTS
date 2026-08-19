@@ -530,6 +530,19 @@ def test_vulkan_render_emits_progress_per_request_during_batch(tmp_path: Path, m
     segment_events = [event for event in progress_events if event.stage == "Rendering segment"]
     assert len(segment_events) == len(vulkan_expected)
 
+    # The live backend panel rides every event: backend, device label, and
+    # cumulative synthesize seconds (the deterministic engine reports
+    # wall_ms=100.0 per request, so each stem adds 0.1s).
+    assert all(event.backend == "vulkan" for event in progress_events)
+    assert all(event.device_label for event in progress_events)
+    timed = [event for event in progress_events if event.synth_seconds_total is not None]
+    assert timed, "synth timing should appear once utterances complete"
+    # Cumulative synthesize seconds accumulate monotonically as stems land
+    # (the deterministic engine reports real per-request wall_ms).
+    totals = [event.synth_seconds_total for event in timed]  # type: ignore[misc]
+    assert totals == sorted(totals) and totals[-1] > 0
+    assert timed[-1].synth_seconds_latest is not None and timed[-1].synth_seconds_latest > 0
+
 
 def test_vulkan_render_mixed_cache_progress_never_rewinds(tmp_path: Path) -> None:
     """Mixed render (some stems cached, some synthesized fresh): the shared
