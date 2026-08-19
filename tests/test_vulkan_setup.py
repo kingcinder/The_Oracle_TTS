@@ -255,12 +255,18 @@ def test_handle_render_auto_runs_vulkan_setup(
 
     monkeypatch.setattr("the_oracle.cli.OraclePipeline", lambda: _FakePipeline())
     setup_calls: list[str] = []
+    monkeypatch.setattr(
+        "the_oracle.vulkan_setup.vulkan_setup_needed",
+        lambda: ["audiocpp_cli is not built"],
+    )
 
     def ok_result(progress=None, cancel=None, **kwargs):
         if progress:
-            progress("stub ok")
+            progress("stub streamed line")
         setup_calls.append("ran")
-        return type("R", (), {"ok": True, "messages": ["stub setup done"], "error": ""})()
+        # The messages list mirrors the streamed lines; it must NOT be
+        # re-printed on top of the progress callback (that doubled output).
+        return type("R", (), {"ok": True, "messages": ["stub duplicate"], "error": ""})()
 
     monkeypatch.setattr("the_oracle.vulkan_setup.run_vulkan_setup", ok_result)
 
@@ -281,7 +287,60 @@ def test_handle_render_auto_runs_vulkan_setup(
     )
     assert handle_render(args) == 0
     assert setup_calls == ["ran"], "auto-setup should run before a Vulkan render"
-    assert "stub setup done" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert err.count("stub streamed line") == 1, "setup output must not be doubled"
+    assert "stub duplicate" not in err, "the messages list must not be re-printed"
+    assert "Vulkan backend ready." in err
+
+
+def test_handle_render_ready_when_vulkan_already_configured(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    """A configured Vulkan backend renders with a single 'ready' line -- no
+    no-op setup round-trip and no per-line output."""
+    from the_oracle.cli import build_parser, handle_render
+
+    class _FakePipeline:
+        def __init__(self) -> None:
+            self.output = tmp_path / "out.flac"
+
+        def prepare_plan(self, *args, **kwargs):
+            class _Plan:
+                output_dir = str(tmp_path)
+
+            return _Plan()
+
+        def render(self, plan, settings):
+            return self.output
+
+    monkeypatch.setattr("the_oracle.cli.OraclePipeline", lambda: _FakePipeline())
+    monkeypatch.setattr("the_oracle.vulkan_setup.vulkan_setup_needed", lambda: [])
+    setup_calls: list[str] = []
+
+    def fail_if_called(**kwargs):
+        setup_calls.append("setup")
+        raise AssertionError("no setup needed when prerequisites are present")
+
+    monkeypatch.setattr("the_oracle.vulkan_setup.run_vulkan_setup", fail_if_called)
+
+    args = build_parser().parse_args(
+        [
+            "render",
+            "--input",
+            "in.txt",
+            "--outdir",
+            str(tmp_path / "out"),
+            "--speakerA-ref",
+            "a.wav",
+            "--speakerB-ref",
+            "b.wav",
+            "--inference-backend",
+            "vulkan",
+        ]
+    )
+    assert handle_render(args) == 0
+    assert setup_calls == []
+    assert "Vulkan backend ready." in capsys.readouterr().err
 
 
 def test_handle_render_no_audio_cpp_setup_skips_auto_setup(

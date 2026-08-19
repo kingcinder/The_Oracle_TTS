@@ -728,6 +728,39 @@ def test_synthesize_tasks_batched_groups_and_isolates_failures(tmp_path: Path, m
     assert len(stem_names) == 3
 
 
+def test_synthesize_tasks_batched_propagates_rdna1_failure(tmp_path: Path, monkeypatch) -> None:
+    """The RDNA1 device-lost limitation (and missing binary/model) is
+    deterministic: every remaining batch fails the same way, so
+    synthesize_tasks_batched must propagate the actionable error instead of
+    degrading it into a generic partial-failure row list."""
+
+    class _RDNA1Engine(_BatchStubEngine):
+        def synthesize_batch(self, entries, on_request_complete=None):
+            self.batch_sizes.append(len(entries))
+            raise RDNA1VulkanError(
+                "RDNA1 device-lost limitation; re-run with --inference-backend pytorch"
+            )
+
+    monkeypatch.setenv("ORACLE_AUDIOCPP_MAX_BATCH", "2")
+    project_cache = ProjectCache(tmp_path / "project")
+    task = SynthesisTask(
+        utterance_index=1,
+        source_index=1,
+        speaker="A",
+        text="Probe line with unique words for hashing.",
+        reference_path=tmp_path / "ref.wav",
+        reference_audio_hash="refhash",
+        voice_settings=VoiceSettings(),
+        model_variant="standard",
+        device_mode="cpu",
+        export_stems=False,
+        inference_backend="vulkan",
+    )
+
+    with pytest.raises(RDNA1VulkanError, match="inference-backend pytorch"):
+        synthesize_tasks_batched([task], _RDNA1Engine(), {}, project_cache)
+
+
 def test_synthesize_tasks_batched_forwards_request_completion(tmp_path: Path, monkeypatch) -> None:
     """The pipeline maps each group-local request index back to the task's
     utterance_index and forwards it to on_request_complete as it lands."""

@@ -8,8 +8,9 @@ from pathlib import Path
 
 from the_oracle import __version__
 from the_oracle.models.project import VoiceSettings
-from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
+from the_oracle.pipeline import NoAudioToAssembleError, OraclePipeline, PartialRenderError, RenderSettings, SpeakerSettings
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
+from the_oracle.tts_engines.vulkan_backend import AudioCppUnavailableError, RDNA1VulkanError
 from the_oracle.utils.logging import configure_logging
 from the_oracle.voice_catalog import default_voice_choices
 
@@ -220,20 +221,35 @@ def handle_render(args: argparse.Namespace) -> int:
         # Chatterbox model when missing, then set the env vars for this process
         # so the existing engine path just works. --no-audio-cpp-setup keeps the
         # old fail-fast behavior (the engine's ensure_model_ready still guards).
-        from the_oracle.vulkan_setup import run_vulkan_setup
+        from the_oracle.vulkan_setup import run_vulkan_setup, vulkan_setup_needed
 
         def _progress(line: str) -> None:
             print(f"  [vulkan setup] {line}", file=sys.stderr)
 
-        print("Vulkan backend selected: checking/installing prerequisites...", file=sys.stderr)
-        result = run_vulkan_setup(progress=_progress)
-        if not result.ok:
-            raise SystemExit(f"Vulkan backend auto-setup failed: {result.error}")
-        for msg in result.messages:
-            print(f"  [vulkan setup] {msg}", file=sys.stderr)
+        # When everything is already in place this prints a single "ready"
+        # line instead of a no-op setup round-trip. run_vulkan_setup's
+        # progress callback already streams every script line, so the result's
+        # messages list must NOT be re-printed (that doubled the output).
+        if vulkan_setup_needed():
+            print("Vulkan backend selected: installing missing prerequisites...", file=sys.stderr)
+            result = run_vulkan_setup(progress=_progress)
+            if not result.ok:
+                raise SystemExit(f"Vulkan backend auto-setup failed: {result.error}")
+        print("Vulkan backend ready.", file=sys.stderr)
 
     configure_logging(Path(plan.output_dir) / "logs" / "cli.log")
-    output_path = pipeline.render(plan, settings)
+    try:
+        output_path = pipeline.render(plan, settings)
+    except PartialRenderError as exc:
+        # The per-chunk failures are in the log; tell the user which rows
+        # failed so they can inspect rather than staring at a traceback.
+        rows = ", ".join(str(index) for index in exc.failed_rows)
+        raise SystemExit(f"{exc} Failed rows: {rows}.")
+    except (AudioCppUnavailableError, RDNA1VulkanError, NoAudioToAssembleError) as exc:
+        # These messages already say how to recover (download/build the model,
+        # fall back to --inference-backend pytorch, or fix the input); surface
+        # them cleanly instead of a raw traceback.
+        raise SystemExit(str(exc))
     if args.srt:
         from the_oracle.audio.export_srt import write_srt
 
@@ -247,10 +263,10 @@ def handle_render(args: argparse.Namespace) -> int:
 def handle_setup_vulkan() -> int:
     """One-shot automatic setup for the Vulkan (GPU) backend.
 
-    Builds audiocpp_cli and downloads the Chatterbox model when missing, then
-    prints the ORACLE_AUDIOCPP_CLI / ORACLE_AUDIOCPP_MODEL values the session
-    now uses (env vars are set in-process). Exit code 0 on success, 1 with a
-    clear error otherwise.
+    Builds audiocpp_cli and downloads the Chatterbox model when missing and
+    applies them to the session. The CLI render path and the GUI apply the
+    same paths automatically, so no shell exports are needed. Exit code 0 on
+    success, 1 with a clear error otherwise.
     """
     from the_oracle.vulkan_setup import run_vulkan_setup
 
@@ -259,17 +275,18 @@ def handle_setup_vulkan() -> int:
 
     print("Vulkan backend setup: checking prerequisites...", file=sys.stderr)
     result = run_vulkan_setup(progress=_progress)
-    for msg in result.messages:
-        print(f"  [vulkan setup] {msg}", file=sys.stderr)
     if not result.ok:
         print(f"Vulkan backend setup failed: {result.error}", file=sys.stderr)
         return 1
     print()
     print("Vulkan backend ready:")
     if result.binary:
-        print(f'    export ORACLE_AUDIOCPP_CLI="{result.binary}"')
+        print(f"    binary: {result.binary}")
     if result.model:
-        print(f'    export ORACLE_AUDIOCPP_MODEL="{result.model}"')
+        print(f"    model:  {result.model}")
+    print()
+    print("The Oracle applies these automatically for --inference-backend vulkan")
+    print("renders and in the GUI -- no shell exports are required.")
     return 0
 
 
