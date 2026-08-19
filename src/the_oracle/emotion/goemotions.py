@@ -60,6 +60,36 @@ class GoEmotionsClassifier:
             except Exception:
                 pass
 
+        return self._classify_lexical(text)
+
+    def classify_batch(self, texts: list[str]) -> list[EmotionResult]:
+        """Classify many utterances with a single model call when possible.
+
+        The transformers pipeline batches tokenization and inference across the
+        whole list (one forward pass instead of one per utterance), which is
+        the dominant win for long documents. Any item the model rejects (or a
+        wholesale model failure) falls back to the deterministic lexical path,
+        so results are never lost and the fallback is exercised per item.
+        """
+        if self._pipeline is None:
+            return [self._classify_lexical(text) for text in texts]
+        try:
+            # top_k=1 makes the pipeline return one list per input text, so
+            # the outer list aligns 1:1 with ``texts``.
+            predictions = self._pipeline(list(texts), truncation=True, batch_size=64)
+        except Exception:
+            return [self._classify_lexical(text) for text in texts]
+        results: list[EmotionResult] = []
+        for text, item in zip(texts, predictions, strict=True):
+            try:
+                prediction = item[0]
+                results.append(EmotionResult(prediction["label"], float(prediction["score"])))
+            except Exception:
+                results.append(self._classify_lexical(text))
+        return results
+
+    @staticmethod
+    def _classify_lexical(text: str) -> EmotionResult:
         lowered = text.lower()
         # Whole-word matching so short lexicon tokens like "mad" don't fire on
         # substrings of unrelated words ("made", "madam"); inflected and

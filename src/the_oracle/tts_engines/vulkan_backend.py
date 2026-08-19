@@ -245,12 +245,15 @@ class AudioCppVulkanEngine:
         threads: int | None = None,
         timeout: int | None = None,
         batch_limit: int | None = None,
+        seed: int | None = None,
     ) -> None:
         if variant == "turbo":
             raise ValueError(
                 "The turbo Chatterbox variant is not available on the Vulkan backend. "
                 "Use inference_backend=pytorch for turbo, or standard/multilingual on Vulkan."
             )
+        if seed is not None and seed < 0:
+            raise ValueError(f"seed must be a non-negative integer, got {seed!r}.")
         # The engine-level guard treats batch_limit as a hard contract, so a
         # direct caller (e.g. a future server mode) cannot pass a value that
         # would make every non-empty batch fail (batch_limit < 1 means even a
@@ -270,6 +273,7 @@ class AudioCppVulkanEngine:
         self._threads_override = threads
         self._timeout_override = timeout
         self._batch_limit_override = batch_limit
+        self._seed_override = seed
         self._binary: Path | None = None
         self._model: Path | None = None
         self._last_sample_rate: int | None = None
@@ -306,6 +310,16 @@ class AudioCppVulkanEngine:
         if self._batch_limit_override is not None:
             return self._batch_limit_override
         return _vulkan_batch_max_requests()
+
+    @property
+    def seed(self) -> int | None:
+        """Deterministic sampling seed passed to audio.cpp's ``--seed``: the
+        constructor arg (fed by the CLI ``--seed`` flag / manifest field) wins
+        over the ``ORACLE_AUDIOCPP_SEED`` env var; None lets audio.cpp use its
+        default (a fresh random seed per process)."""
+        if self._seed_override is not None:
+            return self._seed_override
+        return _env_int("ORACLE_AUDIOCPP_SEED")
 
     @property
     def binary(self) -> Path | None:
@@ -463,6 +477,9 @@ class AudioCppVulkanEngine:
         threads = self.threads
         if threads is not None:
             command += ["--threads", str(threads)]
+        seed = self.seed
+        if seed is not None:
+            command += ["--seed", str(seed)]
         command += self._tuning_flags(settings)
         command += [
             "--text",
@@ -540,6 +557,9 @@ class AudioCppVulkanEngine:
         threads = self.threads
         if threads is not None:
             command += ["--threads", str(threads)]
+        seed = self.seed
+        if seed is not None:
+            command += ["--seed", str(seed)]
         command += ["--request-sequence", str(sequence_path), "--out-dir", str(out_dir)]
         return command
 

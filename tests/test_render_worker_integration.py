@@ -141,7 +141,7 @@ def test_cpu_standard_uses_worker_pool(tmp_path: Path) -> None:
     plan = _build_render_plan(tmp_path, render_settings, utterance_count=pipeline_module._MIN_TASKS_FOR_POOL)
     called = {"count": 0}
 
-    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
+    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False, seed=None):
         called["count"] += 1
         return _fake_results(tasks, project_dir), "parallel"
 
@@ -158,7 +158,7 @@ def test_cpu_standard_small_task_stays_inline(tmp_path: Path) -> None:
     plan = _build_render_plan(tmp_path, render_settings, utterance_count=1)
     called = {"pool": 0, "seq": 0}
 
-    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
+    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False, seed=None):
         called["pool"] += 1
         return _fake_results(tasks, project_dir), "parallel"
 
@@ -284,7 +284,7 @@ def test_render_invokes_worker_pool(tmp_path: Path) -> None:
     plan = _build_render_plan(tmp_path, render_settings, utterance_count=pipeline_module._MIN_TASKS_FOR_POOL)
     called = {"pool": 0}
 
-    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
+    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False, seed=None):
         called["pool"] += 1
         plan.metadata["synthesis_mode"] = "parallel"
         raise RuntimeError("stop after worker pool")
@@ -314,7 +314,7 @@ def test_render_worker_pool_failure_triggers_sequential(tmp_path: Path) -> None:
         plan.metadata["synthesis_mode"] = "sequential"
         raise RuntimeError("stop after sequential")
 
-    def pool_override(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
+    def pool_override(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False, seed=None):
         called["pool"] += 1
         return fake_seq(tasks, engine_cls, variant, device, project_dir)
 
@@ -823,7 +823,7 @@ def test_render_raises_on_partial_failure(tmp_path: Path) -> None:
     def fake_seq(tasks, engine_cls, variant, device, project_dir):
         return [failing_result]
 
-    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False):
+    def fake_pool(tasks, engine_cls, variant, device, project_dir, worker_count=None, stream=False, seed=None):
         return iter([failing_result]), "parallel"
 
     with (
