@@ -18,10 +18,10 @@ class SpeakerAttributor:
     def __init__(self) -> None:
         self._impl = DualSpeakerAttributor()
 
-    def assign(self, utterances: list[Utterance]):
+    def assign(self, utterances: list[Utterance], *, monologue: bool = False):
         texts = [utterance.original_text for utterance in utterances]
         explicit = [utterance.explicit_speaker for utterance in utterances]
-        decisions = self._impl.assign(texts, explicit_speakers=explicit)
+        decisions = self._impl.assign(texts, explicit_speakers=explicit, monologue=monologue)
         detected_names: dict[str, str] = {}
         for utterance, decision in zip(utterances, decisions, strict=True):
             utterance.speaker = decision.speaker
@@ -31,8 +31,8 @@ class SpeakerAttributor:
                 detected_names[decision.speaker] = utterance.explicit_speaker
         return SpeakerAttributionResult(utterances=utterances, detected_names=detected_names)
 
-    def attribute(self, utterances: list[Utterance]):
-        return self.assign(utterances)
+    def attribute(self, utterances: list[Utterance], *, monologue: bool = False):
+        return self.assign(utterances, monologue=monologue)
 
 
 def assign_speakers(utterances: list[Utterance]):

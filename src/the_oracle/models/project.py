@@ -171,6 +171,7 @@ class RenderPlan:
     metadata: dict[str, str] = field(default_factory=dict)
     utterances: list[Utterance] = field(default_factory=list)
     voice_profiles: dict[str, VoiceProfile] = field(default_factory=dict)
+    detected_names: dict[str, str] = field(default_factory=dict)
     hashes: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -184,6 +185,7 @@ class RenderPlan:
             "metadata": self.metadata,
             "utterances": [utterance.to_dict() for utterance in self.utterances],
             "voice_profiles": {speaker: profile.to_dict() for speaker, profile in self.voice_profiles.items()},
+            "detected_names": self.detected_names,
             "hashes": self.hashes,
         }
 
@@ -199,6 +201,7 @@ class RenderPlan:
             metadata=payload.get("metadata", {}),
             utterances=[Utterance.from_dict(item) for item in payload.get("utterances", [])],
             voice_profiles={speaker: VoiceProfile.from_dict(item) for speaker, item in payload.get("voice_profiles", {}).items()},
+            detected_names=payload.get("detected_names", {}),
             hashes=payload.get("hashes", {}),
         )
 

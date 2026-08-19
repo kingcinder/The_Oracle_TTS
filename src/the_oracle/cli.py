@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -58,6 +59,21 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--outdir", help="Output project directory.")
     render.add_argument("--speakerA-ref", dest="speaker_a_ref", help="Reference audio for Speaker A.")
     render.add_argument("--speakerB-ref", dest="speaker_b_ref", help="Reference audio for Speaker B.")
+    render.add_argument(
+        "--speaker-ref",
+        dest="speaker_refs",
+        action="append",
+        default=[],
+        metavar="KEY=PATH",
+        help="Reference audio for an additional character voice, e.g. --speaker-ref C=/path/ref.wav. "
+        "Repeatable for up to 24 voices. Characters without a configured reference "
+        "fall back to the first provided voice.",
+    )
+    render.add_argument(
+        "--monologue",
+        action="store_true",
+        help="Render the whole input as a single narrator voice (Speaker A), ignoring per-line attribution.",
+    )
     render.add_argument("--model-variant", choices=["standard", "multilingual", "turbo"], default="standard")
     render.add_argument("--device-mode", choices=["cpu", "vulkan"], default="cpu")
     render.add_argument("--no-audio-cpp-setup", action="store_true", help="Skip the automatic audio.cpp build/model download before a Vulkan render; fail fast instead.")
@@ -203,6 +219,7 @@ def handle_render(args: argparse.Namespace) -> int:
             audio_cpp_timeout=args.audio_cpp_timeout,
             audio_cpp_max_batch=args.audio_cpp_max_batch,
             target_wpm=args.target_wpm,
+            monologue=args.monologue,
             metadata={"title": args.title} if args.title else {},
         )
         voice_settings = _voice_settings_from_args(args)
@@ -210,6 +227,22 @@ def handle_render(args: argparse.Namespace) -> int:
             "A": SpeakerSettings(reference_path=speaker_a_ref, voice_settings=voice_settings),
             "B": SpeakerSettings(reference_path=speaker_b_ref, voice_settings=voice_settings),
         }
+        for raw in args.speaker_refs:
+            key, sep, path = raw.partition("=")
+            if not sep or not key.strip() or not path.strip():
+                raise SystemExit(
+                    f"Invalid --speaker-ref {raw!r}: expected KEY=PATH, e.g. --speaker-ref C=/path/ref.wav"
+                )
+            key = key.strip().upper()
+            if key in ("A", "B"):
+                raise SystemExit(
+                    f"--speaker-ref {key} duplicates --speakerA-ref/--speakerB-ref; use those flags for A and B."
+                )
+            if not re.fullmatch(r"[A-X]", key):
+                raise SystemExit(
+                    f"Invalid --speaker-ref key {key!r}: voices are A..X (up to 24)."
+                )
+            speakers[key] = SpeakerSettings(reference_path=path.strip(), voice_settings=voice_settings)
 
     pipeline = OraclePipeline()
 

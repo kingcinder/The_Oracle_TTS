@@ -228,3 +228,62 @@ def test_version_flag_prints_version_and_exits(capsys: pytest.CaptureFixture[str
     assert out == f"the-oracle {__version__}"
 
 
+def test_monologue_flag_wires_into_render_settings(tmp_path: Path, monkeypatch) -> None:
+    """`--monologue` reaches RenderSettings.monologue so the whole input renders
+    as a single narrator voice (Speaker A)."""
+    fake = _FakePipeline(str(tmp_path / "output"))
+    monkeypatch.setattr("the_oracle.cli.OraclePipeline", lambda: fake)
+    args = _render_args("--monologue", outdir=str(tmp_path / "output"))
+
+    assert handle_render(args) == 0
+    assert fake.settings.monologue is True
+
+    # Default: attribution stays on.
+    fake2 = _FakePipeline(str(tmp_path / "output2"))
+    monkeypatch.setattr("the_oracle.cli.OraclePipeline", lambda: fake2)
+    args2 = _render_args(outdir=str(tmp_path / "output2"))
+    assert handle_render(args2) == 0
+    assert fake2.settings.monologue is False
+
+
+def test_speaker_ref_extra_voices_wire_into_speaker_settings(tmp_path: Path, monkeypatch) -> None:
+    """`--speaker-ref KEY=PATH` (repeatable) adds character voices C..X for an
+    audiobook cast, and the pipeline receives them as speaker settings."""
+    captured: dict[str, object] = {}
+
+    class _CapturePipeline(_FakePipeline):
+        def prepare_plan(self, input_path, output_dir, speaker_settings, settings):
+            captured["speakers"] = speaker_settings
+            captured["settings"] = settings
+            return _FakePlan(str(output_dir))
+
+    monkeypatch.setattr("the_oracle.cli.OraclePipeline", lambda: _CapturePipeline(str(tmp_path / "output")))
+    args = _render_args(
+        "--speaker-ref", "C=/tmp/c.wav",
+        "--speaker-ref", "D=/tmp/d.wav",
+        outdir=str(tmp_path / "output"),
+    )
+
+    assert handle_render(args) == 0
+    speakers = captured["speakers"]
+    assert isinstance(speakers, dict)
+    assert set(speakers) == {"A", "B", "C", "D"}
+    assert speakers["C"].reference_path == "/tmp/c.wav"
+    assert speakers["D"].reference_path == "/tmp/d.wav"
+    assert speakers["A"].reference_path == "a.wav"
+
+
+def test_speaker_ref_validates_keys_and_duplicates(monkeypatch) -> None:
+    """Bad --speaker-ref entries fail fast with a clear message: duplicate A/B,
+    invalid characters, and missing KEY=PATH separators."""
+    with patch("the_oracle.cli.OraclePipeline"):
+        with pytest.raises(SystemExit, match="duplicates --speakerA-ref/--speakerB-ref"):
+            handle_render(_render_args("--speaker-ref", "A=/tmp/a.wav"))
+
+    with patch("the_oracle.cli.OraclePipeline"):
+        with pytest.raises(SystemExit, match="voices are A..X"):
+            handle_render(_render_args("--speaker-ref", "Z=/tmp/z.wav"))
+
+    with patch("the_oracle.cli.OraclePipeline"):
+        with pytest.raises(SystemExit, match="expected KEY=PATH"):
+            handle_render(_render_args("--speaker-ref", "no-equals-here"))

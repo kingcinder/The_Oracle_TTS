@@ -104,3 +104,87 @@ def test_progress_dialog_shows_live_backend_panel(qt_app) -> None:
     dialog.reset()
     assert dialog.backend_label.text() == "Backend: ..."
     assert dialog.synth_label.text() == ""
+
+
+def test_progress_dialog_uses_time_weighted_fraction(qt_app) -> None:
+    """When the pipeline supplies a time-weighted fraction, the bar follows it
+    (even when the step math would disagree, e.g. one step of five that eats
+    most of the wall time during model load). Without a fraction, the bar
+    falls back to step math."""
+    dialog = RenderProgressDialog(title="Render")
+
+    # Model load: step 1 of 5, but 60% of the wall time — the fraction says 60%.
+    dialog.update_progress(
+        RenderProgress(
+            stage="Loading model",
+            detail="step",
+            current_step=1,
+            total_steps=5,
+            current_segment=1,
+            total_segments=5,
+            elapsed_seconds=30.0,
+            fraction=0.6,
+        )
+    )
+    assert dialog.progress_bar.value() == 60
+
+    # Same event without a fraction → step math (20%).
+    dialog.update_progress(
+        RenderProgress(
+            stage="Loading model",
+            detail="step",
+            current_step=1,
+            total_steps=5,
+            current_segment=1,
+            total_segments=5,
+            elapsed_seconds=30.0,
+        )
+    )
+    assert dialog.progress_bar.value() == 20
+
+    # Completion always pins the bar to 100.
+    dialog.update_progress(
+        RenderProgress(
+            stage="Complete",
+            detail="done",
+            current_step=5,
+            total_steps=5,
+            current_segment=5,
+            total_segments=5,
+            elapsed_seconds=60.0,
+            fraction=1.0,
+        )
+    )
+    assert dialog.progress_bar.value() == 100
+
+
+def test_time_weighted_progress_advances_and_pins_completion() -> None:
+    """Unit test for the pipeline's `_time_weighted_progress`: the fraction
+    rises smoothly with elapsed time (through a 20s model load that is only
+    one of many steps), never exceeds 99% before completion, and Complete pins
+    to 1.0 with a zero ETA. The ETA appears only once the EWMA is measured
+    and enough segments have landed."""
+    from the_oracle.pipeline import _time_weighted_progress
+
+    state = {"backend": "vulkan", "segments_total": 5, "segments_done": 0, "segment_avg": None}
+
+    # During model load (30s elapsed, 0 of 5 segments done): the bar should
+    # already be partway up instead of stuck at step 1 of N at ~12%.
+    fraction, eta = _time_weighted_progress(state, elapsed=30.0, stage="Loading model")
+    assert 0.2 < fraction < 0.9
+    assert eta is None  # no measurement yet → no ETA
+
+    # After the first segment lands, the fraction keeps climbing.
+    state["segments_done"] = 1
+    fraction2, _ = _time_weighted_progress(state, elapsed=40.0, stage="Rendering segment")
+    assert fraction2 > fraction
+
+    # With a measured average and enough completed segments, an ETA appears.
+    state["segment_avg"] = 3.0
+    state["segments_done"] = 3
+    _fraction3, eta3 = _time_weighted_progress(state, elapsed=50.0, stage="Rendering segment")
+    assert eta3 is not None and eta3 > 0
+
+    # Completion pins to 1.0 / 0 ETA regardless of state.
+    fraction4, eta4 = _time_weighted_progress(state, elapsed=50.0, stage="Complete")
+    assert fraction4 == 1.0 and eta4 == 0.0
