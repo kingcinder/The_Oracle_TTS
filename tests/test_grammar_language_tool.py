@@ -16,10 +16,12 @@ from the_oracle.text_repair.grammar import GrammarCorrector
 
 @pytest.fixture(autouse=True)
 def _isolate_language_tool_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fresh abandoned-flag and timeout per test so the process-level fallback
-    never leaks between tests (and the default 25s timeout is never hit)."""
+    """Fresh abandoned-flag, timeout, and LTP_JAR_DIR_PATH per test so the
+    process-level fallback and the snapshot-reuse env var never leak between
+    tests (and the default 25s timeout is never hit)."""
     monkeypatch.setattr(grammar, "_LANGUAGE_TOOL_ABANDONED", threading.Event())
     monkeypatch.setattr(grammar, "LANGUAGE_TOOL_LOAD_TIMEOUT_SECONDS", 25.0)
+    monkeypatch.delenv("LTP_JAR_DIR_PATH", raising=False)
 
 
 def _fake_tool() -> object:
@@ -160,6 +162,84 @@ def test_not_cached_skips_download_wait(monkeypatch: pytest.MonkeyPatch) -> None
     assert elapsed < 1.0, "render must not wait on the missing download"
     assert calls == [], "download must run in the helper process, not inline"
     assert spawned and "download_lt" in " ".join(spawned[0])
+
+
+def test_usable_snapshot_dir_finds_complete_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fully extracted snapshot (server jar present) is reported as usable,
+    while a partial/incomplete one is skipped."""
+    import tempfile
+    import pathlib
+
+    fake_cache = pathlib.Path(tempfile.mkdtemp(prefix="oracle_lt_cache_"))
+    complete = fake_cache / "LanguageTool-6.9-SNAPSHOT"
+    (complete / "languagetool-server.jar").parent.mkdir(parents=True)
+    (complete / "languagetool-server.jar").touch()
+    partial = fake_cache / "LanguageTool-6.7-SNAPSHOT"
+    partial.mkdir()
+
+    monkeypatch.setattr(
+        "language_tool_python.download_lt.get_language_tool_download_path",
+        lambda: str(fake_cache),
+    )
+
+    assert grammar._usable_snapshot_dir() == str(complete)
+
+
+def test_usable_snapshot_dir_none_when_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No usable snapshot -> None, so the caller falls back to warming."""
+    import tempfile
+    import pathlib
+
+    fake_cache = pathlib.Path(tempfile.mkdtemp(prefix="oracle_lt_cache_"))
+    stub = fake_cache / "LanguageTool-6.9-SNAPSHOT"
+    stub.mkdir()  # extracted dir exists but the server jar is missing
+
+    monkeypatch.setattr(
+        "language_tool_python.download_lt.get_language_tool_download_path",
+        lambda: str(fake_cache),
+    )
+
+    assert grammar._usable_snapshot_dir() is None
+
+
+def test_stale_version_mismatch_reuses_snapshot_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the version probe fails but a complete snapshot exists on disk, the
+    corrector points the library at it via LTP_JAR_DIR_PATH instead of
+    spawning another download -- so the real tool loads and the perpetual
+    re-download (stale pinned version) stops."""
+    import language_tool_python
+
+    fake = _fake_tool()
+    calls: list[str] = []
+    monkeypatch.setattr(
+        language_tool_python,
+        "LanguageTool",
+        lambda _lang: calls.append("LanguageTool") or fake,
+    )
+    monkeypatch.setattr(grammar, "_language_tool_download_ready", lambda: False)
+    monkeypatch.setattr(
+        grammar,
+        "_usable_snapshot_dir",
+        lambda: "/fake/cache/LanguageTool-6.9-SNAPSHOT",
+    )
+
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(
+        grammar.subprocess,
+        "Popen",
+        lambda cmd, **kwargs: spawned.append(cmd) or object(),
+    )
+
+    corrector = GrammarCorrector()
+
+    assert corrector._tool is fake, "real tool should load from the snapshot"
+    assert os.environ.get("LTP_JAR_DIR_PATH") == "/fake/cache/LanguageTool-6.9-SNAPSHOT"
+    assert calls == ["LanguageTool"]
+    assert spawned == [], "no download helper needed when a snapshot exists"
+
+    os.environ.pop("LTP_JAR_DIR_PATH", None)
 
 
 def test_warm_skips_when_download_already_running(monkeypatch: pytest.MonkeyPatch) -> None:

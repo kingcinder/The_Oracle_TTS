@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 # First use of language_tool_python downloads the LanguageTool server
 # (hundreds of MB). On a slow link that would otherwise block every render for
@@ -64,6 +65,33 @@ def _language_tool_download_ready() -> bool:
 # A stale lock (from a helper that was SIGKILLed) older than this is reaped
 # so future renders can retry the download instead of skipping forever.
 _WARM_LOCK_STALE_SECONDS = 12 * 60 * 60
+
+
+def _usable_snapshot_dir() -> str | None:
+    """Find a complete, already-downloaded LanguageTool snapshot directory.
+
+    language_tool_python pins an expected snapshot version (e.g.
+    6.7-SNAPSHOT) that can go stale relative to what the server actually
+    serves, so the zip it downloads extracts as a different version and its
+    own "is it cached?" check never matches -- every load would re-download
+    hundreds of MB. When that happens, point the library at the on-disk
+    snapshot via LTP_JAR_DIR_PATH instead of re-downloading.
+
+    Returns None when nothing usable exists (caller should warm/download).
+    """
+    try:
+        from language_tool_python import download_lt as lt_download
+    except Exception:
+        return None
+    try:
+        folder = lt_download.get_language_tool_download_path()
+        for path in lt_download.find_existing_language_tool_downloads(folder):
+            root = Path(path)
+            if root.name.endswith("-SNAPSHOT") and (root / "languagetool-server.jar").is_file():
+                return str(root)
+    except Exception:
+        return None
+    return None
 
 
 def _warm_language_tool_download() -> None:
@@ -152,9 +180,17 @@ class GrammarCorrector:
         # waiting for hundreds of MB on a slow link. Fall back to the local
         # fixes now and warm the cache in the background for a later run.
         if not _language_tool_download_ready():
-            _warm_language_tool_download()
-            _LANGUAGE_TOOL_ABANDONED.set()
-            return None
+            # The library's pinned snapshot version can be stale vs. what the
+            # server actually serves (see _usable_snapshot_dir), which would
+            # make it re-download on every render. If a complete snapshot is
+            # already on disk, reuse it via LTP_JAR_DIR_PATH instead.
+            snapshot_dir = _usable_snapshot_dir()
+            if snapshot_dir is not None:
+                os.environ.setdefault("LTP_JAR_DIR_PATH", snapshot_dir)
+            else:
+                _warm_language_tool_download()
+                _LANGUAGE_TOOL_ABANDONED.set()
+                return None
 
         result: dict[str, object] = {}
 
