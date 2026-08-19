@@ -6,10 +6,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from the_oracle import __version__
 from the_oracle.models.project import VoiceSettings
 from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
 from the_oracle.utils.logging import configure_logging
+from the_oracle.voice_catalog import default_voice_choices
 
 
 def _nonnegative_int(value: str) -> int:
@@ -32,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="the-oracle",
         description="The Oracle renders two-speaker dialogue into FLAC with Chatterbox.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Show the installed version and exit.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -132,16 +140,22 @@ def _voice_settings_from_args(args: argparse.Namespace) -> VoiceSettings:
 
 
 def handle_render(args: argparse.Namespace) -> int:
-    pipeline = OraclePipeline()
     if args.project:
         saved = load_project_manifest(args.project)
         plan = saved.plan
         settings = saved.render_settings
         speakers = saved.speaker_settings
     else:
-        missing = [name for name, value in {"--input": args.input, "--outdir": args.outdir, "--speakerA-ref": args.speaker_a_ref, "--speakerB-ref": args.speaker_b_ref}.items() if not value]
+        # Validate inputs before constructing the pipeline: OraclePipeline()
+        # eagerly spawns the LanguageTool download (hundreds of MB) and waits
+        # on it, so a missing-flag mistake should fail fast instead of after an
+        # expensive load.
+        missing = [name for name, value in {"--input": args.input, "--outdir": args.outdir}.items() if not value]
         if missing:
-            raise SystemExit(f"render requires either --project or all direct render inputs. Missing: {', '.join(missing)}")
+            raise SystemExit(
+                "render requires either --project, or --input and --outdir. "
+                f"Missing: {', '.join(missing)}"
+            )
         if args.inference_backend != "vulkan" and (
             args.audio_cpp_device is not None
             or args.audio_cpp_threads is not None
@@ -159,6 +173,22 @@ def handle_render(args: argparse.Namespace) -> int:
                 "Use --model-variant standard (or multilingual) with Vulkan, or "
                 "--inference-backend pytorch for turbo."
             )
+
+        # Speaker references default to the repo-local Seashells clips (the
+        # GUI's "Default Voices" list) when the flags are omitted.
+        speaker_a_ref = args.speaker_a_ref
+        speaker_b_ref = args.speaker_b_ref
+        if not speaker_a_ref or not speaker_b_ref:
+            defaults = default_voice_choices(Path(__file__).resolve().parents[2])
+            if defaults:
+                speaker_a_ref = speaker_a_ref or defaults[0].path
+                speaker_b_ref = speaker_b_ref or (defaults[1].path if len(defaults) > 1 else defaults[0].path)
+        if not speaker_a_ref or not speaker_b_ref:
+            raise SystemExit(
+                "render requires either --project, or --speakerA-ref/--speakerB-ref. "
+                "No default Seashells voices were found to fall back on."
+            )
+
         settings = RenderSettings(
             correction_mode=args.correction_mode,
             model_variant=args.model_variant,
@@ -176,9 +206,13 @@ def handle_render(args: argparse.Namespace) -> int:
         )
         voice_settings = _voice_settings_from_args(args)
         speakers = {
-            "A": SpeakerSettings(reference_path=args.speaker_a_ref, voice_settings=voice_settings),
-            "B": SpeakerSettings(reference_path=args.speaker_b_ref, voice_settings=voice_settings),
+            "A": SpeakerSettings(reference_path=speaker_a_ref, voice_settings=voice_settings),
+            "B": SpeakerSettings(reference_path=speaker_b_ref, voice_settings=voice_settings),
         }
+
+    pipeline = OraclePipeline()
+
+    if not args.project:
         plan = pipeline.prepare_plan(args.input, args.outdir, speakers, settings)
 
     if settings.inference_backend == "vulkan" and not args.no_audio_cpp_setup:

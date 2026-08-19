@@ -45,7 +45,6 @@ codex_round_two_chatterbox_prompt.txt
 codex_round_two_checklist.md
 codex_round_two_prompt.txt
 make_alpha_release_bundle.sh
-=1.24,
 NEXT_CODEX_PROMPT.txt
 
 # Runtime directories - contents ignored but directories kept for structure

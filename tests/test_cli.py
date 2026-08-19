@@ -149,3 +149,82 @@ def test_audio_cpp_flags_wire_into_render_settings(tmp_path: Path, monkeypatch) 
     assert fake.settings.audio_cpp_max_batch == 16
 
 
+def test_render_fails_fast_without_input_or_outdir(monkeypatch) -> None:
+    """Validation must run before OraclePipeline() is constructed.
+
+    The real pipeline eagerly spawns the LanguageTool download (hundreds of MB)
+    and waits on it, so a missing-flag mistake must fail before that load.
+    """
+    constructed: list[bool] = []
+
+    def fake_pipeline():
+        constructed.append(True)
+        raise AssertionError("pipeline must not be constructed before input validation")
+
+    monkeypatch.setattr("the_oracle.cli.OraclePipeline", fake_pipeline)
+    args = build_parser().parse_args(
+        ["render", "--speakerA-ref", "a.wav", "--speakerB-ref", "b.wav"]
+    )
+    with pytest.raises(SystemExit, match="--input"):
+        handle_render(args)
+    assert constructed == []
+
+
+def test_render_requires_speaker_refs_without_defaults(monkeypatch, tmp_path: Path) -> None:
+    """Without Seashells defaults and without speaker flags, fail with a clear message."""
+    monkeypatch.setattr("the_oracle.cli.default_voice_choices", lambda repo_root: [])
+    args = build_parser().parse_args(
+        ["render", "--input", "in.txt", "--outdir", str(tmp_path)]
+    )
+    with pytest.raises(SystemExit, match="--speakerA-ref"):
+        handle_render(args)
+
+
+def test_render_defaults_speaker_refs_to_seashells(monkeypatch, tmp_path: Path) -> None:
+    """Omitted speaker flags fall back to the repo-local default voices."""
+    from the_oracle.voice_catalog import VoiceChoice
+
+    captured: dict[str, dict] = {}
+
+    class _CapturePipeline:
+        def __init__(self) -> None:
+            self.output = tmp_path / "out.flac"
+
+        def prepare_plan(self, input_path, output_dir, speaker_settings, settings):
+            captured["speakers"] = speaker_settings
+
+            class _Plan:
+                output_dir = str(tmp_path)
+
+            return _Plan()
+
+        def render(self, plan, settings):
+            return self.output
+
+    monkeypatch.setattr(
+        "the_oracle.cli.default_voice_choices",
+        lambda repo_root: [VoiceChoice("A", "/tmp/a.wav"), VoiceChoice("B", "/tmp/b.wav")],
+    )
+    monkeypatch.setattr("the_oracle.cli.OraclePipeline", lambda: _CapturePipeline())
+
+    args = build_parser().parse_args(
+        ["render", "--input", "in.txt", "--outdir", str(tmp_path)]
+    )
+    assert handle_render(args) == 0
+    assert captured["speakers"]["A"].reference_path == "/tmp/a.wav"
+    assert captured["speakers"]["B"].reference_path == "/tmp/b.wav"
+
+
+def test_version_flag_prints_version_and_exits(capsys: pytest.CaptureFixture[str]) -> None:
+    """`--version` prints the installed version and exits 0 without requiring
+    a subcommand (the subparsers are required=True)."""
+    from the_oracle import __version__
+
+    with pytest.raises(SystemExit) as excinfo:
+        build_parser().parse_args(["--version"])
+
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out.strip()
+    assert out == f"the-oracle {__version__}"
+
+

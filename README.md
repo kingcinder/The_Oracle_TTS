@@ -127,6 +127,16 @@ Windows:
 
 ## CLI Usage
 
+`--speakerA-ref`/`--speakerB-ref` are optional: when omitted they default to the
+repo-local `Seashells/` clips (the GUI's "Default Voices"), so the simplest
+render is just:
+
+```bash
+the-oracle render --input Input/cli_short.txt --outdir Output
+```
+
+To override the voices explicitly:
+
 ```bash
 the-oracle render \
   --input Input/cli_short.txt \
@@ -155,11 +165,13 @@ the-oracle gui
 ```
 
 Text repair runs a local LanguageTool grammar pass when available. First use
-downloads the LanguageTool server (hundreds of MB); to avoid stalling a render
-on a slow link, that load is bounded to 25 seconds and falls back to the
-built-in local fixes — set `ORACLE_LANGUAGE_TOOL_TIMEOUT=<seconds>` to tune the
-bound (a machine with a cached/fast tool is unaffected; a long-lived session
-may finish the abandoned download and cache it for a later run).
+downloads the LanguageTool server (hundreds of MB). If the exact version isn't
+already cached, a render never waits on that download: it falls back to the
+built-in local fixes immediately and hands the download to a detached
+background helper, so a later run picks up the real tool once the cache is
+populated (a lock file keeps rapid renders from starting duplicate downloads).
+If the tool is cached but slow to start, the load is bounded to 25 seconds —
+set `ORACLE_LANGUAGE_TOOL_TIMEOUT=<seconds>` to tune that bound.
 
 ## Vulkan Backend (audio.cpp)
 
