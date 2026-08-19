@@ -26,6 +26,7 @@ def test_vulkan_backend_status_reports_missing_pieces(monkeypatch, tmp_path: Pat
     # the test is independent of what is actually on disk in this workspace
     # (e.g. a previously built audio.cpp/ binary under the repo root).
     monkeypatch.setattr(vulkan_backend, "find_audiocpp_binary", lambda: None)
+    monkeypatch.setattr(vulkan_backend, "find_audiocpp_model", lambda: None)
     monkeypatch.setattr(doctor, "_vulkaninfo_summary", lambda: (False, ""))
     monkeypatch.setattr(doctor, "_vulkan_patches_applied", lambda repo_root: None)
 
@@ -407,6 +408,32 @@ def test_human_report_lists_device_indexes(monkeypatch, capsys) -> None:
     assert "ORACLE_AUDIOCPP_DEVICE" in captured
 
 
+def test_vulkan_backend_status_ready_via_auto_detected_model(monkeypatch, tmp_path: Path) -> None:
+    """A repo-local model with no ORACLE_AUDIOCPP_MODEL counts as ready --
+    the exact case this machine hit (binary built, model downloaded, env
+    never exported)."""
+    doctor = _load_doctor()
+    binary = tmp_path / "audiocpp_cli"
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+    model = tmp_path / "audio.cpp" / "models" / "Chatterbox-GGUF" / "chatterbox-q8_0.gguf"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"stub-model")
+    monkeypatch.setenv("ORACLE_AUDIOCPP_CLI", str(binary))
+    monkeypatch.delenv("ORACLE_AUDIOCPP_MODEL", raising=False)
+    monkeypatch.setattr(vulkan_backend, "find_audiocpp_model", lambda: model)
+    monkeypatch.setattr(doctor, "_vulkaninfo_summary", lambda: (True, "deviceName = some gpu"))
+    monkeypatch.setattr(doctor, "_vulkan_patches_applied", lambda repo_root: True)
+
+    status = doctor._vulkan_backend_status(tmp_path)
+
+    assert status["ok"] is True
+    assert status["model_override_set"] is False
+    assert status["model_auto_found"] is True
+    assert status["model_path"] == str(model)
+    assert status["model_file_exists"] is True
+
+
 def test_vulkan_backend_status_reports_device_and_threads_env(monkeypatch, tmp_path: Path) -> None:
     doctor = _load_doctor()
     binary = tmp_path / "audiocpp_cli"
@@ -559,13 +586,15 @@ def test_human_report_lists_batch_cap(monkeypatch, capsys) -> None:
 
 
 def test_vulkan_backend_status_not_ready_without_model_env(monkeypatch, tmp_path: Path) -> None:
-    """A built binary with no ORACLE_AUDIOCPP_MODEL must not count as ready."""
+    """A built binary with no model anywhere (no env var, no repo-local
+    download) must not count as ready."""
     doctor = _load_doctor()
     binary = tmp_path / "audiocpp_cli"
     binary.write_text("#!/bin/sh\nexit 0\n")
     binary.chmod(0o755)
     monkeypatch.setenv("ORACLE_AUDIOCPP_CLI", str(binary))
     monkeypatch.delenv("ORACLE_AUDIOCPP_MODEL", raising=False)
+    monkeypatch.setattr(vulkan_backend, "find_audiocpp_model", lambda: None)
     monkeypatch.setattr(doctor, "_vulkaninfo_summary", lambda: (True, "deviceName = some gpu"))
     monkeypatch.setattr(doctor, "_vulkan_patches_applied", lambda repo_root: True)
 

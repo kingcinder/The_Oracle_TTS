@@ -584,7 +584,7 @@ def _vulkan_backend_status(repo_root: Path) -> dict[str, Any]:
     """
     _prepend_repo_src(repo_root)
     try:
-        from the_oracle.tts_engines.vulkan_backend import _vulkan_batch_max_requests, find_audiocpp_binary
+        from the_oracle.tts_engines.vulkan_backend import _vulkan_batch_max_requests, find_audiocpp_binary, find_audiocpp_model
     except Exception as exc:
         return {
             "ok": False,
@@ -595,6 +595,7 @@ def _vulkan_backend_status(repo_root: Path) -> dict[str, Any]:
             "model_override_set": False,
             "model_path": "",
             "model_file_exists": False,
+            "model_auto_found": False,
             "vulkan_device": False,
             "device_name": "",
             "rdna1_device": False,
@@ -609,11 +610,19 @@ def _vulkan_backend_status(repo_root: Path) -> dict[str, Any]:
 
     binary = find_audiocpp_binary()
     model_env = os.environ.get("ORACLE_AUDIOCPP_MODEL", "")
-    model_path = Path(model_env).expanduser() if model_env else None
-    # Mirrors AudioCppVulkanEngine.ensure_model_ready: the env var must point
-    # at an existing path (a single-file GGUF or a multi-file package target
-    # directory both qualify), not merely be non-empty.
+    model_override = Path(model_env).expanduser() if model_env else None
+    # Mirrors AudioCppVulkanEngine.ensure_model_ready: the env override always
+    # wins (a dangling value must surface, not silently fall through); without
+    # one, the repo-local install the download script writes to is
+    # auto-detected -- no export required.
+    if model_override is not None:
+        model_path = model_override
+        auto_model = None
+    else:
+        auto_model = find_audiocpp_model()
+        model_path = auto_model
     model_file_exists = bool(model_path and model_path.exists())
+    model_auto_found = auto_model is not None
     device_available, vulkaninfo_text = _vulkaninfo_summary()
     lowered = vulkaninfo_text.lower()
     rdna1_device = any(token in lowered for token in ("rdna1", "navi1", "navi10", "navi14"))
@@ -630,6 +639,7 @@ def _vulkan_backend_status(repo_root: Path) -> dict[str, Any]:
         "model_override_set": bool(model_env),
         "model_path": str(model_path) if model_path else "",
         "model_file_exists": model_file_exists,
+        "model_auto_found": model_auto_found,
         "vulkan_device": device_available,
         "device_name": _first_device_name(vulkaninfo_text),
         "rdna1_device": rdna1_device,
@@ -707,21 +717,20 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
         steps.append(f"Optional turbo prefetch: {repo_python_display()} scripts/download_models.py --variant turbo --device cpu")
 
     vulkan = report["vulkan_backend"]
-    if vulkan["binary_built"] and not vulkan["model_override_set"]:
-        steps.append(
-            "Vulkan backend: fetch the Chatterbox model automatically with "
-            "`the-oracle setup-vulkan` (or select the Vulkan backend in the GUI, which "
-            "does the same), or manually with scripts/download_audio_cpp_model.sh "
-            "(or scripts/build_audio_cpp.sh --with-model), then set ORACLE_AUDIOCPP_MODEL "
-            "to the printed path (see README 'Vulkan Backend (audio.cpp)')."
-        )
-    elif vulkan["binary_built"] and vulkan.get("model_file_exists") is False:
-        steps.append(
-            f"Vulkan backend: ORACLE_AUDIOCPP_MODEL points at a missing model file "
-            f"({vulkan.get('model_path') or '?'}); re-run `the-oracle setup-vulkan` "
-            f"or scripts/download_audio_cpp_model.sh to re-fetch, or fix the variable "
-            f"before rendering on Vulkan."
-        )
+    if vulkan["binary_built"] and not vulkan["model_file_exists"]:
+        if vulkan.get("model_override_set"):
+            steps.append(
+                f"Vulkan backend: ORACLE_AUDIOCPP_MODEL points at a missing model file "
+                f"({vulkan.get('model_path') or '?'}); fix the variable before "
+                f"rendering on Vulkan."
+            )
+        else:
+            steps.append(
+                "Vulkan backend: the Chatterbox model is not downloaded; run "
+                "`the-oracle setup-vulkan` (or select the Vulkan backend in the GUI) "
+                "to fetch it automatically, or scripts/download_audio_cpp_model.sh "
+                "(scripts/build_audio_cpp.sh --with-model builds and fetches in one)."
+            )
     if vulkan["vendored_patch_applied"] is False:
         steps.append(
             "Vulkan backend: re-run scripts/patch_audio_cpp_ggml.sh to (re)apply the vendored "
@@ -909,7 +918,7 @@ def _print_human_report(report: dict[str, Any]) -> None:
     vulkan_label = "PASS" if vulkan["ok"] else "WARN"
     model_state = "set"
     if not vulkan["model_override_set"]:
-        model_state = "unset"
+        model_state = "unset (auto-detected)" if vulkan.get("model_file_exists") else "unset"
     elif vulkan.get("model_file_exists") is False:
         model_state = f"set but file missing ({vulkan.get('model_path') or '?'})"
     parts = [

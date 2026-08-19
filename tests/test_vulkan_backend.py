@@ -26,6 +26,7 @@ from the_oracle.pipeline import (
     synthesize_tasks_batched,
 )
 from the_oracle.utils.hashing import build_chunk_hash, hash_file
+import the_oracle.tts_engines.vulkan_backend as vulkan_backend
 from the_oracle.tts_engines.vulkan_backend import (
     AudioCppUnavailableError,
     AudioCppVulkanEngine,
@@ -131,7 +132,11 @@ def test_gui_render_can_force_sequential_worker_execution() -> None:
     assert _should_use_worker_pool(settings, "cpu") is True
 
 
-def test_missing_binary_or_model_raises_clear_error() -> None:
+def test_missing_binary_or_model_raises_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Hermetic: a dev machine with the repo-local build/model present would
+    # otherwise route this through the fully-configured branch.
+    monkeypatch.setattr(vulkan_backend, "find_audiocpp_binary", lambda: None)
+    monkeypatch.setattr(vulkan_backend, "find_audiocpp_model", lambda: None)
     engine = AudioCppVulkanEngine()
     with pytest.raises(AudioCppUnavailableError, match="pytorch"):
         engine.ensure_model_ready()
@@ -150,9 +155,10 @@ def test_ensure_model_ready_flags_nonexistent_model_path(tmp_path: Path) -> None
 
 
 def test_ensure_model_ready_unset_model_includes_recovery_command(monkeypatch, tmp_path: Path) -> None:
-    # Hermetic: a dev machine with ORACLE_AUDIOCPP_MODEL set would otherwise
-    # route this through the missing-file branch instead of the unset branch.
+    # Hermetic: a dev machine with the env var or the repo-local model present
+    # would otherwise route this through a different branch entirely.
     monkeypatch.delenv("ORACLE_AUDIOCPP_MODEL", raising=False)
+    monkeypatch.setattr(vulkan_backend, "find_audiocpp_model", lambda: None)
     binary = tmp_path / "audiocpp_cli"
     binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     engine = AudioCppVulkanEngine(binary=binary)
