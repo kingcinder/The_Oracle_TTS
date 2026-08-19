@@ -4,7 +4,7 @@ import pytest
 
 from PySide6.QtWidgets import QApplication
 
-from the_oracle.app_gui import RenderProgressDialog
+from the_oracle.app_gui import LivePanel, RenderProgressDialog
 from the_oracle.pipeline import RenderProgress
 
 pytestmark = pytest.mark.slow
@@ -188,3 +188,79 @@ def test_time_weighted_progress_advances_and_pins_completion() -> None:
     # Completion pins to 1.0 / 0 ETA regardless of state.
     fraction4, eta4 = _time_weighted_progress(state, elapsed=50.0, stage="Complete")
     assert fraction4 == 1.0 and eta4 == 0.0
+
+
+# ---------------------------------------------------------------------------
+# LivePanel (persistent sidebar)
+# ---------------------------------------------------------------------------
+
+
+def test_live_panel_starts_idle(qt_app) -> None:
+    panel = LivePanel()
+    assert panel.progress_bar.value() == 0
+    assert "idle" in panel.backend_label.text().lower()
+    assert panel.stage_label.text() == ""
+    assert panel.segment_label.text() == ""
+    assert panel.eta_label.text() == ""
+
+
+def test_live_panel_updates_from_progress(qt_app) -> None:
+    panel = LivePanel()
+    progress = RenderProgress(
+        stage="Synthesizing",
+        detail="utterance 3/10",
+        current_step=3,
+        total_steps=10,
+        current_segment=3,
+        total_segments=10,
+        elapsed_seconds=12.5,
+        eta_seconds=8.0,
+        fraction=0.3,
+        backend="vulkan",
+        device_label="AMD RX 5700 XT",
+        synth_seconds_total=9.2,
+        synth_seconds_latest=1.5,
+    )
+    panel.update_from_progress(progress)
+    assert panel.progress_bar.value() == 30
+    assert "Vulkan" in panel.backend_label.text()
+    assert "AMD RX 5700 XT" in panel.backend_label.text()
+    assert "Synthesizing" in panel.stage_label.text()
+    assert "3/10" in panel.segment_label.text()
+    assert "12s" in panel.eta_label.text() or "0m 12s" in panel.eta_label.text()
+
+
+def test_live_panel_reset_to_idle(qt_app) -> None:
+    panel = LivePanel()
+    progress = RenderProgress(
+        stage="Synthesizing",
+        detail="utterance 1/5",
+        current_step=1,
+        total_steps=5,
+        current_segment=1,
+        total_segments=5,
+        elapsed_seconds=2.0,
+    )
+    panel.update_from_progress(progress)
+    assert panel.progress_bar.value() == 20
+    panel.set_idle()
+    assert panel.progress_bar.value() == 0
+    assert "idle" in panel.backend_label.text().lower()
+    assert panel.stage_label.text() == ""
+
+
+def test_live_panel_fractionless_fallback(qt_app) -> None:
+    panel = LivePanel()
+    progress = RenderProgress(
+        stage="Loading",
+        detail="model",
+        current_step=5,
+        total_steps=20,
+        current_segment=0,
+        total_segments=0,
+        elapsed_seconds=1.0,
+        # no fraction, no backend
+    )
+    panel.update_from_progress(progress)
+    assert panel.progress_bar.value() == 25  # 5/20 * 100
+    assert panel.backend_label.text() == "Backend: idle"  # unchanged

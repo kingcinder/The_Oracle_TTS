@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,14 @@ def save_wav(path: str | Path, audio: np.ndarray, sample_rate: int) -> None:
     sf.write(str(path), np.asarray(audio, dtype=np.float32), sample_rate, format="WAV")
 
 
+def _load_segment_audio(seg: AudioSegment, target_rate: int) -> tuple[int, np.ndarray]:
+    """Load and preprocess a single stem file (I/O-bound, runs in a thread)."""
+    audio, sample_rate = load_audio(seg.path)
+    if sample_rate != target_rate:
+        raise ValueError("All stems must share a sample rate before assembly.")
+    return seg.segment_index, apply_fade(remove_dc_offset(audio), sample_rate)
+
+
 def assemble_dialogue(
     segments: list[AudioSegment],
     crossfade_ms: int = 20,
@@ -70,39 +79,63 @@ def assemble_dialogue(
     if not segments:
         return np.zeros(1, dtype=np.float32), 24000
 
-    final_audio: np.ndarray | None = None
     final_rate = segments[0].sample_rate
     crossfade_samples = max(0, int(final_rate * crossfade_ms / 1000))
+
+    # --- Phase 1: parallel I/O — load all stems concurrently ---
+    with ThreadPoolExecutor(max_workers=min(8, len(segments))) as pool:
+        loaded = dict(pool.map(lambda s: _load_segment_audio(s, final_rate), segments))
+
+    # --- Phase 2: pre-compute total buffer size (avoids repeated concatenate copies) ---
+    total_samples = 0
+    for i, seg in enumerate(segments):
+        audio = loaded[seg.segment_index]
+        pause_samples = int(final_rate * seg.pause_after_ms / 1000)
+        if i == 0:
+            total_samples += len(audio) + pause_samples
+        else:
+            prev_audio = loaded[segments[i - 1].segment_index]
+            overlap = min(crossfade_samples, len(prev_audio), len(audio))
+            total_samples += len(audio) - overlap + pause_samples
+    buf = np.zeros(total_samples, dtype=np.float32)
+
+    # --- Phase 3: fill the buffer (crossfade + pauses, zero-copy) ---
+    write_pos = 0
     segment_diagnostics: list[dict[str, Any]] = []
     join_diagnostics: list[dict[str, Any]] = []
     previous_segment: AudioSegment | None = None
 
-    for segment in segments:
-        audio, sample_rate = load_audio(segment.path)
-        if sample_rate != final_rate:
-            raise ValueError("All stems must share a sample rate before assembly.")
-        audio = apply_fade(remove_dc_offset(audio), sample_rate)
+    for idx, segment in enumerate(segments):
+        audio = loaded[segment.segment_index]
         applied_crossfade_samples = 0
-        if final_audio is None:
-            content_start_sample = 0
-            final_audio = audio.copy()
+        content_start_sample = write_pos
+
+        if idx == 0:
+            buf[: len(audio)] = audio
+            write_pos = len(audio)
         else:
-            if crossfade_samples > 0 and len(final_audio) > crossfade_samples and len(audio) > crossfade_samples:
+            if crossfade_samples > 0 and write_pos >= crossfade_samples and len(audio) > crossfade_samples:
                 applied_crossfade_samples = crossfade_samples
-                content_start_sample = len(final_audio) - applied_crossfade_samples
-                head = final_audio[:-crossfade_samples]
-                tail = final_audio[-crossfade_samples:]
-                lead = audio[:crossfade_samples]
-                mix = tail * np.linspace(1.0, 0.0, crossfade_samples) + lead * np.linspace(0.0, 1.0, crossfade_samples)
-                final_audio = np.concatenate([head, mix.astype(np.float32), audio[crossfade_samples:]])
+                overlap_start = write_pos - crossfade_samples
+                # In-place crossfade mix
+                ramp_out = np.linspace(1.0, 0.0, crossfade_samples, dtype=np.float32)
+                ramp_in = np.linspace(0.0, 1.0, crossfade_samples, dtype=np.float32)
+                buf[overlap_start:write_pos] *= ramp_out
+                buf[overlap_start:write_pos] += audio[:crossfade_samples] * ramp_in
+                remaining = len(audio) - crossfade_samples
+                buf[write_pos:write_pos + remaining] = audio[crossfade_samples:]
+                write_pos += remaining
             else:
-                content_start_sample = len(final_audio)
-                final_audio = np.concatenate([final_audio, audio])
-        content_end_sample = content_start_sample + len(audio)
+                buf[write_pos:write_pos + len(audio)] = audio
+                write_pos += len(audio)
+
+        content_end_sample = write_pos
         pause_samples = int(final_rate * segment.pause_after_ms / 1000)
         if pause_samples > 0:
-            final_audio = np.concatenate([final_audio, np.zeros(pause_samples, dtype=np.float32)])
-        final_end_sample = len(final_audio)
+            # zeros already in buffer; just advance
+            write_pos += pause_samples
+        final_end_sample = write_pos
+
         segment_diagnostics.append(
             {
                 "segment_number": len(segment_diagnostics) + 1,
@@ -111,15 +144,15 @@ def assemble_dialogue(
                 "stem_path": str(Path(segment.path)),
                 "exported_stem_path": segment.exported_path,
                 "chunk_hash": segment.chunk_hash,
-                "sample_rate": sample_rate,
-                "processed_duration_seconds": round(len(audio) / sample_rate, 6),
-                "content_start_seconds": round(content_start_sample / sample_rate, 6),
-                "content_end_seconds": round(content_end_sample / sample_rate, 6),
-                "final_end_seconds": round(final_end_sample / sample_rate, 6),
+                "sample_rate": final_rate,
+                "processed_duration_seconds": round(len(audio) / final_rate, 6),
+                "content_start_seconds": round(content_start_sample / final_rate, 6),
+                "content_end_seconds": round(content_end_sample / final_rate, 6),
+                "final_end_seconds": round(final_end_sample / final_rate, 6),
                 "pause_after_ms": segment.pause_after_ms,
-                "pause_after_seconds": round(pause_samples / sample_rate, 6),
+                "pause_after_seconds": round(pause_samples / final_rate, 6),
                 "crossfade_requested_ms": crossfade_ms,
-                "crossfade_applied_seconds": round(applied_crossfade_samples / sample_rate, 6),
+                "crossfade_applied_seconds": round(applied_crossfade_samples / final_rate, 6),
             }
         )
         if previous_segment is not None:
@@ -133,18 +166,18 @@ def assemble_dialogue(
                     "left_stem_path": str(Path(previous_segment.path)),
                     "right_stem_path": str(Path(segment.path)),
                     "crossfade_requested_ms": crossfade_ms,
-                    "crossfade_applied_seconds": round(applied_crossfade_samples / sample_rate, 6),
-                    "join_start_seconds": round(content_start_sample / sample_rate, 6),
-                    "join_end_seconds": round((content_start_sample + applied_crossfade_samples) / sample_rate, 6),
+                    "crossfade_applied_seconds": round(applied_crossfade_samples / final_rate, 6),
+                    "join_start_seconds": round(content_start_sample / final_rate, 6),
+                    "join_end_seconds": round((content_start_sample + applied_crossfade_samples) / final_rate, 6),
                 }
             )
         previous_segment = segment
 
-    final_audio = normalize_loudness(final_audio, preset=loudness_preset)
+    final_audio = normalize_loudness(buf, preset=loudness_preset)
     if diagnostics is not None:
         diagnostics["segments"] = segment_diagnostics
         diagnostics["joins"] = join_diagnostics
-    return np.asarray(final_audio, dtype=np.float32), final_rate
+    return final_audio, final_rate
 
 
 def assemble_stems(
