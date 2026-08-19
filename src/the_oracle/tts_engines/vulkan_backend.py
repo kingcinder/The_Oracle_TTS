@@ -162,6 +162,34 @@ def find_audiocpp_binary() -> Path | None:
     return Path(found) if found else None
 
 
+def find_audiocpp_model() -> Path | None:
+    """Locate the Chatterbox ggml model: env override, then the repo-local
+    install ``scripts/download_audio_cpp_model.sh`` writes to.
+
+    Mirrors ``find_audiocpp_binary`` so a model downloaded with the official
+    script is picked up automatically -- no ORACLE_AUDIOCPP_MODEL export
+    required. ``AUDIOCPP_MODELS_ROOT`` (the download script's install-root
+    knob) is honored before the repo default.
+    """
+    override = os.environ.get("ORACLE_AUDIOCPP_MODEL")
+    if override:
+        candidate = Path(override).expanduser()
+        if candidate.exists():
+            return candidate
+    root = _repo_root()
+    folders: list[Path] = []
+    models_root = os.environ.get("AUDIOCPP_MODELS_ROOT")
+    if models_root:
+        folders.append(Path(models_root).expanduser() / "Chatterbox-GGUF")
+    folders.append(root / "audio.cpp" / "models" / "Chatterbox-GGUF")
+    for folder in folders:
+        for name in ("chatterbox-q8_0.gguf", "chatterbox-f16.gguf"):
+            candidate = folder / name
+            if candidate.exists():
+                return candidate
+    return None
+
+
 def _model_from_env() -> str | None:
     return os.environ.get("ORACLE_AUDIOCPP_MODEL")
 
@@ -292,7 +320,12 @@ class AudioCppVulkanEngine:
     def model(self) -> Path | None:
         if self._model is None:
             override = self._model_override or _model_from_env()
-            self._model = Path(override).expanduser() if override else None
+            if override:
+                # An explicit path (constructor arg or env) is honored as-is
+                # so a broken value surfaces clearly in ensure_model_ready.
+                self._model = Path(override).expanduser()
+            else:
+                self._model = find_audiocpp_model()
         return self._model
 
     @property

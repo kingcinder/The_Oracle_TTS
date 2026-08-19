@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from the_oracle.tts_engines.vulkan_backend import find_audiocpp_binary
+from the_oracle.tts_engines.vulkan_backend import find_audiocpp_binary, find_audiocpp_model
 
 # The export line scripts/download_audio_cpp_model.sh prints; parse the
 # installed model path out of the captured output.
@@ -74,12 +74,12 @@ def vulkan_setup_needed(
             "audiocpp_cli is not built (run scripts/build_audio_cpp.sh or set ORACLE_AUDIOCPP_CLI)"
         )
     model_env = os.environ.get("ORACLE_AUDIOCPP_MODEL")
-    if not model_env:
-        missing.append(
-            "the Chatterbox model is not configured (run scripts/download_audio_cpp_model.sh or set ORACLE_AUDIOCPP_MODEL)"
-        )
-    elif not Path(model_env).expanduser().exists():
+    if model_env and not Path(model_env).expanduser().exists():
         missing.append(f"the Chatterbox model path does not exist: {model_env} (fix ORACLE_AUDIOCPP_MODEL)")
+    elif find_audiocpp_model() is None:
+        missing.append(
+            "the Chatterbox model is not downloaded (run scripts/download_audio_cpp_model.sh or set ORACLE_AUDIOCPP_MODEL)"
+        )
     return missing
 
 
@@ -240,6 +240,19 @@ def run_vulkan_setup(
     model_env = os.environ.get("ORACLE_AUDIOCPP_MODEL")
     model = Path(model_env).expanduser() if model_env else None
     if model is None or not model.exists():
+        # A model already installed by the download script is picked up
+        # automatically -- no download and no env var needed.
+        found = find_audiocpp_model()
+        if found is not None:
+            model = found
+            os.environ.setdefault("ORACLE_AUDIOCPP_MODEL", str(found))
+            emit(f"Model ready: {found}")
+            return VulkanSetupResult(
+                ok=True,
+                messages=messages,
+                binary=str(binary) if binary is not None else None,
+                model=str(model),
+            )
         download_script = scripts / "download_audio_cpp_model.sh"
         if not download_script.exists():
             return VulkanSetupResult(

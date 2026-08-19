@@ -80,10 +80,33 @@ def test_vulkan_setup_needed_when_configured(monkeypatch, tmp_path: Path) -> Non
 
 def test_vulkan_setup_needed_reports_missing_pieces(monkeypatch) -> None:
     monkeypatch.setattr(vulkan_setup, "find_audiocpp_binary", lambda: None)
+    monkeypatch.setattr(vulkan_setup, "find_audiocpp_model", lambda: None)
     monkeypatch.delenv("ORACLE_AUDIOCPP_MODEL", raising=False)
     missing = vulkan_setup.vulkan_setup_needed()
     assert any("audiocpp_cli is not built" in item for item in missing)
     assert any("ORACLE_AUDIOCPP_MODEL" in item for item in missing)
+
+
+def test_vulkan_setup_auto_detects_repo_local_model(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The no-env case this machine hit: binary built and the model downloaded
+    by the official script into the repo -- readiness must be [] with no
+    ORACLE_AUDIOCPP_MODEL export anywhere."""
+    import the_oracle.tts_engines.vulkan_backend as vk_backend
+
+    binary = tmp_path / "audiocpp_cli"
+    binary.write_text("x")
+    model = tmp_path / "audio.cpp" / "models" / "Chatterbox-GGUF" / "chatterbox-q8_0.gguf"
+    model.parent.mkdir(parents=True)
+    model.write_text("m")
+    monkeypatch.setattr(vulkan_setup, "find_audiocpp_binary", lambda: binary)
+    monkeypatch.setattr(vk_backend, "_repo_root", lambda: tmp_path)
+    monkeypatch.delenv("ORACLE_AUDIOCPP_MODEL", raising=False)
+    monkeypatch.delenv("AUDIOCPP_MODELS_ROOT", raising=False)
+
+    assert vk_backend.find_audiocpp_model() == model
+    assert vulkan_setup.vulkan_setup_needed() == []
 
 
 def test_run_vulkan_setup_already_configured_no_scripts(
@@ -139,6 +162,7 @@ def test_run_vulkan_setup_builds_and_downloads(monkeypatch, tmp_path: Path) -> N
         return binary if binary.exists() else None
 
     monkeypatch.setattr(vulkan_setup, "find_audiocpp_binary", probe)
+    monkeypatch.setattr(vulkan_setup, "find_audiocpp_model", lambda: None)
 
     try:
         result = vulkan_setup.run_vulkan_setup(progress=progress.append, repo_root=root)
@@ -202,6 +226,7 @@ def test_run_vulkan_setup_download_failure(monkeypatch, tmp_path: Path) -> None:
     model = tmp_path / "models" / "chatterbox-q8_0.gguf"
     root = _fake_repo(tmp_path, binary, model)
     monkeypatch.setattr(vulkan_setup, "find_audiocpp_binary", lambda: binary)
+    monkeypatch.setattr(vulkan_setup, "find_audiocpp_model", lambda: None)
     monkeypatch.delenv("ORACLE_AUDIOCPP_MODEL", raising=False)
     monkeypatch.setenv("FAKE_DOWNLOAD_FAIL", "1")
     # The build step runs before the download fails, so run_vulkan_setup sets
