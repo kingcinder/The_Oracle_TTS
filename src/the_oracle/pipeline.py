@@ -26,7 +26,9 @@ from the_oracle.text_repair.repairer import TextRepairPipeline
 from the_oracle.tts_engines.chatterbox_engine import ChatterboxEngine, ChatterboxConditioning, SUPPORTED_VARIANTS
 from the_oracle.tts_engines.vulkan_backend import (
     SUPPORTED_BACKENDS,
+    AudioCppUnavailableError,
     AudioCppVulkanEngine,
+    RDNA1VulkanError,
     _vulkan_batch_max_requests,
 )
 from the_oracle.utils.chunking import chunk_utterance, TextChunk
@@ -589,6 +591,13 @@ def synthesize_tasks_batched(
                     ),
                 )
 
+            except (RDNA1VulkanError, AudioCppUnavailableError):
+                # Deterministic, actionable failures (the RDNA1 device-lost
+                # limitation, or missing binary/model mid-render): re-raise so
+                # the caller surfaces the real message instead of burying it in
+                # a generic partial failure -- every remaining batch would fail
+                # the same way, so continuing just wastes time.
+                raise
             except Exception as exc:
                 LOGGER.error("Vulkan batch synthesis failed for %d tasks: %s", len(group), exc)
                 for task, _stem, _hash, _conditioning in group:

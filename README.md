@@ -199,10 +199,11 @@ manual script runs: The Oracle completes the switch by itself.
   itself once setup finishes, and `ORACLE_AUDIOCPP_CLI`/`ORACLE_AUDIOCPP_MODEL`
   are set for the session.
 - **CLI** — `the-oracle render --inference-backend vulkan` runs the same
-  automatic setup first (output streamed to stderr). Pass
-  `--no-audio-cpp-setup` to keep the old fail-fast behavior. A one-shot
-  `the-oracle setup-vulkan` command performs just the setup and prints the
-  export lines.
+  automatic setup first (output streamed to stderr; a ready backend prints a
+  single `Vulkan backend ready.` line). Pass `--no-audio-cpp-setup` to keep
+  the old fail-fast behavior. A one-shot `the-oracle setup-vulkan` command
+  performs just the setup and prints the resolved binary/model paths — the
+  CLI and GUI apply them automatically, so no shell exports are needed.
 
 A failed setup is surfaced visibly with the exact manual commands to run, and
 never silently retried in a loop; a later Render/Preview click retries it.
@@ -246,9 +247,7 @@ session (see Automatic setup above), so the manual steps below are only needed
 when you want to pre-install or persist the environment across sessions:
 
 ```bash
-./scripts/download_audio_cpp_model.sh   # downloads Chatterbox Q8_0 GGUF and prints the export line
-# export ORACLE_AUDIOCPP_MODEL="..."    # paste the printed line, or set it below
-export ORACLE_AUDIOCPP_CLI="$PWD/audio.cpp/build/linux-vulkan-release/bin/audiocpp_cli"
+./scripts/download_audio_cpp_model.sh   # downloads Chatterbox Q8_0 GGUF; the app applies the path itself
 
 the-oracle render \
   --input Input/cli_short.txt --outdir Output \
@@ -361,7 +360,7 @@ Model...** runs `scripts/download_audio_cpp_model.sh` in a background thread
 (the UI stays responsive — model downloads are large) and, when it finishes,
 sets `ORACLE_AUDIOCPP_MODEL` for the current session, clears the inline
 prerequisite warning, and shows the exact `export ORACLE_AUDIOCPP_MODEL=...`
-line to persist in your shell profile.
+line — and applies it automatically for the session.
 
 Next to the backend dropdown is a **Test Vulkan Backend** button. It runs a
 quick audio.cpp preflight in a background thread — binary present, model

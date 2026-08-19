@@ -102,23 +102,20 @@ if [[ "$WITH_MODEL" -eq 1 ]]; then
   AUDIOCPP_DIR="$AUDIOCPP_DIR" "$REPO_ROOT/scripts/download_audio_cpp_model.sh"
   cat <<EOF
 
-Build and model complete. The export lines printed above are all you need:
-point ORACLE_AUDIOCPP_CLI and ORACLE_AUDIOCPP_MODEL at them and render with
---inference-backend vulkan.
+Build and model complete. The Oracle applies these paths automatically for
+--inference-backend vulkan renders and in the GUI -- no shell exports needed.
 EOF
 else
   echo "[4/4] Built: $BINARY"
   cat <<EOF
 
 Next steps:
-1. Download the Chatterbox model and print its ORACLE_AUDIOCPP_MODEL export line
-   (or re-run this script with --with-model to build and fetch in one command):
+1. Fetch the Chatterbox model (or re-run this script with --with-model to
+   build and fetch in one command):
      "$REPO_ROOT/scripts/download_audio_cpp_model.sh"
    (use --dry-run to preview, AUDIOCPP_MODEL_PACKAGE=chatterbox_f16 to pick
    a different precision, or --overwrite to re-download)
-2. Point The Oracle at the binary and model, then render:
-     export ORACLE_AUDIOCPP_CLI="$BINARY"
-     export ORACLE_AUDIOCPP_MODEL="$AUDIOCPP_DIR/models/Chatterbox-GGUF/chatterbox-q8_0.gguf"
+2. Render -- The Oracle locates the binary and model automatically:
      the-oracle render --input Input/cli_short.txt --outdir Output \\
        --speakerA-ref "Seashells/Cody's Seashell.wav" \\
        --speakerB-ref "Seashells/Cody's Seashell1.wav" \\

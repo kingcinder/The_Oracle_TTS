@@ -117,10 +117,14 @@ cat <<EOF
 
 Chatterbox model installed: $MODEL_PATH
 
-Point The Oracle at it and render on the Vulkan backend:
+For The Oracle this is automatic: the CLI (--inference-backend vulkan) and the
+GUI locate this model and the built audiocpp_cli on their own, so nothing
+needs to be exported:
 
     export ORACLE_AUDIOCPP_MODEL="$MODEL_PATH"
-    export ORACLE_AUDIOCPP_CLI="$AUDIOCPP_DIR/build/linux-vulkan-release/bin/audiocpp_cli"
+
+(The export line is only for raw shell sessions.) Render with:
+
     the-oracle render --input Input/cli_short.txt --outdir Output \\
       --speakerA-ref "Seashells/Cody's Seashell.wav" \\
       --speakerB-ref "Seashells/Cody's Seashell1.wav" \\
