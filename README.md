@@ -165,13 +165,16 @@ the-oracle gui
 ```
 
 Text repair runs a local LanguageTool grammar pass when available. First use
-downloads the LanguageTool server (hundreds of MB). If the exact version isn't
-already cached, a render never waits on that download: it falls back to the
-built-in local fixes immediately and hands the download to a detached
-background helper, so a later run picks up the real tool once the cache is
-populated (a lock file keeps rapid renders from starting duplicate downloads).
-If the tool is cached but slow to start, the load is bounded to 25 seconds —
-set `ORACLE_LANGUAGE_TOOL_TIMEOUT=<seconds>` to tune that bound.
+downloads the LanguageTool server (hundreds of MB). A render never waits on
+that download: if a complete LanguageTool snapshot is already on disk it is
+reused directly (this also covers the upstream quirk where the library's
+pinned snapshot label goes stale vs. what the server actually serves);
+otherwise the render falls back to the built-in local fixes immediately and
+hands the download to a detached background helper, so a later run picks up
+the real tool once the cache is populated (a lock file keeps rapid renders
+from starting duplicate downloads). If the tool is cached but slow to start,
+the load is bounded to 25 seconds — set `ORACLE_LANGUAGE_TOOL_TIMEOUT=<seconds>`
+to tune that bound.
 
 ## Vulkan Backend (audio.cpp)
 
