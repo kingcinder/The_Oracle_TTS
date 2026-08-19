@@ -137,6 +137,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     render.add_argument("--loudness", choices=["off", "light", "medium"], default="light")
     render.add_argument("--no-stems", action="store_true", help="Skip exporting stems into the project folder.")
+    render.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Deterministic sampling seed: renders with identical inputs produce "
+        "byte-identical audio across runs (PyTorch: torch.manual_seed; "
+        "Vulkan: audio.cpp --seed).",
+    )
     render.add_argument("--title", default="", help="Override exported title metadata.")
     render.add_argument("--srt", action="store_true", help="Also write an SRT subtitle file next to the rendered FLAC.")
     return parser
@@ -218,6 +226,7 @@ def handle_render(args: argparse.Namespace) -> int:
             audio_cpp_threads=args.audio_cpp_threads,
             audio_cpp_timeout=args.audio_cpp_timeout,
             audio_cpp_max_batch=args.audio_cpp_max_batch,
+            seed=args.seed,
             target_wpm=args.target_wpm,
             monologue=args.monologue,
             metadata={"title": args.title} if args.title else {},

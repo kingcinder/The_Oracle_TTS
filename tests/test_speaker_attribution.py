@@ -243,3 +243,42 @@ def test_pipeline_monologue_uses_single_narrator_voice(tmp_path) -> None:
 
     assert all(u.speaker == "A" for u in plan.utterances)
     assert all(u.speaker_source == "monologue" for u in plan.utterances)
+
+
+def test_binary_clustering_is_deterministic_and_vectorized() -> None:
+    """Unlabeled, non-chat lines (no prose length signal either) go through
+    binary clustering; the vectorized matmul path must stay deterministic and
+    produce stable A/B assignments across repeated runs."""
+    lines = [
+        "the old mill stood beside the frozen river",
+        "the hunter followed tracks through the deep snow",
+        "the mill wheel turned slowly under the ice",
+        "the cabin windows glowed warm against the night",
+        "the river carved a channel through the valley",
+    ]
+    attributor = DualSpeakerAttributor()
+    first = [d.speaker for d in attributor.assign(lines)]
+    second = [d.speaker for d in attributor.assign(lines)]
+    assert first == second
+    assert set(first) <= {"A", "B"}
+
+
+def test_anchor_propagation_matches_reference_voices() -> None:
+    """Anchor-driven assignment still separates the anchored voices via the
+    vectorized cosine path."""
+    from the_oracle.speaker_attribution.heuristics import AnchorAssignments
+
+    lines = [
+        "I love the ocean and the open sky",
+        "The numbers must balance exactly tonight",
+        "Waves and salt air make me happy",
+        "I reconciled the ledger before dawn",
+        "Seagulls cry above the harbour wall",
+        "The final totals are due at noon",
+    ]
+    anchors = AnchorAssignments(speaker_a_indices=[0, 2], speaker_b_indices=[1, 3])
+    decisions = DualSpeakerAttributor().assign(lines, anchors=anchors)
+    speakers = [d.speaker for d in decisions]
+    assert speakers[0] == "A" and speakers[1] == "B"
+    assert speakers[2] == "A" and speakers[3] == "B"
+    assert all(d.reason == "anchor_propagation" for d in decisions)

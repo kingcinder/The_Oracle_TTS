@@ -273,6 +273,28 @@ def test_speaker_ref_extra_voices_wire_into_speaker_settings(tmp_path: Path, mon
     assert speakers["A"].reference_path == "a.wav"
 
 
+def test_seed_flag_reaches_render_settings(monkeypatch, tmp_path) -> None:
+    """`--seed N` is forwarded into RenderSettings so both backends can seed
+    their samplers deterministically."""
+    captured: dict[str, object] = {}
+
+    class _CapturePipeline(_FakePipeline):
+        def prepare_plan(self, input_path, output_dir, speaker_settings, settings):
+            captured["settings"] = settings
+            return _FakePlan(str(output_dir))
+
+    monkeypatch.setattr("the_oracle.cli.OraclePipeline", lambda: _CapturePipeline(str(tmp_path / "output")))
+    args = _render_args("--seed", "1234", outdir=str(tmp_path / "output"))
+
+    assert handle_render(args) == 0
+    assert captured["settings"].seed == 1234
+
+
+def test_seed_flag_defaults_to_none() -> None:
+    assert build_parser().parse_args(["render"]).seed is None
+    assert build_parser().parse_args(["render", "--seed", "7"]).seed == 7
+
+
 def test_speaker_ref_validates_keys_and_duplicates(monkeypatch) -> None:
     """Bad --speaker-ref entries fail fast with a clear message: duplicate A/B,
     invalid characters, and missing KEY=PATH separators."""

@@ -270,6 +270,22 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / denom)
 
 
+def _cosine_similarity_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Row-wise cosine similarity between two matrices in one matmul.
+
+    Returns an ``(len(a), len(b))`` float matrix. Mirrors
+    :func:`_cosine_similarity`'s zero-norm convention: a pair where either
+    vector has zero norm scores ``0.0`` (never NaN).
+    """
+    dots = a @ b.T
+    norm_a = np.linalg.norm(a, axis=1)
+    norm_b = np.linalg.norm(b, axis=1)
+    denom = np.outer(norm_a, norm_b)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        result = dots / denom
+    return np.where(denom == 0, 0.0, result)
+
+
 class DualSpeakerAttributor:
     """Infers speaker labels for up to MAX_SPEAKERS distinct voices.
 
@@ -298,9 +314,12 @@ class DualSpeakerAttributor:
         labeled = self._assign_from_labels(explicit)
         if labeled is not None:
             return labeled
-        if self._looks_like_prose(utterances):
+        # Word counts are computed once and reused by both prose/chat
+        # detectors instead of each one re-splitting every utterance.
+        lengths = self._word_counts(utterances)
+        if self._looks_like_prose(utterances, lengths):
             return [SpeakerDecision("A", 0.6, "prose_narration") for _ in utterances]
-        if self._looks_like_chat_lines(utterances):
+        if self._looks_like_chat_lines(utterances, lengths):
             return self._assign_alternating(utterances)
         return self._assign_from_binary_clustering(utterances)
 
@@ -446,17 +465,23 @@ class DualSpeakerAttributor:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _looks_like_prose(utterances: list[str]) -> bool:
+    def _word_counts(utterances: list[str]) -> list[int]:
+        return [len(item.split()) for item in utterances]
+
+    @classmethod
+    def _looks_like_prose(cls, utterances: list[str], lengths: list[int] | None = None) -> bool:
         if len(utterances) < 2:
             return False
-        lengths = [len(item.split()) for item in utterances]
+        if lengths is None:
+            lengths = cls._word_counts(utterances)
         return sum(lengths) / len(lengths) > 25
 
-    @staticmethod
-    def _looks_like_chat_lines(utterances: list[str]) -> bool:
+    @classmethod
+    def _looks_like_chat_lines(cls, utterances: list[str], lengths: list[int] | None = None) -> bool:
         if len(utterances) < 4:
             return False
-        lengths = [len(item.split()) for item in utterances]
+        if lengths is None:
+            lengths = cls._word_counts(utterances)
         return max(lengths) <= 40 and sum(lengths) / len(lengths) <= 18
 
     def _assign_alternating(self, utterances: list[str]) -> list[SpeakerDecision]:
@@ -491,13 +516,15 @@ class DualSpeakerAttributor:
         return False
 
     def _assign_from_anchors(self, utterances: list[str], anchors: AnchorAssignments) -> list[SpeakerDecision]:
-        vectors = [_embed_text(text) for text in utterances]
-        centroid_a = np.mean([vectors[index] for index in anchors.speaker_a_indices], axis=0)
-        centroid_b = np.mean([vectors[index] for index in anchors.speaker_b_indices], axis=0)
+        vectors = np.array([_embed_text(text) for text in utterances], dtype=np.float32)
+        centroid_a = vectors[list(anchors.speaker_a_indices)].mean(axis=0)
+        centroid_b = vectors[list(anchors.speaker_b_indices)].mean(axis=0)
+        # Cosine similarity of every vector against both centroids in one
+        # matmul instead of a per-utterance Python loop.
+        scores = _cosine_similarity_matrix(vectors, np.stack([centroid_a, centroid_b], axis=0))
         results: list[SpeakerDecision] = []
-        for vector in vectors:
-            score_a = _cosine_similarity(vector, centroid_a)
-            score_b = _cosine_similarity(vector, centroid_b)
+        for index in range(len(vectors)):
+            score_a, score_b = scores[index, 0], scores[index, 1]
             speaker = "A" if score_a >= score_b else "B"
             confidence = min(0.98, 0.5 + abs(score_a - score_b))
             results.append(SpeakerDecision(speaker, confidence, "anchor_propagation"))
@@ -508,30 +535,31 @@ class DualSpeakerAttributor:
         if len(vectors) <= 1:
             return [SpeakerDecision("A", 1.0, "single_utterance")]
 
-        distances = np.array(
-            [[1.0 - _cosine_similarity(vectors[i], vectors[j]) for j in range(len(vectors))] for i in range(len(vectors))],
-            dtype=np.float32,
-        )
+        # One matmul builds the whole NxN cosine matrix (previously an O(N^2)
+        # Python loop with a numpy dot per pair). Identical math, but for a
+        # long audiobook document the difference is seconds vs milliseconds.
+        similarities = _cosine_similarity_matrix(vectors, vectors)
+        distances = 1.0 - similarities
         start_a, start_b = np.unravel_index(np.argmax(distances), distances.shape)
         centroid_a = vectors[start_a]
         centroid_b = vectors[start_b]
         labels = np.zeros(len(vectors), dtype=np.int32)
 
         for _ in range(6):
-            for index, vector in enumerate(vectors):
-                score_a = _cosine_similarity(vector, centroid_a)
-                score_b = _cosine_similarity(vector, centroid_b)
-                labels[index] = 0 if score_a >= score_b else 1
+            # Vectorized k-means assignment: cosine of every vector against
+            # both centroids in a single matmul.
+            scores = _cosine_similarity_matrix(vectors, np.stack([centroid_a, centroid_b], axis=0))
+            labels = np.where(scores[:, 0] >= scores[:, 1], 0, 1)
             if np.all(labels == 0) or np.all(labels == 1):
                 return self._assign_alternating(utterances)
             centroid_a = vectors[labels == 0].mean(axis=0)
             centroid_b = vectors[labels == 1].mean(axis=0)
 
         cluster_for_a = labels[0]
+        scores = _cosine_similarity_matrix(vectors, np.stack([centroid_a, centroid_b], axis=0))
         results: list[SpeakerDecision] = []
-        for index, vector in enumerate(vectors):
-            score_a = _cosine_similarity(vector, centroid_a)
-            score_b = _cosine_similarity(vector, centroid_b)
+        for index in range(len(vectors)):
+            score_a, score_b = scores[index, 0], scores[index, 1]
             assigned_cluster = labels[index]
             speaker = "A" if assigned_cluster == cluster_for_a else "B"
             margin = abs(score_a - score_b)

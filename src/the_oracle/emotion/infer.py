@@ -21,6 +21,15 @@ class EmotionInferer:
         self.classifier = GoEmotionsClassifier(model_name=model_name, use_transformers=use_transformers)
 
     def infer_batch(self, texts: list[str]) -> list[EmotionPrediction]:
+        # Batch through the classifier: one transformers call for the whole
+        # list instead of one forward pass per utterance. Falls back to the
+        # per-item classify path if the classifier lacks the batched API.
+        classify_batch = getattr(self.classifier, "classify_batch", None)
+        if callable(classify_batch):
+            results = classify_batch(list(texts))
+            return [
+                EmotionPrediction(label=result.label, score=result.confidence) for result in results
+            ]
         predictions: list[EmotionPrediction] = []
         for text in texts:
             result = self.classifier.classify(text)

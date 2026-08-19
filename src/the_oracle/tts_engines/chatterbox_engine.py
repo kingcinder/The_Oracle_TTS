@@ -115,11 +115,14 @@ def turbo_readiness_report(device: str = "cpu") -> dict[str, Any]:
 class ChatterboxEngine:
     engine_id = "chatterbox"
 
-    def __init__(self, variant: str = "standard", device: str | None = None) -> None:
+    def __init__(self, variant: str = "standard", device: str | None = None, seed: int | None = None) -> None:
         if variant not in SUPPORTED_VARIANTS:
             raise ValueError(f"Unsupported Chatterbox variant: {variant}")
+        if seed is not None and seed < 0:
+            raise ValueError(f"seed must be a non-negative integer, got {seed!r}.")
         self.variant = variant
         self.device = device or self._detect_device()
+        self.seed = seed
         self._model = None
         self._condition_cls = None
         self._languages = {"en": "English"}
@@ -248,6 +251,18 @@ class ChatterboxEngine:
         if self.variant == "turbo":
             kwargs["top_k"] = settings.top_k
             kwargs["norm_loudness"] = settings.norm_loudness
+        if self.seed is not None:
+            # Chatterbox samples via torch.multinomial, which draws from
+            # torch's global RNG. Seeding right before generate() makes every
+            # utterance bit-reproducible across runs (same inputs -> same
+            # audio), independent of how many tokens a previous utterance
+            # consumed from the stream.
+            try:
+                import torch
+
+                torch.manual_seed(self.seed)
+            except Exception:
+                pass
         audio = self.model.generate(**kwargs)
         if hasattr(audio, "detach"):
             audio = audio.detach().cpu().numpy()

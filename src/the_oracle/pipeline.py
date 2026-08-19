@@ -129,6 +129,10 @@ class RenderSettings:
     audio_cpp_threads: int | None = None
     audio_cpp_timeout: int | None = None
     audio_cpp_max_batch: int | None = None
+    # Deterministic sampling seed. When set, every engine call seeds its RNG
+    # first so a render with identical inputs produces byte-identical audio
+    # across runs (PyTorch: torch.manual_seed; Vulkan: audio.cpp --seed).
+    seed: int | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     anchors: AnchorAssignments | None = None
     target_wpm: float | None = None
@@ -163,6 +167,8 @@ class RenderSettings:
             raise ValueError(
                 f"audio_cpp_max_batch must be a positive request count, got {self.audio_cpp_max_batch!r}."
             )
+        if self.seed is not None and self.seed < 0:
+            raise ValueError(f"seed must be a non-negative integer, got {self.seed!r}.")
 
 
 @dataclass(slots=True)
@@ -201,6 +207,12 @@ class SynthesisTask:
     device_mode: str
     export_stems: bool
     inference_backend: str = "pytorch"
+    # Precomputed stem-cache hash for this task. Computed once at task
+    # construction (the render loop already needs it for the cache check) so
+    # neither synthesize_task nor the batched path has to rebuild the JSON +
+    # sha256 payload again per task. Empty when the task was constructed by
+    # older code/tests, in which case callers fall back to computing it.
+    chunk_hash: str = ""
 
 
 @dataclass(slots=True)
@@ -219,10 +231,16 @@ def _conditioning_cache_key(task: SynthesisTask, reference_hash: str) -> tuple[s
     return (task.speaker, reference_hash, task.model_variant, voice_items)
 
 
-def _worker_initialize(engine_cls: type[ChatterboxEngine], variant: str, device: str, project_dir: str) -> None:
+def _worker_initialize(
+    engine_cls: type[ChatterboxEngine], variant: str, device: str, project_dir: str, seed: int | None = None
+) -> None:
     global _WORKER_STATE, _WORKER_METRICS
     init_start = perf_counter()
-    engine = engine_cls(variant=variant, device=device)
+    try:
+        engine = engine_cls(variant=variant, device=device, seed=seed)
+    except TypeError:
+        # Older engine classes (or test doubles) may not accept a seed kwarg.
+        engine = engine_cls(variant=variant, device=device)
     ensure_ready = getattr(engine, "ensure_model_ready", None)
     if callable(ensure_ready):
         ensure_ready()
@@ -287,8 +305,9 @@ def _sequential_worker_execution(
     variant: str,
     device: str,
     project_dir: str,
+    seed: int | None = None,
 ) -> list[SynthesisResult]:
-    _worker_initialize(engine_cls, variant, device, project_dir)
+    _worker_initialize(engine_cls, variant, device, project_dir, seed)
     try:
         results = []
         for task in tasks:
@@ -328,6 +347,7 @@ def _run_tasks_with_worker_pool(
     worker_count: int | None = None,
     *,
     stream: bool = False,
+    seed: int | None = None,
 ) -> tuple[list[SynthesisResult] | Any, str]:
     if not tasks:
         return ([] if not stream else iter(())), "parallel"
@@ -341,12 +361,16 @@ def _run_tasks_with_worker_pool(
     # dispatch must mock this function directly.
     if count == 1:
         LOGGER.debug("Worker count resolved to 1, using sequential execution to avoid pool overhead.")
-        results = _sequential_worker_execution(tasks, engine_cls, variant, device, project_dir)
+        results = _sequential_worker_execution(tasks, engine_cls, variant, device, project_dir, seed)
         return sorted(results, key=lambda entry: entry.utterance_index), "sequential"
 
     ctx = multiprocessing.get_context("spawn")
     try:
-        pool = ctx.Pool(processes=count, initializer=_worker_initialize, initargs=(engine_cls, variant, device, project_dir))
+        pool = ctx.Pool(
+            processes=count,
+            initializer=_worker_initialize,
+            initargs=(engine_cls, variant, device, project_dir, seed),
+        )
         if stream:
             iterator = pool.imap_unordered(_worker_process_task, tasks, chunksize=1)
 
@@ -368,7 +392,7 @@ def _run_tasks_with_worker_pool(
             type(exc).__name__,
             exc,
         )
-        results = _sequential_worker_execution(tasks, engine_cls, variant, device, project_dir)
+        results = _sequential_worker_execution(tasks, engine_cls, variant, device, project_dir, seed)
         mode = "sequential"
     else:
         mode = "parallel"
@@ -436,7 +460,7 @@ def synthesize_task(
     project_cache: ProjectCache,
     on_synth_start: Callable[[], None] | None = None,
 ) -> SynthesisResult:
-    chunk_hash = build_chunk_hash(
+    chunk_hash = task.chunk_hash or build_chunk_hash(
         speaker=task.speaker,
         repaired_text=task.text,
         engine_key=_chunk_engine_key(task.inference_backend, task.model_variant),
@@ -583,7 +607,7 @@ def synthesize_tasks_batched(
     results: list[SynthesisResult] = []
     pending: list[tuple[SynthesisTask, Path, str, Any]] = []  # (task, stem, hash, conditioning)
     for task in tasks:
-        chunk_hash = build_chunk_hash(
+        chunk_hash = task.chunk_hash or build_chunk_hash(
             speaker=task.speaker,
             repaired_text=task.text,
             engine_key=_chunk_engine_key(task.inference_backend, task.model_variant),
@@ -854,16 +878,36 @@ class OraclePipeline:
                     voice_settings=VoiceSettings(),
                 )
 
+        # Coerce each speaker's voice settings once (not once per utterance)
+        # and reuse the result for the utterance loop and profile params.
+        coerced_voice_settings = {
+            speaker: self._coerce_voice_settings(config.voice_settings) for speaker, config in speaker_settings.items()
+        }
+
+        # Batch emotion detection across every repaired segment in a single
+        # transformers call (one forward pass instead of one per utterance).
+        # Falls back to per-item classify when the classifier predates the
+        # batched API (e.g. test doubles).
+        cleaned_texts = [repaired.text for repaired in repaired_segments]
+        classifier = self._emotion_classifier()
+        classify_batch = getattr(classifier, "classify_batch", None)
+        if callable(classify_batch):
+            emotions = classify_batch(cleaned_texts)
+        else:
+            emotions = [classifier.classify(text) for text in cleaned_texts]
+
         utterances: list[Utterance] = []
-        for segment, (_cleaned, directives), repaired, decision in zip(
-            document.segments, parsed_segments, repaired_segments, decisions, strict=True
+        for index, (segment, (_cleaned, directives), repaired, decision) in enumerate(
+            zip(document.segments, parsed_segments, repaired_segments, decisions, strict=True)
         ):
-            base = self._coerce_voice_settings(speaker_settings[decision.speaker].voice_settings)
+            # Copy per utterance: the loop mutates variant/language/crossfade
+            # below, so a shared instance would leak edits across turns.
+            base = replace(coerced_voice_settings[decision.speaker])
             base.variant = variant
             base.language = base.language if variant == "multilingual" else "en"
             base.crossfade_ms = settings.crossfade_ms
             cleaned_text = repaired.text
-            emotion = self._emotion_classifier().classify(cleaned_text)
+            emotion = emotions[index]
             explicit_emotion = directives.pop("emotion", None)
             if explicit_emotion is not None:
                 if explicit_emotion in SUPPORTED_EMOTIONS:
@@ -917,9 +961,9 @@ class OraclePipeline:
                 neutral_reference=Path(config.reference_path),
                 emotion_references={key: Path(value) for key, value in config.emotion_reference_paths.items()},
                 engine_params=replace(
-                    self._coerce_voice_settings(config.voice_settings),
+                    coerced_voice_settings[speaker],
                     variant=variant,
-                    language=self._coerce_voice_settings(config.voice_settings).language if variant == "multilingual" else "en",
+                    language=coerced_voice_settings[speaker].language if variant == "multilingual" else "en",
                 ),
             )
             for speaker, config in speaker_settings.items()
@@ -1082,6 +1126,11 @@ class OraclePipeline:
                 "timeout": settings.audio_cpp_timeout,
                 "batch_limit": settings.audio_cpp_max_batch,
             }
+        # The seed applies to both backends (torch.manual_seed for PyTorch,
+        # audio.cpp --seed for Vulkan) so identical inputs render the same
+        # audio on either engine.
+        if settings.seed is not None:
+            engine_kwargs["seed"] = settings.seed
         engine = prewarmed_engine or engine_cls(variant=variant, device=engine_device, **engine_kwargs)
         engine_version = engine.engine_version
         # The live progress panel labels the active device (the GPU name for
@@ -1137,9 +1186,7 @@ class OraclePipeline:
                     inference_backend=backend,
                     export_stems=settings.export_stems,
                 )
-                raw_tasks.append(task)
-                task_to_utterance_map[task_index] = utterance
-                task_chunk_hashes[task_index] = build_chunk_hash(
+                task.chunk_hash = build_chunk_hash(
                     speaker=task.speaker,
                     repaired_text=task.text,
                     engine_key=_chunk_engine_key(backend, settings.model_variant),
@@ -1147,6 +1194,9 @@ class OraclePipeline:
                     engine_version=engine_version,
                     reference_audio_hash=task.reference_audio_hash,
                 )
+                raw_tasks.append(task)
+                task_to_utterance_map[task_index] = utterance
+                task_chunk_hashes[task_index] = task.chunk_hash
             else:
                 # Utterance was chunked - create a task per chunk
                 LOGGER.info(
@@ -1172,9 +1222,7 @@ class OraclePipeline:
                         export_stems=settings.export_stems,
                         inference_backend=backend,
                     )
-                    raw_tasks.append(task)
-                    task_to_utterance_map[task_index] = utterance
-                    task_chunk_hashes[task_index] = build_chunk_hash(
+                    task.chunk_hash = build_chunk_hash(
                         speaker=task.speaker,
                         repaired_text=task.text,
                         engine_key=_chunk_engine_key(backend, settings.model_variant),
@@ -1182,6 +1230,9 @@ class OraclePipeline:
                         engine_version=engine_version,
                         reference_audio_hash=task.reference_audio_hash,
                     )
+                    raw_tasks.append(task)
+                    task_to_utterance_map[task_index] = utterance
+                    task_chunk_hashes[task_index] = task.chunk_hash
 
         # Recalculate total_steps after chunking, since chunked utterances
         # expand into multiple synthesis tasks. The +3 accounts for:
@@ -1414,6 +1465,7 @@ class OraclePipeline:
                     engine_device,
                     project_dir,
                     stream=True,
+                    seed=settings.seed,
                 )
             elif backend == "vulkan":
                 # The Vulkan backend batches: cache-missing stems ride
@@ -1802,6 +1854,7 @@ class OraclePipeline:
         audio_cpp_threads: int | None = None,
         audio_cpp_timeout: int | None = None,
         audio_cpp_max_batch: int | None = None,
+        seed: int | None = None,
         progress_callback=None,
     ) -> Path:
         start_time = perf_counter()
@@ -1834,10 +1887,11 @@ class OraclePipeline:
                 threads=audio_cpp_threads,
                 timeout=audio_cpp_timeout,
                 batch_limit=audio_cpp_max_batch,
+                seed=seed,
             )
             device_label = "audio.cpp Vulkan backend"
         else:
-            engine = ChatterboxEngine(variant=model_variant, device=resolve_chatterbox_device(device_mode))
+            engine = ChatterboxEngine(variant=model_variant, device=resolve_chatterbox_device(device_mode), seed=seed)
             device_label = engine.device
         emit_preview_progress("Loading model", f"Loading Chatterbox {model_variant} on {device_label}", 0)
         ensure_model_ready = getattr(engine, "ensure_model_ready", None)

@@ -267,6 +267,40 @@ def _flag_value(command: list[str], flag: str) -> str:
     return command[command.index(flag) + 1]
 
 
+def test_seed_flag_forwarded_to_audio_cpp(tmp_path: Path, monkeypatch) -> None:
+    engine = _engine_with_fake_binary(tmp_path, seed=42)
+    reference = tmp_path / "ref.wav"
+    sf.write(reference, np.zeros(2400, dtype=np.float32), 24000)
+    conditioning = VulkanConditioning(cache_id="c1", reference_path=reference, speaker="A")
+    recorded: dict[str, list[str]] = {}
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        recorded["command"] = command
+        out = Path(command[command.index("--out") + 1])
+        sf.write(out, np.zeros(4800, dtype=np.float32), 24000)
+        return _fake_completed(0)
+
+    monkeypatch.setattr(engine, "_run_command", fake_run)
+    engine.synthesize("Probe.", conditioning, VoiceSettings())
+    assert "--seed" in recorded["command"]
+    assert _flag_value(recorded["command"], "--seed") == "42"
+
+
+def test_seed_flag_omitted_by_default(tmp_path: Path, monkeypatch) -> None:
+    command = _recorded_command(tmp_path, monkeypatch)
+    assert "--seed" not in command
+
+
+def test_batch_command_forwards_seed(tmp_path: Path) -> None:
+    engine = _engine_with_fake_binary(tmp_path, seed=7)
+    sequence = tmp_path / "seq.json"
+    sequence.write_text("{}", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    command = engine._build_batch_command(sequence, out_dir)
+    assert "--seed" in command
+    assert _flag_value(command, "--seed") == "7"
+
+
 def test_tuning_settings_forwarded_to_audio_cpp(tmp_path: Path, monkeypatch) -> None:
     engine = _engine_with_fake_binary(tmp_path)
     settings = VoiceSettings(cfg_weight=0.7, temperature=0.9, repetition_penalty=1.4, min_p=0.08, top_p=0.95)

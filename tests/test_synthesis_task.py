@@ -18,6 +18,7 @@ from the_oracle.pipeline import (
     _worker_reset,
 )
 from the_oracle.smoke import _DeterministicChatterboxEngine, _write_reference
+from the_oracle.tts_engines.chatterbox_engine import ChatterboxConditioning
 from the_oracle.utils.hashing import build_chunk_hash
 
 
@@ -131,3 +132,60 @@ def test_synthesize_task_chunk_changes_with_text(tmp_path: Path) -> None:
     assert base_result.chunk_hash != alternate_result.chunk_hash
     assert base_result.stem_path != alternate_result.stem_path
     assert alternate_result.cache_hit is False
+
+
+def test_chatterbox_engine_seed_seeds_torch_rng(monkeypatch) -> None:
+    """A seeded ChatterboxEngine calls torch.manual_seed(seed) before every
+    generate() call, which is what makes Chatterbox's torch.multinomial
+    sampling bit-reproducible across runs."""
+    from unittest.mock import Mock
+
+    from the_oracle.tts_engines.chatterbox_engine import ChatterboxEngine
+
+    engine = ChatterboxEngine(seed=99)
+    seeded_values: list[int] = []
+    monkeypatch.setattr(
+        "torch.manual_seed",
+        lambda value: seeded_values.append(int(value)),
+    )
+
+    fake_model = Mock()
+    fake_model.generate.return_value = Mock(detach=Mock(return_value=Mock(cpu=Mock(return_value=Mock(numpy=Mock(return_value=__import__("numpy").zeros(5, dtype=__import__("numpy").float32)))))))
+    fake_model.sr = 24000
+    engine._model = fake_model
+    engine._condition_cls = Mock()
+
+    conditioning = ChatterboxConditioning(
+        cache_id="c1", path=Path("/tmp/cond.npz"), reference_hash="h", speaker="A", variant="standard"
+    )
+
+    engine.synthesize("Hello.", conditioning, VoiceSettings())
+    engine.synthesize("Hello again.", conditioning, VoiceSettings())
+
+    assert seeded_values == [99, 99]
+
+
+def test_chatterbox_engine_without_seed_does_not_seed(monkeypatch) -> None:
+    from unittest.mock import Mock
+
+    from the_oracle.tts_engines.chatterbox_engine import ChatterboxEngine
+
+    engine = ChatterboxEngine()
+    seeded_values: list[int] = []
+    monkeypatch.setattr(
+        "torch.manual_seed",
+        lambda value: seeded_values.append(int(value)),
+    )
+
+    fake_model = Mock()
+    fake_model.generate.return_value = Mock(detach=Mock(return_value=Mock(cpu=Mock(return_value=Mock(numpy=Mock(return_value=__import__("numpy").zeros(5, dtype=__import__("numpy").float32)))))))
+    fake_model.sr = 24000
+    engine._model = fake_model
+    engine._condition_cls = Mock()
+
+    conditioning = ChatterboxConditioning(
+        cache_id="c1", path=Path("/tmp/cond.npz"), reference_hash="h", speaker="A", variant="standard"
+    )
+    engine.synthesize("Hello.", conditioning, VoiceSettings())
+
+    assert seeded_values == []

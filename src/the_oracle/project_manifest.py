@@ -63,6 +63,7 @@ def _render_settings_to_dict(settings: RenderSettings) -> dict[str, Any]:
         "audio_cpp_threads": settings.audio_cpp_threads,
         "audio_cpp_timeout": settings.audio_cpp_timeout,
         "audio_cpp_max_batch": settings.audio_cpp_max_batch,
+        "seed": settings.seed,
         "target_wpm": settings.target_wpm,
         "monologue": settings.monologue,
         "metadata": dict(settings.metadata),
