@@ -133,6 +133,14 @@ class RenderProgress:
     total_segments: int
     elapsed_seconds: float
     eta_seconds: float | None = None
+    # Live backend panel data (all optional so older consumers/tests keep
+    # working): which inference backend is rendering, the human device label
+    # (GPU name for Vulkan, CPU for PyTorch), and cumulative/most-recent
+    # synthesis seconds as utterances complete.
+    backend: str | None = None
+    device_label: str | None = None
+    synth_seconds_total: float | None = None
+    synth_seconds_latest: float | None = None
 
 
 @dataclass(slots=True)
@@ -634,6 +642,26 @@ def synthesize_tasks_batched(
     return sorted(results, key=lambda result: result.utterance_index)
 
 
+def _vulkan_device_label(engine: AudioCppVulkanEngine) -> str:
+    """Human label for the active Vulkan device (best-effort, one probe).
+
+    audio.cpp's ``--list-devices`` names the GPU the render will use; when it
+    cannot be probed (binary missing, driver hiccup) the generic backend label
+    is returned so the live panel never blocks on the probe.
+    """
+    try:
+        devices = engine.list_devices()
+    except Exception:
+        return "Vulkan (audio.cpp)"
+    if not devices:
+        return "Vulkan (audio.cpp)"
+    index = engine.device_index
+    for device in devices:
+        if index is None or device["index"] == index:
+            return str(device["name"])
+    return str(devices[0]["name"])
+
+
 def _compute_eta(
     render_start: float,
     completed_index: int,
@@ -885,6 +913,13 @@ class OraclePipeline:
             timeline["render_click_wall"] = render_click_wall
             timeline["render_click_to_entry_seconds"] = round(start_wall - render_click_wall, 6)
 
+        # Live backend-panel state: the inference backend, its device label,
+        # and cumulative synthesize seconds are attached to every progress
+        # event (see RenderProgress). The dict is created after ``backend`` is
+        # resolved (just below) and mutated by the results loop, so each event
+        # carries the freshest data.
+        render_state: dict[str, Any]
+
         def emit_progress(
             *,
             stage: str,
@@ -907,6 +942,10 @@ class OraclePipeline:
                     total_segments=total_segments,
                     elapsed_seconds=perf_counter() - start_time,
                     eta_seconds=eta_seconds,
+                    backend=render_state["backend"],
+                    device_label=render_state["device_label"],
+                    synth_seconds_total=render_state["synth_total"] or None,
+                    synth_seconds_latest=render_state["synth_latest"],
                 )
             )
 
@@ -925,6 +964,12 @@ class OraclePipeline:
         previous_plan = self._load_previous_plan(project_cache)
         render_start = perf_counter()
         backend = settings.inference_backend
+        render_state = {
+            "backend": backend,
+            "device_label": None,
+            "synth_total": 0.0,
+            "synth_latest": None,
+        }
         # device_mode is a PyTorch-path concept; for the Vulkan backend we use
         # "cpu" here so --device-mode vulkan cannot trip the stale
         # "not verified" error before the audio.cpp backend is even reached.
@@ -952,6 +997,11 @@ class OraclePipeline:
             }
         engine = prewarmed_engine or engine_cls(variant=variant, device=engine_device, **engine_kwargs)
         engine_version = engine.engine_version
+        # The live progress panel labels the active device (the GPU name for
+        # Vulkan; CPU for PyTorch). One cheap probe at render start.
+        render_state["device_label"] = (
+            _vulkan_device_label(engine) if backend == "vulkan" else "CPU"
+        )
 
         # Hash references up front without loading the model so we can short-circuit
         # cache-only renders before paying the model warmup cost.
@@ -1455,6 +1505,11 @@ class OraclePipeline:
             completed_tasks += 1
             completed_steps += 1
             eta = 0.0 if mode_metadata == "parallel" else _compute_eta(render_start, completed_tasks, len(raw_tasks))
+            # Accumulate live synthesis timing for the backend panel (only
+            # successful, non-cached utterances carry real synthesize seconds).
+            if result.error is None and result.synthesize_seconds:
+                render_state["synth_total"] += result.synthesize_seconds
+                render_state["synth_latest"] = result.synthesize_seconds
             if result.utterance_index not in live_reported_task_indices:
                 # Continue the shared counter so cache-hit stems (never
                 # live-reported) emit the next step after the last live event
@@ -1663,6 +1718,8 @@ class OraclePipeline:
                     total_segments=0,
                     elapsed_seconds=perf_counter() - start_time,
                     eta_seconds=None,
+                    backend=inference_backend,
+                    device_label=device_label,
                 )
             )
 
