@@ -18,7 +18,13 @@ class DualSpeakerAttributor:
     def __init__(self) -> None:
         self._impl = HeuristicAttributor()
 
-    def attribute(self, utterances: list[Utterance], anchors: dict[str, list[int]] | None = None) -> SpeakerAttributionResult:
+    def attribute(
+        self,
+        utterances: list[Utterance],
+        anchors: dict[str, list[int]] | None = None,
+        *,
+        monologue: bool = False,
+    ) -> SpeakerAttributionResult:
         anchor_assignments = None
         if anchors and anchors.get("A") and anchors.get("B"):
             anchor_assignments = AnchorAssignments(speaker_a_indices=anchors["A"], speaker_b_indices=anchors["B"])
@@ -26,6 +32,7 @@ class DualSpeakerAttributor:
             [utterance.original_text for utterance in utterances],
             explicit_speakers=[utterance.explicit_speaker for utterance in utterances],
             anchors=anchor_assignments,
+            monologue=monologue,
         )
         for utterance, decision in zip(utterances, decisions, strict=True):
             utterance.speaker = decision.speaker

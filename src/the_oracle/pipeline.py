@@ -48,6 +48,44 @@ _ETA_MIN_ELAPSED_SECONDS: float = 1.0
 # overhead. Below this threshold we stay inline on the already-loaded
 # main-process engine to avoid a second model load and pool spin-up delay.
 _MIN_TASKS_FOR_POOL: int = 4
+# Time-weighted progress model: until the first real per-segment wall time is
+# measured, ETA and the bar fall back to these per-backend estimates (seconds
+# per segment) plus a fixed tail for assembly + FLAC write. Once segment wall
+# times are measured they take over via an EWMA, so the bar converges on the
+# machine's real render rate instead of guessing.
+_DEFAULT_SEGMENT_SECONDS = {"vulkan": 3.0, "pytorch": 20.0}
+_PROGRESS_TAIL_SECONDS = 3.0
+# EWMA smoothing factor for the measured per-segment wall time.
+_PROGRESS_AVG_ALPHA = 0.3
+
+
+def _time_weighted_progress(render_state: dict[str, Any], elapsed: float, stage: str) -> tuple[float, float | None]:
+    """Time-weighted ``(fraction, eta_seconds)`` for a progress event.
+
+    Unlike the old step-count model (where a 20s model load counted as one of
+    eight steps), the bar is driven by ``elapsed / (elapsed + remaining)`` so
+    it moves smoothly through every phase and lands near 100% when work
+    completes. Remaining time is ``segments_left * avg_segment + tail`` where
+    avg_segment is a measured EWMA once available (per-backend default before
+    the first measurement).
+    """
+    if stage == "Complete":
+        return 1.0, 0.0
+    avg = render_state.get("segment_avg")
+    if avg is None:
+        avg = _DEFAULT_SEGMENT_SECONDS.get(render_state.get("backend", "pytorch"), 20.0)
+    total = int(render_state.get("segments_total") or 0)
+    done = int(render_state.get("segments_done") or 0)
+    remaining = max(0, total - done)
+    remaining_estimate = remaining * avg + _PROGRESS_TAIL_SECONDS
+    denominator = elapsed + remaining_estimate
+    fraction = min(0.99, elapsed / denominator) if denominator > 0 else 0.0
+    measured = render_state.get("segment_avg") is not None
+    if measured and done >= 2 and elapsed >= _ETA_MIN_ELAPSED_SECONDS:
+        eta = remaining_estimate
+    else:
+        eta = None
+    return fraction, eta
 
 
 def chatterbox_version() -> str:
@@ -94,6 +132,10 @@ class RenderSettings:
     metadata: dict[str, str] = field(default_factory=dict)
     anchors: AnchorAssignments | None = None
     target_wpm: float | None = None
+    # Single-narrator mode: every line is rendered in Speaker A's voice,
+    # ignoring per-line attribution (useful for reading a book aloud as one
+    # narrator instead of a cast).
+    monologue: bool = False
 
     def __post_init__(self) -> None:
         self.correction_mode = normalize_correction_mode(self.correction_mode)
@@ -133,6 +175,9 @@ class RenderProgress:
     total_segments: int
     elapsed_seconds: float
     eta_seconds: float | None = None
+    # Time-weighted 0..1 progress fraction (drives the GUI bar). Optional so
+    # older consumers/tests that only use step math keep working.
+    fraction: float | None = None
     # Live backend panel data (all optional so older consumers/tests keep
     # working): which inference backend is rendering, the human device label
     # (GPU name for Vulkan, CPU for PyTorch), and cumulative/most-recent
@@ -778,9 +823,36 @@ class OraclePipeline:
             [segment.text for segment in document.segments],
             explicit_speakers=[segment.explicit_speaker for segment in document.segments],
             anchors=settings.anchors,
+            monologue=settings.monologue,
         )
 
+        # detected_names: every explicit character label mapped to its voice
+        # key (A..X), so the GUI can label the review table and the manifest
+        # can persist the cast. In monologue mode everything maps to A.
+        detected_names: dict[str, str] = {}
+        for segment, decision in zip(document.segments, decisions, strict=True):
+            if segment.explicit_speaker:
+                detected_names[decision.speaker] = segment.explicit_speaker
+
         variant = settings.model_variant
+
+        # Audiobook support: the attributor may detect up to MAX_SPEAKERS
+        # distinct characters, and each needs a voice profile. Any detected
+        # speaker without an explicitly configured reference gets a default
+        # profile (the first configured reference, so a 24-character cast
+        # still renders even if only the lead voices are customised).
+        detected_speakers = sorted({decision.speaker for decision in decisions})
+        speaker_settings = dict(speaker_settings)
+        default_reference = next(
+            (config.reference_path for config in speaker_settings.values() if config.reference_path),
+            "",
+        )
+        for speaker in detected_speakers:
+            if speaker not in speaker_settings:
+                speaker_settings[speaker] = SpeakerSettings(
+                    reference_path=default_reference,
+                    voice_settings=VoiceSettings(),
+                )
 
         utterances: list[Utterance] = []
         for segment, (_cleaned, directives), repaired, decision in zip(
@@ -892,6 +964,7 @@ class OraclePipeline:
             metadata=metadata,
             utterances=utterances,
             voice_profiles=voice_profiles,
+            detected_names=detected_names,
         )
         plan.update_hashes()
         return plan
@@ -932,6 +1005,12 @@ class OraclePipeline:
         ) -> None:
             if progress_callback is None:
                 return
+            elapsed = perf_counter() - start_time
+            # Time-weighted bar + ETA. Explicit eta_seconds wins (the parallel
+            # path and the final Complete event pin it); otherwise derive both
+            # from the measured progress model.
+            fraction, derived_eta = _time_weighted_progress(render_state, elapsed, stage)
+            eta = eta_seconds if eta_seconds is not None else derived_eta
             progress_callback(
                 RenderProgress(
                     stage=stage,
@@ -940,8 +1019,9 @@ class OraclePipeline:
                     total_steps=total_steps,
                     current_segment=current_segment,
                     total_segments=total_segments,
-                    elapsed_seconds=perf_counter() - start_time,
-                    eta_seconds=eta_seconds,
+                    elapsed_seconds=elapsed,
+                    eta_seconds=eta,
+                    fraction=fraction,
                     backend=render_state["backend"],
                     device_label=render_state["device_label"],
                     synth_seconds_total=render_state["synth_total"] or None,
@@ -969,6 +1049,13 @@ class OraclePipeline:
             "device_label": None,
             "synth_total": 0.0,
             "synth_latest": None,
+            # Time-weighted progress state (see _time_weighted_progress):
+            # segments_total is pinned after chunking, segments_done advances
+            # in the results loop / batch callback, and segment_avg is an EWMA
+            # of measured per-segment wall time.
+            "segments_total": 0,
+            "segments_done": 0,
+            "segment_avg": None,
         }
         # device_mode is a PyTorch-path concept; for the Vulkan backend we use
         # "cpu" here so --device-mode vulkan cannot trip the stale
@@ -1100,6 +1187,8 @@ class OraclePipeline:
         # expand into multiple synthesis tasks. The +3 accounts for:
         # model load, assembly, and output write stages.
         total_steps = len(plan.voice_profiles) + len(raw_tasks) + 3
+        # Pin the progress model's segment total now that chunking is known.
+        render_state["segments_total"] = len(raw_tasks)
 
         # Fast path: if every stem already exists, skip model warmup and worker dispatch.
         cached_results: list[SynthesisResult] | None = None
@@ -1345,6 +1434,7 @@ class OraclePipeline:
                     # segment counter never rewinds, then completes the
                     # remaining steps (including cache-hit stems).
                     emitted_progress_count[0] += 1
+                    render_state["segments_done"] = emitted_progress_count[0]
                     live_reported_task_indices.add(task_index)
                     utterance = task_to_utterance_map.get(task_index)
                     emit_progress(
@@ -1504,7 +1594,19 @@ class OraclePipeline:
             )
             completed_tasks += 1
             completed_steps += 1
-            eta = 0.0 if mode_metadata == "parallel" else _compute_eta(render_start, completed_tasks, len(raw_tasks))
+            # Advance the time-weighted progress model: measured per-segment
+            # wall time feeds an EWMA that drives the bar and ETA. Only
+            # successfully-synthesized segments carry a real wall time; cache
+            # hits are near-instant and pull the average down correctly.
+            render_state["segments_done"] = emitted_progress_count[0] + 1
+            if result.error is None and result.segment_total_seconds > 0:
+                previous = render_state["segment_avg"]
+                measured = result.segment_total_seconds
+                render_state["segment_avg"] = (
+                    measured
+                    if previous is None
+                    else previous * (1 - _PROGRESS_AVG_ALPHA) + measured * _PROGRESS_AVG_ALPHA
+                )
             # Accumulate live synthesis timing for the backend panel (only
             # successful, non-cached utterances carry real synthesize seconds).
             if result.error is None and result.synthesize_seconds:
@@ -1522,7 +1624,6 @@ class OraclePipeline:
                     total_steps=total_steps,
                     current_segment=emitted_progress_count[0],
                     total_segments=len(raw_tasks),
-                    eta_seconds=eta,
                 )
 
         timeline["results_ready_seconds"] = round(perf_counter() - start_time, 6)

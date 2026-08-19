@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -807,7 +808,13 @@ class RenderProgressDialog(QDialog):
         return f"Backend: {label}"
 
     def update_progress(self, progress: RenderProgress) -> None:
-        percent = 0 if progress.total_steps <= 0 else int(round((progress.current_step / progress.total_steps) * 100))
+        # Time-weighted fraction (when the pipeline supplies one) drives the
+        # bar smoothly through model load and synthesis; fall back to the
+        # old step-count math for progress payloads without a fraction.
+        if progress.fraction is not None:
+            percent = int(round(progress.fraction * 100))
+        else:
+            percent = 0 if progress.total_steps <= 0 else int(round((progress.current_step / progress.total_steps) * 100))
         self.progress_bar.setValue(max(0, min(100, percent)))
         self.backend_label.setText(self._backend_panel_text(progress))
         if progress.synth_seconds_total is not None:
@@ -1062,8 +1069,21 @@ class MainWindow(QMainWindow):
         settings_row.addWidget(self._build_project_settings())
         self.speaker_a = SpeakerGroup("A", self.paths.voice_dir)
         self.speaker_b = SpeakerGroup("B", self.paths.voice_dir)
+        # Extra character voices (C..X) for audiobook casts. They are created
+        # lazily when a plan detects more than two speakers; the layout holds
+        # them in a scrollable column so a 24-voice cast stays usable.
+        self.extra_speaker_groups: dict[str, SpeakerGroup] = {}
+        self.extra_speaker_scroll = QScrollArea()
+        self.extra_speaker_scroll.setWidgetResizable(True)
+        self.extra_speaker_scroll.setFixedWidth(420)
+        self.extra_speaker_container = QWidget()
+        self.extra_speaker_layout = QVBoxLayout(self.extra_speaker_container)
+        self.extra_speaker_layout.setContentsMargins(0, 0, 0, 0)
+        self.extra_speaker_scroll.setWidget(self.extra_speaker_container)
+        self.extra_speaker_scroll.hide()
         settings_row.addWidget(self.speaker_a)
         settings_row.addWidget(self.speaker_b)
+        settings_row.addWidget(self.extra_speaker_scroll)
         layout.addLayout(settings_row)
 
         actions = QHBoxLayout()
@@ -1306,7 +1326,7 @@ class MainWindow(QMainWindow):
                 "Equivalent to ORACLE_AUDIOCPP_MAX_BATCH.",
             ),
         ])
-        for group in (self.speaker_a, self.speaker_b):
+        for group in self._all_speaker_groups().values():
             ctrl_help.register_many([
                 (
                     group.reference_picker,
@@ -1389,7 +1409,7 @@ class MainWindow(QMainWindow):
         backend_label = self._project_settings_form.labelForField(self._inference_backend_row)
         if backend_label is not None:
             ctrl_help.register(backend_label, ctrl_help.description_for(self.inference_backend_combo))
-        for group in (self.speaker_a, self.speaker_b):
+        for group in self._all_speaker_groups().values():
             ctrl_help.register_form_labels(group.form, [
                 group.reference_picker,
                 group.language_combo,
@@ -1425,6 +1445,12 @@ class MainWindow(QMainWindow):
         self.crossfade_spin.setValue(RenderSettings().crossfade_ms)
         self.export_srt_check = QCheckBox("Export SRT subtitles")
         self.export_srt_check.setToolTip("Write a .srt subtitle file next to the rendered FLAC, one cue per utterance.")
+        self.monologue_check = QCheckBox("Monologue (single narrator voice)")
+        self.monologue_check.setToolTip(
+            "Render the entire input in one narrator voice (Speaker A), ignoring "
+            "per-line attribution. Use this to read a book aloud as a single "
+            "narrator instead of a cast of characters."
+        )
         self.inference_backend_combo = QComboBox()
         self.inference_backend_combo.addItem("PyTorch (CPU)", "pytorch")
         self.inference_backend_combo.addItem("Vulkan (audio.cpp)", "vulkan")
@@ -1522,6 +1548,7 @@ class MainWindow(QMainWindow):
         form.addRow("Loudness", self.loudness_combo)
         form.addRow("Crossfade (ms)", self.crossfade_spin)
         form.addRow("", self.export_srt_check)
+        form.addRow("", self.monologue_check)
         return box
 
     def _set_correction_mode(self, value: str) -> None:
@@ -1587,8 +1614,8 @@ class MainWindow(QMainWindow):
         variant = self.variant_combo.currentText() if hasattr(self, "variant_combo") else "standard"
         languages = {"en": "English"} if variant != "multilingual" else ChatterboxEngine(variant).supported_languages()
         is_multilingual = variant == "multilingual"
-        self.speaker_a.set_language_options(languages, is_multilingual)
-        self.speaker_b.set_language_options(languages, is_multilingual)
+        for group in self._all_speaker_groups().values():
+            group.set_language_options(languages, is_multilingual)
 
     def _refresh_inference_backend_options(self) -> None:
         """Disable the Vulkan backend option when the turbo variant is selected.
@@ -2242,8 +2269,8 @@ class MainWindow(QMainWindow):
     def _refresh_reference_pickers(self) -> None:
         defaults = default_voice_choices(self.repo_root)
         recents = [path for path in load_recent_reference_paths() if Path(path).exists()]
-        self.speaker_a.set_reference_choices(defaults, recents, self.speaker_a.reference_path.text())
-        self.speaker_b.set_reference_choices(defaults, recents, self.speaker_b.reference_path.text())
+        for group in self._all_speaker_groups().values():
+            group.set_reference_choices(defaults, recents, group.reference_path.text())
 
     # --------------------
     # Prewarm management
@@ -2307,37 +2334,48 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _all_speaker_groups(self) -> dict[str, SpeakerGroup]:
+        """Every speaker group: A, B, and any extra character voices (C..X)."""
+        return {"A": self.speaker_a, "B": self.speaker_b, **self.extra_speaker_groups}
+
+    def _sync_extra_speaker_groups(self, speakers: list[str]) -> None:
+        """Create/refresh SpeakerGroup widgets for characters beyond A and B
+        (up to 24 total) so an audiobook cast gets one voice panel each."""
+        extras = sorted(speaker for speaker in speakers if speaker not in ("A", "B"))
+        for key in extras:
+            if key not in self.extra_speaker_groups:
+                group = SpeakerGroup(key, self.paths.voice_dir)
+                self.extra_speaker_groups[key] = group
+                self.extra_speaker_layout.addWidget(group)
+        stale = [key for key in self.extra_speaker_groups if key not in extras]
+        for key in stale:
+            group = self.extra_speaker_groups.pop(key)
+            self.extra_speaker_layout.removeWidget(group)
+            group.deleteLater()
+        self.extra_speaker_scroll.setVisible(bool(extras))
+        if extras:
+            self.extra_speaker_scroll.setWindowTitle("Character Voices")
+        self._refresh_reference_pickers()
+        self._refresh_language_options()
+
     def _speaker_settings(self) -> dict[str, SpeakerSettings]:
         variant = self.variant_combo.currentText()
         return {
-            "A": SpeakerSettings(
-                reference_path=self.speaker_a.reference_path.text(),
+            key: SpeakerSettings(
+                reference_path=group.reference_path.text(),
                 voice_settings=VoiceSettings(
                     variant=variant,
-                    language=self.speaker_a.language_combo.currentData() or "en",
-                    cfg_weight=self.speaker_a.cfg_weight.value(),
-                    exaggeration=self.speaker_a.exaggeration.value(),
-                    temperature=self.speaker_a.temperature.value(),
-                    emotion_intensity=self.speaker_a.emotion_intensity.value(),
-                    naturalness=self.speaker_a.naturalness.value(),
-                    pause_ms=self.speaker_a.pause_spin.value(),
+                    language=group.language_combo.currentData() or "en",
+                    cfg_weight=group.cfg_weight.value(),
+                    exaggeration=group.exaggeration.value(),
+                    temperature=group.temperature.value(),
+                    emotion_intensity=group.emotion_intensity.value(),
+                    naturalness=group.naturalness.value(),
+                    pause_ms=group.pause_spin.value(),
                     crossfade_ms=self.crossfade_spin.value(),
                 ),
-            ),
-            "B": SpeakerSettings(
-                reference_path=self.speaker_b.reference_path.text(),
-                voice_settings=VoiceSettings(
-                    variant=variant,
-                    language=self.speaker_b.language_combo.currentData() or "en",
-                    cfg_weight=self.speaker_b.cfg_weight.value(),
-                    exaggeration=self.speaker_b.exaggeration.value(),
-                    temperature=self.speaker_b.temperature.value(),
-                    emotion_intensity=self.speaker_b.emotion_intensity.value(),
-                    naturalness=self.speaker_b.naturalness.value(),
-                    pause_ms=self.speaker_b.pause_spin.value(),
-                    crossfade_ms=self.crossfade_spin.value(),
-                ),
-            ),
+            )
+            for key, group in self._all_speaker_groups().items()
         }
 
     def _render_settings(self) -> RenderSettings:
@@ -2362,6 +2400,7 @@ class MainWindow(QMainWindow):
             audio_cpp_threads=self._audio_cpp_threads_value() if is_vulkan else None,
             audio_cpp_timeout=self._audio_cpp_timeout_value() if is_vulkan else None,
             audio_cpp_max_batch=self._audio_cpp_max_batch_value() if is_vulkan else None,
+            monologue=self.monologue_check.isChecked(),
             metadata={
                 "output_filename": normalize_output_filename(self.output_name.text()),
                 "export_srt": "1" if self.export_srt_check.isChecked() else "",
@@ -2416,6 +2455,7 @@ class MainWindow(QMainWindow):
                 "output_dir": str(self.paths.output_dir),
                 "output_filename": "",
                 "export_srt": False,
+                "monologue": False,
             },
             "speakers": {
                 speaker: {
@@ -2448,6 +2488,7 @@ class MainWindow(QMainWindow):
         self.outdir_path.setText(saved_project.output_path)
         self.output_name.setText(str(saved_project.render_settings.metadata.get("output_filename", "")))
         self.export_srt_check.setChecked(bool(saved_project.render_settings.metadata.get("export_srt")))
+        self.monologue_check.setChecked(saved_project.render_settings.monologue)
         self.variant_combo.setCurrentText(saved_project.render_settings.model_variant)
         self._refresh_language_options()
         self._set_correction_mode(saved_project.render_settings.correction_mode)
@@ -2461,8 +2502,9 @@ class MainWindow(QMainWindow):
         self._set_audio_cpp_timeout_value(saved_project.render_settings.audio_cpp_timeout)
         self._set_audio_cpp_max_batch_value(saved_project.render_settings.audio_cpp_max_batch)
         self._refresh_inference_backend_options()
-        self._apply_speaker_group(self.speaker_a, saved_project.speaker_settings["A"])
-        self._apply_speaker_group(self.speaker_b, saved_project.speaker_settings["B"])
+        self._sync_extra_speaker_groups(list(saved_project.speaker_settings))
+        for speaker, settings in saved_project.speaker_settings.items():
+            self._apply_speaker_group(self._all_speaker_groups()[speaker], settings)
         self._populate_table(self.plan)
 
     def _current_saved_project(self):
@@ -2496,6 +2538,7 @@ class MainWindow(QMainWindow):
                 "output_dir": self.outdir_path.text() or str(self.paths.output_dir),
                 "output_filename": normalize_output_filename(self.output_name.text()),
                 "export_srt": self.export_srt_check.isChecked(),
+                "monologue": self.monologue_check.isChecked(),
                 "delete_confirm_enabled": self.delete_confirm_enabled,
             },
             "speakers": {
@@ -2519,6 +2562,7 @@ class MainWindow(QMainWindow):
         self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
         self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
         self.export_srt_check.setChecked(bool(project.get("export_srt", False)))
+        self.monologue_check.setChecked(bool(project.get("monologue", False)))
         self.delete_confirm_enabled = bool(project.get("delete_confirm_enabled", True))
         backend_index = self.inference_backend_combo.findData(project.get("inference_backend", "pytorch"))
         if backend_index >= 0:
@@ -2532,10 +2576,15 @@ class MainWindow(QMainWindow):
         # selected (RenderSettings would otherwise pass it through to a
         # confusing engine error at render time).
         self._refresh_inference_backend_options()
-        for speaker, group in (("A", self.speaker_a), ("B", self.speaker_b)):
-            config = {**defaults["speakers"][speaker], **payload["speakers"][speaker]}
-            voice = VoiceSettings.from_mapping(config.get("voice_settings"))
-            group.reference_path.setText(config.get("reference_path", ""))
+        for speaker, config in payload["speakers"].items():
+            default_config = defaults["speakers"].get(speaker, defaults["speakers"]["A"])
+            merged = {**default_config, **config}
+            group = self._all_speaker_groups().get(speaker)
+            if group is None:
+                self._sync_extra_speaker_groups(list(payload["speakers"]))
+                group = self._all_speaker_groups()[speaker]
+            voice = VoiceSettings.from_mapping(merged.get("voice_settings"))
+            group.reference_path.setText(merged.get("reference_path", ""))
             language_index = group.language_combo.findData(voice.language)
             if language_index >= 0:
                 group.language_combo.setCurrentIndex(language_index)
@@ -2698,6 +2747,7 @@ class MainWindow(QMainWindow):
             for speaker in self._speaker_settings().values():
                 if speaker.reference_path:
                     remember_recent_reference_path(speaker.reference_path)
+            self._sync_extra_speaker_groups([item.speaker for item in self.plan.utterances])
             self._refresh_reference_pickers()
             self._populate_table(self.plan)
             self.error_panel.append("Analysis complete.")
@@ -2710,7 +2760,8 @@ class MainWindow(QMainWindow):
         for row, utterance in enumerate(plan.utterances):
             self.table.setItem(row, 0, QTableWidgetItem(str(utterance.index)))
             speaker_combo = QComboBox()
-            speaker_combo.addItems(["A", "B"])
+            detected = sorted({item.speaker for item in plan.utterances})
+            speaker_combo.addItems(detected or ["A", "B"])
             speaker_combo.setCurrentText(utterance.speaker)
             self.table.setCellWidget(row, 1, speaker_combo)
             self.table.setItem(row, 2, QTableWidgetItem(utterance.original_text))
@@ -2828,10 +2879,14 @@ class MainWindow(QMainWindow):
                 utterance.manual_emotion_override = utterance.manual_emotion_override or emotion_text != utterance.emotion
                 utterance.emotion = emotion_text
         speaker_settings = self._speaker_settings()
-        self.plan.voice_profiles = self.plan.voice_profiles | {
-            "A": replace(self.plan.voice_profiles["A"], engine_params=speaker_settings["A"].voice_settings),
-            "B": replace(self.plan.voice_profiles["B"], engine_params=speaker_settings["B"].voice_settings),
-        }
+        self._sync_extra_speaker_groups(list(speaker_settings))
+        merged_profiles = dict(self.plan.voice_profiles)
+        for speaker, config in speaker_settings.items():
+            if speaker in merged_profiles:
+                merged_profiles[speaker] = replace(
+                    merged_profiles[speaker], engine_params=config.voice_settings
+                )
+        self.plan.voice_profiles = merged_profiles
         self.plan.source_path = self.input_path.text()
         self.plan.output_dir = self.outdir_path.text()
         self.plan.metadata["model_variant"] = self.variant_combo.currentText()

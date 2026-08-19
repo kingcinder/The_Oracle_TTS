@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,7 @@ def _render_settings_to_dict(settings: RenderSettings) -> dict[str, Any]:
         "audio_cpp_timeout": settings.audio_cpp_timeout,
         "audio_cpp_max_batch": settings.audio_cpp_max_batch,
         "target_wpm": settings.target_wpm,
+        "monologue": settings.monologue,
         "metadata": dict(settings.metadata),
     }
 
@@ -139,8 +141,16 @@ def saved_project_from_dict(payload: dict[str, Any]) -> SavedProject:
         raise ProjectManifestError(f"Unsupported engine '{payload['engine']}'. Only 'chatterbox' is supported.")
 
     speakers_payload = payload["speaker_settings"]
-    if not isinstance(speakers_payload, dict) or set(speakers_payload) != {"A", "B"}:
-        raise ProjectManifestError("Project manifest must contain speaker settings for both 'A' and 'B'.")
+    if not isinstance(speakers_payload, dict) or not speakers_payload:
+        raise ProjectManifestError("Project manifest must contain speaker settings.")
+    invalid_keys = [key for key in speakers_payload if not re.fullmatch(r"[A-X]", str(key))]
+    if invalid_keys:
+        raise ProjectManifestError(
+            "Project manifest contains invalid speaker keys: "
+            f"{', '.join(map(str, invalid_keys))}. Voices are A..X (up to 24)."
+        )
+    if len(speakers_payload) > 24:
+        raise ProjectManifestError("Project manifest can carry at most 24 speaker voices.")
 
     render_settings = RenderSettings(**payload["render_settings"])
     speaker_settings = {

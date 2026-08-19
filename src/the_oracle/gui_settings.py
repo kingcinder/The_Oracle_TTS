@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -262,8 +263,16 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if payload["version"] != GUI_SETTINGS_VERSION:
         raise GUISettingsError(f"Unsupported GUI settings version {payload['version']}; expected {GUI_SETTINGS_VERSION}.")
     speakers = payload["speakers"]
-    if not isinstance(speakers, dict) or set(speakers) != {"A", "B"}:
-        raise GUISettingsError("GUI settings profile must contain both speakers 'A' and 'B'.")
+    if not isinstance(speakers, dict) or not speakers:
+        raise GUISettingsError("GUI settings profile must contain at least one speaker.")
+    invalid_keys = [key for key in speakers if not re.fullmatch(r"[A-X]", str(key))]
+    if invalid_keys:
+        raise GUISettingsError(
+            "GUI settings profile contains invalid speaker keys: "
+            f"{', '.join(map(str, invalid_keys))}. Voices are A..X (up to 24)."
+        )
+    if len(speakers) > 24:
+        raise GUISettingsError("GUI settings profile can carry at most 24 speaker voices.")
     project = dict(payload["project"])
     normalized_project = {
         "model_variant": str(project.get("model_variant", "standard")),
