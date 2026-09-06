@@ -16,6 +16,23 @@ class VoiceChoice:
 VOICE_FILE_PATTERNS = ("*.wav", "*.flac", "*.mp3")
 
 
+def _sorted_voice_paths(directory: Path, pattern: str) -> list[Path]:
+    """Voice files for a directory, English-conditioned clips first.
+
+    The bundled library mixes languages (see Seashells/generic/ATTRIBUTION.md);
+    the default render path is English, so English-conditioned references must
+    lead the picker (and be the CLI's fallback default) rather than sort
+    behind other languages alphabetically.
+    """
+    paths = list(directory.glob(pattern))
+    if directory.name == "generic":
+        return sorted(
+            paths,
+            key=lambda p: (0 if p.stem.startswith(("english", "generic")) else 1, str(p)),
+        )
+    return sorted(paths)
+
+
 def default_voice_choices(repo_root: str | Path, limit: int = 10) -> list[VoiceChoice]:
     root = Path(repo_root)
     candidates = [
@@ -37,7 +54,7 @@ def default_voice_choices(repo_root: str | Path, limit: int = 10) -> list[VoiceC
         if not directory.exists():
             continue
         for pattern in VOICE_FILE_PATTERNS:
-            for path in sorted(directory.glob(pattern)):
+            for path in _sorted_voice_paths(directory, pattern):
                 resolved = str(path.resolve())
                 if resolved in seen:
                     continue
