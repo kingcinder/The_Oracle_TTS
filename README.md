@@ -128,8 +128,8 @@ Windows:
 ## CLI Usage
 
 `--speakerA-ref`/`--speakerB-ref` are optional: when omitted they default to the
-repo-local `Seashells/` clips (the GUI's "Default Voices"), so the simplest
-render is just:
+repo-local `Seashells/` clips (the GUI's "Default Voices", including the
+bundled `Seashells/generic/` library), so the simplest render is just:
 
 ```bash
 the-oracle render --input Input/cli_short.txt --outdir Output
@@ -479,13 +479,35 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\pytest.exe
 ```
 
+## Generic Voices And Voice Blending
+
+**Generic voices.** The repo ships a small bundled generic voice library under
+`Seashells/generic/` (male and female narrator references copied from
+audio.cpp's demo voices — Apache-2.0, attribution in
+`Seashells/generic/ATTRIBUTION.md`). These appear at the top of the GUI's
+voice picker under **Default Voices**, so a render never needs a custom
+recording. Drop your own neutral recordings into `Seashells/generic/` to
+extend the library.
+
+**Voice blending.** Chatterbox conditions each speaker on one reference
+payload, so combining two voices works by deriving a single **blended
+reference clip** from two sources. In each speaker panel: pick a second clip
+under **Blend With Voice**, choose how strongly the base voice dominates with
+**Base Voice Presence** (0–100%), and pick a **Blend Mode**: `Mix`
+(weight-averaged), `Alternate` (the two clips take turns), or `Layer` (base
+voice with the second underneath). The blend is deterministic and cached by
+its inputs' content hashes, so a given (base, target, weight, mode) always
+renders the same voice, on both the PyTorch and Vulkan backends, and stem
+caches re-key automatically when the blend changes. Blend settings round-trip
+through saved projects and GUI settings profiles.
+
 ## Product Notes
 
 - Chatterbox standard is the default quality-first backend.
 - Multilingual mode requires the multilingual Chatterbox variant and a real language code.
 - Turbo is optional and lower-latency, but not the default backend.
 - Better voice quality comes from stronger local reference clips, not from a separate packaged voice library.
-- Voice mixing is intentionally deferred because the current conditioning pipeline assumes one reference payload per speaker.
+- Voice blending (combining two references into one conditioning clip) is supported; see "Generic Voices And Voice Blending" above.
 
 ## Licensing
 

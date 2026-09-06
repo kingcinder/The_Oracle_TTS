@@ -19,6 +19,10 @@ VOICE_FILE_PATTERNS = ("*.wav", "*.flac", "*.mp3")
 def default_voice_choices(repo_root: str | Path, limit: int = 10) -> list[VoiceChoice]:
     root = Path(repo_root)
     candidates = [
+        # Bundled generic voice library first (repo-shipped, third-party
+        # demo clips from audio.cpp, see Seashells/generic/ATTRIBUTION.md),
+        # then the user's curated clips, then build-time fallbacks.
+        root / "Seashells" / "generic",
         root / "Seashells",
         root / ".engine-setup" / "chatterbox_runtime_check" / "refs",
         root / ".engine-setup" / "chatterbox_runtime_check_final" / "refs",
@@ -46,6 +50,7 @@ def default_voice_choices(repo_root: str | Path, limit: int = 10) -> list[VoiceC
 
 def voice_catalog_audit(repo_root: str | Path) -> dict[str, Any]:
     root = Path(repo_root)
+    generic_dir = root / "Seashells" / "generic"
     seashell_dir = root / "Seashells"
     fallback_dirs = [
         root / ".engine-setup" / "chatterbox_runtime_check" / "refs",
@@ -55,17 +60,21 @@ def voice_catalog_audit(repo_root: str | Path) -> dict[str, Any]:
         root / "build" / "project_manifest_verify",
         root / "build" / "project_manifest_verify_20260314",
     ]
+    generic_clips = _count_voice_files(generic_dir)
     seashell_clips = _count_voice_files(seashell_dir)
     fallback_clips = sum(_count_voice_files(directory) for directory in fallback_dirs)
-    primary_source = "seashells" if seashell_clips else "build_fallbacks" if fallback_clips else "none"
+    primary_source = "generic" if generic_clips else "seashells" if seashell_clips else "build_fallbacks" if fallback_clips else "none"
     return {
-        "ok": bool(seashell_clips or fallback_clips),
+        "ok": bool(generic_clips or seashell_clips or fallback_clips),
         "primary_source": primary_source,
         "seashell_dir": str(seashell_dir),
+        "generic_clip_count": generic_clips,
         "seashell_clip_count": seashell_clips,
         "fallback_clip_count": fallback_clips,
         "default_voice_assessment": (
-            "Repo-local reference clips in Seashells."
+            "Bundled generic voices in Seashells/generic."
+            if generic_clips
+            else "Repo-local reference clips in Seashells."
             if seashell_clips
             else "Build-time smoke/reference clips, not curated production voices."
             if fallback_clips

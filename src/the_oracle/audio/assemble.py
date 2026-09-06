@@ -62,12 +62,19 @@ def save_wav(path: str | Path, audio: np.ndarray, sample_rate: int) -> None:
     sf.write(str(path), np.asarray(audio, dtype=np.float32), sample_rate, format="WAV")
 
 
-def _load_segment_audio(seg: AudioSegment, target_rate: int) -> tuple[int, np.ndarray]:
-    """Load and preprocess a single stem file (I/O-bound, runs in a thread)."""
+def _load_segment_audio(seg: AudioSegment, target_rate: int, position: int) -> tuple[int, np.ndarray]:
+    """Load and preprocess a single stem file (I/O-bound, runs in a thread).
+
+    The dict key is the segment's POSITION in the assembly order, never
+    ``seg.segment_index``: segment_index is the source utterance index, which
+    is shared by every chunk of a chunked utterance, so keying a dict on it
+    would silently drop all but the last chunk's audio (the render would
+    repeat one chunk's words and skip the rest).
+    """
     audio, sample_rate = load_audio(seg.path)
     if sample_rate != target_rate:
         raise ValueError("All stems must share a sample rate before assembly.")
-    return seg.segment_index, apply_fade(remove_dc_offset(audio), sample_rate)
+    return position, apply_fade(remove_dc_offset(audio), sample_rate)
 
 
 def assemble_dialogue(
@@ -83,18 +90,25 @@ def assemble_dialogue(
     crossfade_samples = max(0, int(final_rate * crossfade_ms / 1000))
 
     # --- Phase 1: parallel I/O — load all stems concurrently ---
+    # Keyed by list position (see _load_segment_audio): segment_index is the
+    # utterance index and is NOT unique when an utterance was chunked.
     with ThreadPoolExecutor(max_workers=min(8, len(segments))) as pool:
-        loaded = dict(pool.map(lambda s: _load_segment_audio(s, final_rate), segments))
+        loaded = dict(
+            pool.map(
+                lambda pair: _load_segment_audio(pair[1], final_rate, pair[0]),
+                enumerate(segments),
+            )
+        )
 
     # --- Phase 2: pre-compute total buffer size (avoids repeated concatenate copies) ---
     total_samples = 0
     for i, seg in enumerate(segments):
-        audio = loaded[seg.segment_index]
+        audio = loaded[i]
         pause_samples = int(final_rate * seg.pause_after_ms / 1000)
         if i == 0:
             total_samples += len(audio) + pause_samples
         else:
-            prev_audio = loaded[segments[i - 1].segment_index]
+            prev_audio = loaded[i - 1]
             overlap = min(crossfade_samples, len(prev_audio), len(audio))
             total_samples += len(audio) - overlap + pause_samples
     buf = np.zeros(total_samples, dtype=np.float32)
@@ -106,7 +120,7 @@ def assemble_dialogue(
     previous_segment: AudioSegment | None = None
 
     for idx, segment in enumerate(segments):
-        audio = loaded[segment.segment_index]
+        audio = loaded[idx]
         applied_crossfade_samples = 0
         content_start_sample = write_pos
 

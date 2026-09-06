@@ -75,6 +75,9 @@ def _speaker_settings_to_dict(settings: SpeakerSettings) -> dict[str, Any]:
         "reference_path": settings.reference_path,
         "voice_settings": settings.voice_settings.to_dict() if hasattr(settings.voice_settings, "to_dict") else dict(settings.voice_settings),
         "emotion_reference_paths": dict(settings.emotion_reference_paths),
+        "blend_references": list(settings.blend_references),
+        "blend_weight": settings.blend_weight,
+        "blend_mode": settings.blend_mode,
     }
 
 
@@ -159,6 +162,9 @@ def saved_project_from_dict(payload: dict[str, Any]) -> SavedProject:
             reference_path=value["reference_path"],
             voice_settings=value.get("voice_settings", {}),
             emotion_reference_paths=value.get("emotion_reference_paths", {}),
+            blend_references=list(value.get("blend_references", [])),
+            blend_weight=value.get("blend_weight", 0.5),
+            blend_mode=value.get("blend_mode", "mix"),
         )
         for speaker, value in speakers_payload.items()
     }

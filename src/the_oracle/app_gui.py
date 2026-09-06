@@ -943,6 +943,35 @@ class SpeakerGroup(QGroupBox):
         self.reference_picker.activated.connect(self._handle_reference_selection)
         self._available_reference_paths: set[str] = set()
 
+        # Voice blending: optionally derive this speaker's conditioning
+        # reference from TWO clips (base + blend target), with a preference
+        # weight choosing which voice's qualities dominate and a mode
+        # choosing how they are combined (see audio/blend.py).
+        self.blend_picker = QComboBox()
+        self.blend_picker.setToolTip(
+            "Combine this speaker's voice with a second voice: the render "
+            "conditions Chatterbox on a deterministic blend of the two clips. "
+            "None keeps the single-voice behavior."
+        )
+        self.blend_weight_spin = QSpinBox()
+        self.blend_weight_spin.setRange(0, 100)
+        self.blend_weight_spin.setValue(50)
+        self.blend_weight_spin.setSuffix("%")
+        self.blend_weight_spin.setToolTip(
+            "How strongly the base voice dominates the blend (100% = pure base "
+            "voice, 0% = pure blend target). This is the preference knob for "
+            "which voice's qualities win."
+        )
+        self.blend_mode_combo = QComboBox()
+        self.blend_mode_combo.addItem("Mix (voices blended together)", "mix")
+        self.blend_mode_combo.addItem("Alternate (voices take turns)", "alternate")
+        self.blend_mode_combo.addItem("Layer (base + texture under)", "layer")
+        self.blend_mode_combo.setToolTip(
+            "How the two clips are combined into the conditioning reference: "
+            "Mix weight-averages them, Alternate plays them in sequence, and "
+            "Layer keeps the base full-level with the second voice underneath."
+        )
+
         self.language_combo = QComboBox()
         self.cfg_weight = self._double_box(0.0, 1.5, 0.5, 0.05)
         self.exaggeration = self._double_box(0.0, 1.5, 0.5, 0.05)
@@ -956,6 +985,9 @@ class SpeakerGroup(QGroupBox):
         form = QFormLayout(self)
         self.form = form  # kept so Ctrl+hover help can register row labels
         form.addRow("Custom Voice Reference Audio", self.reference_picker)
+        form.addRow("Blend With Voice", self.blend_picker)
+        form.addRow("Base Voice Presence", self.blend_weight_spin)
+        form.addRow("Blend Mode", self.blend_mode_combo)
         form.addRow("Language", self.language_combo)
         form.addRow("CFG Weight", self.cfg_weight)
         form.addRow("Exaggeration", self.exaggeration)
@@ -1031,6 +1063,53 @@ class SpeakerGroup(QGroupBox):
             return
         if isinstance(data, str) and data:
             self.reference_path.setText(data)
+
+    def set_blend_choices(self, defaults: list[VoiceChoice], recents: list[str], selected_path: str = "") -> None:
+        """Populate the 'Blend With Voice' picker (None + the same voice lists)."""
+        current = selected_path or self.blend_target_path()
+        self.blend_picker.blockSignals(True)
+        self.blend_picker.clear()
+        self.blend_picker.addItem("None (single voice)", "__none__")
+        if defaults:
+            header_index = self.blend_picker.count()
+            self.blend_picker.addItem("Default Voices")
+            header_item = self.blend_picker.model().item(header_index)
+            if header_item is not None:
+                header_item.setEnabled(False)
+            for voice in defaults[:10]:
+                self.blend_picker.addItem(f"  {voice.label}", voice.path)
+        if recents:
+            header_index = self.blend_picker.count()
+            self.blend_picker.addItem("Recent Custom Clips")
+            header_item = self.blend_picker.model().item(header_index)
+            if header_item is not None:
+                header_item.setEnabled(False)
+            for path in recents[:10]:
+                resolved = str(Path(path).expanduser())
+                self.blend_picker.addItem(f"  {Path(resolved).name}", resolved)
+        index = self.blend_picker.findData(current)
+        self.blend_picker.setCurrentIndex(index if index >= 0 else 0)
+        self.blend_picker.blockSignals(False)
+
+    def select_blend_path(self, path: str) -> None:
+        """Select a specific blend target (restoring a saved project)."""
+        if not path:
+            self.blend_picker.setCurrentIndex(0)
+            return
+        index = self.blend_picker.findData(str(Path(path).expanduser()))
+        if index < 0:
+            # The saved clip is not in the standard lists; keep the selection
+            # honest by staying on None rather than inventing an entry.
+            self.blend_picker.setCurrentIndex(0)
+            return
+        self.blend_picker.setCurrentIndex(index)
+
+    def blend_target_path(self) -> str:
+        """The selected second clip, or "" when blending is off."""
+        data = self.blend_picker.currentData()
+        if isinstance(data, str) and data and data != "__none__":
+            return data
+        return ""
 
 
 class MainWindow(QMainWindow):
@@ -2368,6 +2447,7 @@ class MainWindow(QMainWindow):
         recents = [path for path in load_recent_reference_paths() if Path(path).exists()]
         for group in self._all_speaker_groups().values():
             group.set_reference_choices(defaults, recents, group.reference_path.text())
+            group.set_blend_choices(defaults, recents, group.blend_target_path())
 
     # --------------------
     # Prewarm management
@@ -2457,8 +2537,10 @@ class MainWindow(QMainWindow):
 
     def _speaker_settings(self) -> dict[str, SpeakerSettings]:
         variant = self.variant_combo.currentText()
-        return {
-            key: SpeakerSettings(
+        result: dict[str, SpeakerSettings] = {}
+        for key, group in self._all_speaker_groups().items():
+            blend_target = group.blend_target_path()
+            result[key] = SpeakerSettings(
                 reference_path=group.reference_path.text(),
                 voice_settings=VoiceSettings(
                     variant=variant,
@@ -2471,9 +2553,11 @@ class MainWindow(QMainWindow):
                     pause_ms=group.pause_spin.value(),
                     crossfade_ms=self.crossfade_spin.value(),
                 ),
+                blend_references=[group.reference_path.text(), blend_target] if blend_target else [],
+                blend_weight=group.blend_weight_spin.value() / 100.0,
+                blend_mode=group.blend_mode_combo.currentData() or "mix",
             )
-            for key, group in self._all_speaker_groups().items()
-        }
+        return result
 
     def _render_settings(self) -> RenderSettings:
         variant = self.variant_combo.currentText()
@@ -2576,7 +2660,12 @@ class MainWindow(QMainWindow):
         group.emotion_intensity.setValue(voice.emotion_intensity)
         group.naturalness.setValue(voice.naturalness)
         group.pause_spin.setValue(voice.pause_ms)
+        group.blend_weight_spin.setValue(int(round(settings.blend_weight * 100)))
+        mode_index = group.blend_mode_combo.findData(settings.blend_mode)
+        if mode_index >= 0:
+            group.blend_mode_combo.setCurrentIndex(mode_index)
         self._refresh_reference_pickers()
+        group.select_blend_path(settings.blend_references[1] if len(settings.blend_references) >= 2 else "")
 
     def _load_project_into_ui(self, saved_project) -> None:
         self.current_project_path = None
