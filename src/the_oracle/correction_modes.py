@@ -7,7 +7,10 @@ CORRECTION_MODE_OPTIONS = (
     ("Aggressive", "aggressive"),
     ("Moderate", "moderate"),
     ("Mild", "mild"),
-    ("Off", "off"),
+    # "off" is a true verbatim passthrough: the repair pipeline returns the
+    # source text exactly as written (see TextRepairPipeline.repair). The
+    # label says Verbatim so users looking for unmodified narration find it.
+    ("Verbatim (no changes)", "off"),
 )
 LABEL_TO_VALUE = {label.lower(): value for label, value in CORRECTION_MODE_OPTIONS}
 VALUE_TO_LABEL = {value: label for label, value in CORRECTION_MODE_OPTIONS}
