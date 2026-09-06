@@ -42,6 +42,14 @@ rewritten by the loop).
 
 ## Deferred (intentional)
 
+- **Open investigation — GUI closes instantly on Render click (native
+  crash)**: kernel-log `general protection fault` in libQt6Widgets at a
+  data-region offset (execution through a corrupted function pointer →
+  use-after-free signature) in the GUI process, same second as the
+  `render_click` event. Not reproduced programmatically on current or
+  crash-era code; blocked-on-repro. Repro launcher: `bash
+  /tmp/gui_crash_catcher.sh` → click Render → backtrace lands in
+  `/tmp/gui_crash_backtrace.log`. Findings: `.serpent-circle/04-debug/root-causes.md`.
 - **audio.cpp punctuation normalization is NOT patched**: its replacement
   table (`:`→`,`, `;`→`, `, dashes, quotes) exactly mirrors the installed
   Chatterbox Python reference `punc_norm`, so diverging would reduce
