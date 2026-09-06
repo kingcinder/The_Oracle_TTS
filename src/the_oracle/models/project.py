@@ -65,9 +65,26 @@ class VoiceProfile:
     conditioning_cache_id: str = ""
     normalized_reference_audio: list[Path] = field(default_factory=list)
     reference_audio_hash: str = ""
+    # Voice blending: when two clips are listed, primary_reference returns
+    # the deterministic blend (audio/blend.py) instead of the plain clip.
+    blend_references: list[str] = field(default_factory=list)
+    blend_weight: float = 0.5
+    blend_mode: str = "mix"
 
     @property
     def primary_reference(self) -> Path:
+        if len(self.blend_references) >= 2:
+            from the_oracle.audio.blend import blend_references
+
+            first = self.blend_references[0]
+            second = self.blend_references[1]
+            if first and second:
+                return blend_references(
+                    Path(first).expanduser(),
+                    Path(second).expanduser(),
+                    weight_a=self.blend_weight,
+                    mode=self.blend_mode,
+                )
         if self.neutral_reference:
             candidate = self.neutral_reference.expanduser()
         elif self.reference_audio:
@@ -100,6 +117,9 @@ class VoiceProfile:
             "conditioning_cache_id": self.conditioning_cache_id,
             "normalized_reference_audio": [str(path) for path in self.normalized_reference_audio],
             "reference_audio_hash": self.reference_audio_hash,
+            "blend_references": [str(path) for path in self.blend_references],
+            "blend_weight": self.blend_weight,
+            "blend_mode": self.blend_mode,
         }
 
     @classmethod
@@ -114,6 +134,9 @@ class VoiceProfile:
             conditioning_cache_id=payload.get("conditioning_cache_id", ""),
             normalized_reference_audio=[Path(path) for path in payload.get("normalized_reference_audio", [])],
             reference_audio_hash=payload.get("reference_audio_hash", ""),
+            blend_references=[str(path) for path in payload.get("blend_references", [])],
+            blend_weight=payload.get("blend_weight", 0.5),
+            blend_mode=payload.get("blend_mode", "mix"),
         )
 
 

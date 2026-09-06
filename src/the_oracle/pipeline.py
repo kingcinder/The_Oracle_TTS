@@ -112,6 +112,14 @@ class SpeakerSettings:
     reference_path: str
     voice_settings: VoiceSettings | dict[str, Any] = field(default_factory=VoiceSettings)
     emotion_reference_paths: dict[str, str] = field(default_factory=dict)
+    # Voice blending: when two reference paths are given, the speaker's
+    # conditioning reference is a deterministic blend of them (see
+    # audio/blend.py) instead of ``reference_path`` alone. ``blend_weight``
+    # is the proportion (0..1) of the first clip; ``blend_mode`` is one of
+    # "mix", "alternate", "layer".
+    blend_references: list[str] = field(default_factory=list)
+    blend_weight: float = 0.5
+    blend_mode: str = "mix"
 
 
 @dataclass(slots=True)
@@ -953,6 +961,11 @@ class OraclePipeline:
                 )
             )
 
+        # A voice profile exists for every DETECTED speaker (a cast member
+        # that actually speaks in this document), never for configured-but-
+        # unused speakers: a speaker group left with an empty reference
+        # (e.g. Speaker B when monologue mode forces every line onto A) must
+        # not produce a profile whose primary_reference raises mid-render.
         voice_profiles = {
             speaker: VoiceProfile(
                 name=f"Speaker {speaker}",
@@ -965,9 +978,14 @@ class OraclePipeline:
                     variant=variant,
                     language=coerced_voice_settings[speaker].language if variant == "multilingual" else "en",
                 ),
+                blend_references=list(config.blend_references),
+                blend_weight=config.blend_weight,
+                blend_mode=config.blend_mode,
             )
             for speaker, config in speaker_settings.items()
+            if speaker in detected_speakers
         }
+        primary_profile = voice_profiles.get("A") or next(iter(voice_profiles.values()), None)
 
         speaker_languages = {profile.engine_params.language for profile in voice_profiles.values()}
         project_language = next(iter(speaker_languages)) if len(speaker_languages) == 1 else "mixed"
@@ -986,8 +1004,8 @@ class OraclePipeline:
             "chatterbox_version": chatterbox_version(),
             "model_variant": variant,
             "language": project_language,
-            "cfg_weight": str(voice_profiles["A"].engine_params.cfg_weight),
-            "exaggeration": str(voice_profiles["A"].engine_params.exaggeration),
+            "cfg_weight": str(primary_profile.engine_params.cfg_weight) if primary_profile else "",
+            "exaggeration": str(primary_profile.engine_params.exaggeration) if primary_profile else "",
             "reference_clips_used": "true",
             "watermark": "Perth watermark embedded by Chatterbox",
             "device_mode": settings.device_mode,

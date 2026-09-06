@@ -27,6 +27,9 @@ tmp_gui_repo/
 # Qwen Code config
 .qwen/
 
+# Omega meta-skill convergence workspace (ledger, changelist, checklist, report)
+.omega/
+
 # Temporary credentials
 gha-creds-*.json
 

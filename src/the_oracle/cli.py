@@ -208,11 +208,15 @@ def handle_render(args: argparse.Namespace) -> int:
             if defaults:
                 speaker_a_ref = speaker_a_ref or defaults[0].path
                 speaker_b_ref = speaker_b_ref or (defaults[1].path if len(defaults) > 1 else defaults[0].path)
-        if not speaker_a_ref or not speaker_b_ref:
+        # Monologue mode renders every line in Speaker A's voice, so it only
+        # requires A; a missing B must not block a one-narrator render.
+        if not speaker_a_ref or (not speaker_b_ref and not args.monologue):
             raise SystemExit(
                 "render requires either --project, or --speakerA-ref/--speakerB-ref. "
                 "No default Seashells voices were found to fall back on."
             )
+        if not speaker_b_ref:
+            speaker_b_ref = speaker_a_ref
 
         settings = RenderSettings(
             correction_mode=args.correction_mode,
