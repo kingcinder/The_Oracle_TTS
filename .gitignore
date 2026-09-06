@@ -42,13 +42,6 @@ NVR_research_backup/
 
 # Freebuff client database
 .freebuff/
-bootstrap_dualvoice_engines.sh
-codex_round_two_chatterbox_checklist.md
-codex_round_two_chatterbox_prompt.txt
-codex_round_two_checklist.md
-codex_round_two_prompt.txt
-make_alpha_release_bundle.sh
-NEXT_CODEX_PROMPT.txt
 
 # Runtime directories - contents ignored but directories kept for structure
 # Input/ - user dialogue source files (keep .txt samples, ignore runtime)
@@ -91,3 +84,6 @@ user_settings/**/*.json
 release_artifacts/**/*.tar.gz
 release_artifacts/**/*.sha256
 release_artifacts/**/*.json
+
+# added by serpent-circle (chain workspace)
+.serpent-circle/
