@@ -24,6 +24,9 @@ rewritten by the loop).
 - Voice blending: deterministic derived reference from two clips with a
   preference weight and mix/alternate/layer modes; persisted in projects
   and profiles; honored by both backends.
+- Saved blend voices: **Save Blend As...** creates a named voice that
+  appears under "Saved Blends" in the picker (catalog
+  `Profiles/blend_voices.json`, derived clips `Profiles/.blends/`).
 - Correction Mode **Verbatim (no changes)**: true passthrough of the
   source text (no spelling/grammar/punctuation edits).
 - Fidelity fixes (commit `d77c278`): assembly no longer drops chunks of
@@ -39,7 +42,6 @@ rewritten by the loop).
 - Add more bundled English-conditioned reference clips as they become
   available under permissive licenses (the current English pair is
   `english_male_1` and `english_reader_1`).
-- Save named blends as reusable voices in the picker.
 
 ## Deferred (intentional)
 

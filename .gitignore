@@ -77,6 +77,8 @@ Output/**/*.png
 
 # Profiles/ - voice profiles (runtime-generated)
 Profiles/**/*.json
+# Derived blend reference clips (regenerated deterministically from the catalog)
+Profiles/.blends/
 
 # Seashells/ - curated voice references (keep .wav, ignore cache)
 Seashells/.oracle_preview/

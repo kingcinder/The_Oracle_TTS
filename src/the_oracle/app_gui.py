@@ -69,7 +69,12 @@ from the_oracle.gui_tooltips import install_ctrl_hover_help
 from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings, Utterance
 from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
-from the_oracle.voice_catalog import VoiceChoice, default_voice_choices
+from the_oracle.voice_catalog import (
+    VoiceChoice,
+    blend_voice_choices,
+    default_voice_choices,
+    save_blend_voice,
+)
 from the_oracle.tts_engines.chatterbox_engine import SUPPORTED_VARIANTS, ChatterboxEngine
 from the_oracle.tts_engines.vulkan_backend import AudioCppUnavailableError, AudioCppVulkanEngine, find_audiocpp_binary
 from the_oracle.vulkan_setup import parse_model_export, run_vulkan_setup, vulkan_setup_needed
@@ -933,9 +938,15 @@ class LivePanel(QWidget):
 
 
 class SpeakerGroup(QGroupBox):
-    def __init__(self, speaker: str, custom_reference_dir: Path) -> None:
+    def __init__(
+        self,
+        speaker: str,
+        custom_reference_dir: Path,
+        on_save_blend: Callable[["SpeakerGroup"], None] | None = None,
+    ) -> None:
         super().__init__(f"Speaker {speaker}")
         self.custom_reference_dir = custom_reference_dir
+        self.on_save_blend = on_save_blend
         self.reference_path = QLineEdit()
         self.reference_picker = QComboBox()
         self.reference_picker.currentIndexChanged.connect(self._handle_reference_selection)
@@ -971,6 +982,13 @@ class SpeakerGroup(QGroupBox):
             "Mix weight-averages them, Alternate plays them in sequence, and "
             "Layer keeps the base full-level with the second voice underneath."
         )
+        self.save_blend_button = QPushButton("Save Blend As...")
+        self.save_blend_button.setToolTip(
+            "Save the current blend (base voice + blend target + presence + "
+            "mode) as a named voice that appears under 'Saved Blends' in the "
+            "voice picker, just like the bundled generic voices."
+        )
+        self.save_blend_button.clicked.connect(self._save_blend_clicked)
 
         self.language_combo = QComboBox()
         self.cfg_weight = self._double_box(0.0, 1.5, 0.5, 0.05)
@@ -985,7 +1003,10 @@ class SpeakerGroup(QGroupBox):
         form = QFormLayout(self)
         self.form = form  # kept so Ctrl+hover help can register row labels
         form.addRow("Custom Voice Reference Audio", self.reference_picker)
-        form.addRow("Blend With Voice", self.blend_picker)
+        blend_row = QHBoxLayout()
+        blend_row.addWidget(self.blend_picker, 1)
+        blend_row.addWidget(self.save_blend_button, 0)
+        form.addRow("Blend With Voice", blend_row)
         form.addRow("Base Voice Presence", self.blend_weight_spin)
         form.addRow("Blend Mode", self.blend_mode_combo)
         form.addRow("Language", self.language_combo)
@@ -1023,7 +1044,13 @@ class SpeakerGroup(QGroupBox):
             self.language_combo.setCurrentIndex(index)
         self.language_combo.setEnabled(enabled)
 
-    def set_reference_choices(self, defaults: list[VoiceChoice], recents: list[str], selected_path: str = "") -> None:
+    def set_reference_choices(
+        self,
+        defaults: list[VoiceChoice],
+        recents: list[str],
+        selected_path: str = "",
+        blends: list[VoiceChoice] | None = None,
+    ) -> None:
         current_path = selected_path or self.reference_path.text()
         self.reference_picker.blockSignals(True)
         self.reference_picker.clear()
@@ -1035,6 +1062,15 @@ class SpeakerGroup(QGroupBox):
             if header_item is not None:
                 header_item.setEnabled(False)
             for voice in defaults[:10]:
+                self.reference_picker.addItem(f"  {voice.label}", voice.path)
+                self._available_reference_paths.add(voice.path)
+        if blends:
+            header_index = self.reference_picker.count()
+            self.reference_picker.addItem("Saved Blends")
+            header_item = self.reference_picker.model().item(header_index)
+            if header_item is not None:
+                header_item.setEnabled(False)
+            for voice in blends:
                 self.reference_picker.addItem(f"  {voice.label}", voice.path)
                 self._available_reference_paths.add(voice.path)
         if recents:
@@ -1064,7 +1100,13 @@ class SpeakerGroup(QGroupBox):
         if isinstance(data, str) and data:
             self.reference_path.setText(data)
 
-    def set_blend_choices(self, defaults: list[VoiceChoice], recents: list[str], selected_path: str = "") -> None:
+    def set_blend_choices(
+        self,
+        defaults: list[VoiceChoice],
+        recents: list[str],
+        selected_path: str = "",
+        blends: list[VoiceChoice] | None = None,
+    ) -> None:
         """Populate the 'Blend With Voice' picker (None + the same voice lists)."""
         current = selected_path or self.blend_target_path()
         self.blend_picker.blockSignals(True)
@@ -1077,6 +1119,14 @@ class SpeakerGroup(QGroupBox):
             if header_item is not None:
                 header_item.setEnabled(False)
             for voice in defaults[:10]:
+                self.blend_picker.addItem(f"  {voice.label}", voice.path)
+        if blends:
+            header_index = self.blend_picker.count()
+            self.blend_picker.addItem("Saved Blends")
+            header_item = self.blend_picker.model().item(header_index)
+            if header_item is not None:
+                header_item.setEnabled(False)
+            for voice in blends:
                 self.blend_picker.addItem(f"  {voice.label}", voice.path)
         if recents:
             header_index = self.blend_picker.count()
@@ -1110,6 +1160,10 @@ class SpeakerGroup(QGroupBox):
         if isinstance(data, str) and data and data != "__none__":
             return data
         return ""
+
+    def _save_blend_clicked(self) -> None:
+        if self.on_save_blend is not None:
+            self.on_save_blend(self)
 
 
 class MainWindow(QMainWindow):
@@ -1240,8 +1294,8 @@ class MainWindow(QMainWindow):
 
         settings_row = QHBoxLayout()
         settings_row.addWidget(self._build_project_settings())
-        self.speaker_a = SpeakerGroup("A", self.paths.voice_dir)
-        self.speaker_b = SpeakerGroup("B", self.paths.voice_dir)
+        self.speaker_a = SpeakerGroup("A", self.paths.voice_dir, on_save_blend=self._save_blend_as_voice)
+        self.speaker_b = SpeakerGroup("B", self.paths.voice_dir, on_save_blend=self._save_blend_as_voice)
         # Extra character voices (C..X) for audiobook casts. They are created
         # lazily when a plan detects more than two speakers; the layout holds
         # them in a scrollable column so a 24-voice cast stays usable.
@@ -2452,10 +2506,53 @@ class MainWindow(QMainWindow):
 
     def _refresh_reference_pickers(self) -> None:
         defaults = default_voice_choices(self.repo_root)
+        blends = blend_voice_choices(self.paths.profile_dir)
         recents = [path for path in load_recent_reference_paths() if Path(path).exists()]
         for group in self._all_speaker_groups().values():
-            group.set_reference_choices(defaults, recents, group.reference_path.text())
-            group.set_blend_choices(defaults, recents, group.blend_target_path())
+            group.set_reference_choices(defaults, recents, group.reference_path.text(), blends=blends)
+            group.set_blend_choices(defaults, recents, group.blend_target_path(), blends=blends)
+
+    def _save_blend_as_voice(self, group: SpeakerGroup) -> None:
+        """Save the group's current blend configuration as a named picker voice.
+
+        The derived clip is materialized deterministically (same inputs,
+        weight, and mode always produce the same wav), then the voice appears
+        under 'Saved Blends' in every speaker panel's pickers.
+        """
+        base = group.reference_path.text().strip()
+        target = group.blend_target_path()
+        if not base or not target:
+            self.error_panel.append(
+                "Pick a base voice (Custom Voice Reference Audio) and a Blend With Voice before saving."
+            )
+            QMessageBox.information(
+                self,
+                "Save Blend As",
+                "Pick a base voice and a Blend With Voice first, then save the blend.",
+            )
+            return
+        name, ok = QInputDialog.getText(
+            self,
+            "Save Blend As Voice",
+            "Name for this blended voice (shown in the voice picker):",
+        )
+        if not ok or not name.strip():
+            return
+        try:
+            choice = save_blend_voice(
+                self.paths.profile_dir,
+                name,
+                base,
+                target,
+                weight=group.blend_weight_spin.value() / 100.0,
+                mode=group.blend_mode_combo.currentData() or "mix",
+            )
+        except Exception as exc:
+            self.error_panel.append(f"Could not save blend voice: {exc}")
+            QMessageBox.critical(self, "Save Blend As", str(exc))
+            return
+        self._refresh_reference_pickers()
+        self.error_panel.append(f"Saved blend voice '{name}' — select it under Saved Blends in any speaker panel.")
 
     # --------------------
     # Prewarm management
@@ -2529,7 +2626,7 @@ class MainWindow(QMainWindow):
         extras = sorted(speaker for speaker in speakers if speaker not in ("A", "B"))
         for key in extras:
             if key not in self.extra_speaker_groups:
-                group = SpeakerGroup(key, self.paths.voice_dir)
+                group = SpeakerGroup(key, self.paths.voice_dir, on_save_blend=self._save_blend_as_voice)
                 self.extra_speaker_groups[key] = group
                 self.extra_speaker_layout.addWidget(group)
         stale = [key for key in self.extra_speaker_groups if key not in extras]

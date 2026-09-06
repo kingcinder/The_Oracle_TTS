@@ -2002,3 +2002,81 @@ def test_vulkan_setup_completion_drops_queued_preview_when_render_queued(
         assert window.preview_worker is None
     finally:
         window.close()
+
+
+def test_save_blend_as_voice_creates_named_picker_voice(
+    qt_app,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Saving a blend produces a catalog entry and a Saved Blends picker section."""
+    import the_oracle.app_gui as app_gui
+    from the_oracle.smoke import _write_reference
+    from the_oracle.voice_catalog import VoiceChoice, blend_voice_choices
+
+    ref_a = _write_reference(tmp_path / "ref_a.wav", 220.0)
+    ref_b = _write_reference(tmp_path / "ref_b.wav", 440.0)
+
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        # Patch AFTER _build_window: it stubs default_voice_choices to [] and
+        # would otherwise override the voices this test needs in the pickers.
+        monkeypatch.setattr(
+            app_gui,
+            "default_voice_choices",
+            lambda _repo_root: [VoiceChoice("Voice A", str(ref_a)), VoiceChoice("Voice B", str(ref_b))],
+        )
+        monkeypatch.setattr(
+            app_gui.QInputDialog,
+            "getText",
+            staticmethod(lambda *_args, **_kwargs: ("Warm Narrator", True)),
+        )
+        monkeypatch.setattr(app_gui.QMessageBox, "information", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(app_gui.QMessageBox, "critical", lambda *_args, **_kwargs: None)
+
+        group = window.speaker_a
+        group.reference_path.setText(str(ref_a))
+        window._refresh_reference_pickers()
+        group.select_blend_path(str(ref_b))
+        group.blend_weight_spin.setValue(70)
+
+        window._save_blend_as_voice(group)
+
+        catalog_path = paths.profile_dir / "blend_voices.json"
+        assert catalog_path.exists()
+        voices = blend_voice_choices(paths.profile_dir)
+        assert len(voices) == 1
+        assert voices[0].label == "Warm Narrator"
+        assert voices[0].kind == "blend"
+        assert Path(voices[0].path).exists()
+
+        # The saved voice appears in the pickers' Saved Blends section.
+        window._refresh_reference_pickers()
+        assert group.reference_picker.findData(voices[0].path) >= 0
+        assert group.blend_picker.findData(voices[0].path) >= 0
+    finally:
+        window.close()
+
+
+def test_save_blend_as_voice_requires_base_and_target(
+    qt_app,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import the_oracle.app_gui as app_gui
+    from the_oracle.voice_catalog import blend_voice_choices
+
+    monkeypatch.setattr(app_gui, "default_voice_choices", lambda _repo_root: [])
+    monkeypatch.setattr(app_gui.QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(app_gui.QMessageBox, "critical", lambda *_args, **_kwargs: None)
+
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        group = window.speaker_a
+        group.reference_path.setText("")  # no base voice
+        window._save_blend_as_voice(group)
+        assert not (paths.profile_dir / "blend_voices.json").exists()
+        assert blend_voice_choices(paths.profile_dir) == []
+        assert "Pick a base voice" in window.error_panel.toPlainText()
+    finally:
+        window.close()
