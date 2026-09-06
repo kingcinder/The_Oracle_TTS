@@ -501,6 +501,14 @@ renders the same voice, on both the PyTorch and Vulkan backends, and stem
 caches re-key automatically when the blend changes. Blend settings round-trip
 through saved projects and GUI settings profiles.
 
+**Saving blends as named voices.** **Save Blend As...** next to the blend
+picker saves the current combination as a named voice that appears under
+**Saved Blends** in every speaker panel's picker, right alongside the bundled
+generic voices — so a favorite blend becomes a one-click voice like any
+other. Saved blends live in `Profiles/blend_voices.json` (user-generated,
+gitignored) with deterministic clips in `Profiles/.blends/`; saving the same
+name again replaces the entry.
+
 ## Product Notes
 
 - Chatterbox standard is the default quality-first backend.
