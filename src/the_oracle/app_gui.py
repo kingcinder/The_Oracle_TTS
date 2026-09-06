@@ -1612,6 +1612,14 @@ class MainWindow(QMainWindow):
         self.correction_mode_combo = QComboBox()
         for label, value in CORRECTION_MODE_OPTIONS:
             self.correction_mode_combo.addItem(label, value)
+        self.correction_mode_combo.setToolTip(
+            "How much the text is cleaned before synthesis. Verbatim (no "
+            "changes) passes the source text through exactly as written -- no "
+            "spelling, grammar, or punctuation edits -- so narration is always "
+            "faithful to the file. The TTS engine still applies its own "
+            "required text normalization internally (identical on both "
+            "backends)."
+        )
         self._set_correction_mode(RenderSettings().correction_mode)
         self.loudness_combo = QComboBox()
         self.loudness_combo.addItems(["off", "light", "medium"])

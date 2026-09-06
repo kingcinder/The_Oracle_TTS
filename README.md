@@ -508,6 +508,7 @@ through saved projects and GUI settings profiles.
 - Turbo is optional and lower-latency, but not the default backend.
 - Better voice quality comes from stronger local reference clips, not from a separate packaged voice library.
 - Voice blending (combining two references into one conditioning clip) is supported; see "Generic Voices And Voice Blending" above.
+- **Correction Mode → Verbatim (no changes)** passes the source text through exactly as written — no spelling, grammar, or punctuation edits — so narration is always faithful to the file. (The TTS engine applies its own required text normalization internally, identically on both backends.)
 
 ## Licensing
 
