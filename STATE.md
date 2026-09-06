@@ -17,8 +17,10 @@ rewritten by the loop).
   render path for repo-local verification.
 - Batched Vulkan rendering (`--request-sequence`, bounded 32-request
   groups, live per-request progress) with truthful timing logs.
-- Voice catalog: bundled generic voices (`Seashells/generic/`, Apache-2.0
-  attributed), curated `Seashells/` defaults, recent custom clips.
+- Voice catalog: bundled generic voices (`Seashells/generic/` — 2
+  English + 4 Chinese references, Apache-2.0 / CC BY 4.0 attributed,
+  English-first in the picker), curated `Seashells/` defaults, recent
+  custom clips.
 - Voice blending: deterministic derived reference from two clips with a
   preference weight and mix/alternate/layer modes; persisted in projects
   and profiles; honored by both backends.
@@ -34,7 +36,9 @@ rewritten by the loop).
 
 - Re-render `Input/What is, reality.txt` on the Vulkan backend with generic
   voices as live verification of the assembly fix (hardware-dependent).
-- Expand the generic voice library with more bundled clips if desired.
+- Add more bundled English-conditioned reference clips as they become
+  available under permissive licenses (the current English pair is
+  `english_male_1` and `english_reader_1`).
 - Save named blends as reusable voices in the picker.
 
 ## Deferred (intentional)
