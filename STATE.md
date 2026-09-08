@@ -75,14 +75,33 @@ rewritten by the loop).
 
 ## Deferred (intentional)
 
-- **Open investigation — GUI closes instantly on Render click (native
-  crash)**: kernel-log `general protection fault` in libQt6Widgets at a
-  data-region offset (execution through a corrupted function pointer →
-  use-after-free signature) in the GUI process, same second as the
-  `render_click` event. Not reproduced programmatically on current or
-  crash-era code; blocked-on-repro. Repro launcher: `bash
-  /tmp/gui_crash_catcher.sh` → click Render → backtrace lands in
-  `/tmp/gui_crash_backtrace.log`. Findings: `.serpent-circle/04-debug/root-causes.md`.
+- **GUI native crash — root cause found & fixed (2026-09-08)**: kernel-log
+  `python: segfault at 0 ip 0000000000000000` (execution through a
+  null/corrupted function pointer → use-after-free signature). Two lifetime
+  bugs in the Recording Studio (added by the voice-craft campaign) matched
+  the signature exactly and were fixed:
+  1. `_stop_playback` called `stop()` + `deleteLater()` on the audition
+     `QMediaPlayer` from inside its own `mediaStatusChanged` handler —
+     tearing the QtMultimedia FFmpeg backend down mid-emission is the
+     canonical player use-after-free. Fixed: one persistent player per
+     dialog (lazy, created on first audition, reused like MainWindow's
+     preview player); EndOfMedia now defers the stop via a zero-timer and
+     never deletes the player.
+  2. The `RecordStudioWorker` QThread was `deleteLater`'d from the
+     `captured`/`failed` slots (fired from `run()`'s final lines while the
+     thread still exits) and `closeEvent` never joined it — destroying a
+     live QThread is a hard Qt abort. Fixed: teardown moved to the
+     `finished` handler; dialog close and MainWindow close now do a bounded
+     `wait()` and refuse to close if the thread cannot stop.
+  3. Same deferred-stop discipline applied to MainWindow's preview player:
+     EndOfMedia defers the stop via a zero-timer (never stop/delete from
+     inside `mediaStatusChanged`), one persistent player is reused across
+     previews, and window close stops the player before teardown.
+  Regression tests: `tests/test_recording_studio.py` (EndOfMedia handler
+  safety, single-player reuse, finished-based worker teardown, close waits
+  for worker, MainWindow preview-player deferral and close-stop). The pre-voice-craft Render-click crash report remains
+  separate and still blocked-on-repro; repro launcher: `bash
+  /tmp/gui_crash_catcher.sh`. Findings: `.serpent-circle/04-debug/root-causes.md`.
 - **audio.cpp punctuation normalization is NOT patched**: its replacement
   table (`:`→`,`, `;`→`, `, dashes, quotes) exactly mirrors the installed
   Chatterbox Python reference `punc_norm`, so diverging would reduce

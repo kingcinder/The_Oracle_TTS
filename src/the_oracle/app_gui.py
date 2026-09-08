@@ -1225,7 +1225,10 @@ class RecordingStudioDialog(QDialog):
         return Path(folder) if folder else self.voice_dir
 
     def _toggle_record(self) -> None:
-        if self._worker is None:
+        # isRunning() guards the brief window where the terminal captured/
+        # failed slot has run but the finished cleanup has not yet detached
+        # the worker — a finished thread must never be "stopped" again.
+        if self._worker is None or not self._worker.isRunning():
             self._start_recording()
         else:
             self._stop_recording()
@@ -1274,6 +1277,11 @@ class RecordingStudioDialog(QDialog):
         self._worker.level.connect(self._on_level)
         self._worker.captured.connect(self._on_captured)
         self._worker.failed.connect(self._on_recording_failed)
+        # Delete the thread object only after run() has fully returned. The
+        # captured/failed slots fire from run()'s final lines while the thread
+        # is still alive — deleteLater there races the thread's own exit and
+        # is the classic "QThread destroyed while running" use-after-free.
+        self._worker.finished.connect(self._on_worker_finished)
         self._worker.start()
 
     def _stop_recording(self) -> None:
@@ -1293,10 +1301,8 @@ class RecordingStudioDialog(QDialog):
         self.record_button.setEnabled(True)
         self.mic_combo.setEnabled(True)
         self.rate_combo.setEnabled(True)
-        worker = self._worker
-        self._worker = None
-        if worker is not None:
-            worker.deleteLater()
+        # The worker detaches itself via finished -> _on_worker_finished;
+        # never deleteLater from here (thread may still be exiting).
         if audio is None or len(audio) == 0:
             self.status.setText("No audio was captured - check the microphone and try again.")
             return
@@ -1323,13 +1329,18 @@ class RecordingStudioDialog(QDialog):
         self.record_button.setEnabled(True)
         self.mic_combo.setEnabled(True)
         self.rate_combo.setEnabled(True)
+        # Worker detaches itself via finished (see _on_worker_finished).
+        self.status.setText(f"Recording failed: {message}")
+        if self._last_saved_path is not None:
+            self._refresh_take_actions()
+
+    def _on_worker_finished(self) -> None:
+        # Run on the GUI thread only after run() has returned, so detaching
+        # and deleting the QThread object here is safe.
         worker = self._worker
         self._worker = None
         if worker is not None:
             worker.deleteLater()
-        self.status.setText(f"Recording failed: {message}")
-        if self._last_saved_path is not None:
-            self._refresh_take_actions()
 
     def _tick_elapsed(self) -> None:
         self._elapsed_seconds += 1
@@ -1353,32 +1364,37 @@ class RecordingStudioDialog(QDialog):
         if self._last_saved_path is None or not self._last_saved_path.exists():
             return
         self._stop_playback()
-        audio_output = QAudioOutput(self)
-        player = QMediaPlayer(self)
-        player.setAudioOutput(audio_output)
-        player.setSource(QUrl.fromLocalFile(str(self._last_saved_path)))
-        player.mediaStatusChanged.connect(self._on_playback_status)
-        # Keep both alive for the duration of playback.
-        self._player = player
-        self._player_output = audio_output
-        player.play()
+        # One persistent player per dialog, created lazily on first audition.
+        # Reusing a single QMediaPlayer (as MainWindow does for previews) is
+        # safe; creating and deleteLater'ing a fresh player per take races the
+        # FFmpeg backend's internal threads (use-after-free).
+        if self._player is None:
+            audio_output = QAudioOutput(self)
+            player = QMediaPlayer(self)
+            player.setAudioOutput(audio_output)
+            player.mediaStatusChanged.connect(self._on_playback_status)
+            self._player = player
+            self._player_output = audio_output
+        self._player.setSource(QUrl.fromLocalFile(str(self._last_saved_path)))
+        self._player.play()
         self.status.setText(f"Auditioning {self._last_saved_path.name}...")
 
     def _on_playback_status(self, status) -> None:  # type: ignore[no-untyped-def]
+        # NEVER call stop()/deleteLater() on the player from inside its own
+        # mediaStatusChanged emission — that is a QtMultimedia use-after-free
+        # (backend threads still mid-emission). Defer any stop out of the
+        # handler with a zero-timer so the backend finishes delivering first.
         end_state = getattr(status, "EndOfMedia", None)
         if end_state is not None and status == end_state:
-            self._stop_playback()
+            QTimer.singleShot(0, self._stop_playback)
 
     def _stop_playback(self) -> None:
         player = self._player
-        self._player = None
-        self._player_output = None
         if player is not None:
             try:
                 player.stop()
             except Exception:
                 pass
-            player.deleteLater()
 
     def _use_for_speaker(self, speaker: str) -> None:
         if self._last_saved_path is None:
@@ -1392,11 +1408,24 @@ class RecordingStudioDialog(QDialog):
         self.status.setText(f"Assigned {self._last_saved_path.name} as the voice for Speaker {speaker}.")
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt casing)
-        # A take in progress is stopped before the window closes; the take
-        # itself is discarded, but the parent still refreshes pickers via the
-        # finished signal (which always fires on close).
-        if self._worker is not None:
+        # A take in progress is stopped and its thread joined before the window
+        # closes; the take itself is discarded, but the parent still refreshes
+        # pickers via the finished signal (which always fires on close).
+        # Destroying a live QThread is a hard Qt abort, so wait (bounded) and
+        # refuse to close if the thread cannot stop.
+        worker = self._worker
+        if worker is not None:
             self._stop_recording()
+            try:
+                joined = bool(worker.wait(2000))
+            except Exception:
+                joined = True  # test double without a real thread
+            if not joined:
+                event.ignore()
+                self.status.setText("Still finishing the take - click Stop first.")
+                return
+            worker.deleteLater()
+            self._worker = None
         self._stop_playback()
         super().closeEvent(event)
 
@@ -1717,6 +1746,10 @@ class MainWindow(QMainWindow):
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_output)
+        # EndOfMedia must never stop/delete the player from inside its own
+        # mediaStatusChanged emission (QtMultimedia use-after-free); defer the
+        # stop out of the handler so the backend finishes delivering first.
+        self.player.mediaStatusChanged.connect(self._on_preview_playback_status)
         self.setWindowTitle("The Oracle")
         self.resize(1320, 900)
         self._mark_startup("mainwindow_init_begin")
@@ -2830,6 +2863,19 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
 
+        studio = getattr(self, "_recording_studio", None)
+        if studio is not None and studio._worker is not None:
+            # The studio dialog is parented to this window: closing the main
+            # window mid-take would destroy the dialog (and its QThread) while
+            # the capture thread still runs — a hard Qt abort. Join it here
+            # with the same bounded-wait discipline as the render workers.
+            studio._stop_recording()
+            if not wait_for_thread(studio._worker, "Recording take", 2000):
+                event.ignore()
+                return
+            studio._worker.deleteLater()
+            studio._worker = None
+
         probe = self._vulkan_probe_thread
         if probe is not None:
             if not wait_for_thread(probe, "Vulkan device probe", 2000):
@@ -2886,6 +2932,10 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self._vulkan_setup_thread = None
+        # Stop the persistent preview player before the window (and its child
+        # player object) is destroyed, so the QtMultimedia backend isn't torn
+        # down mid-playback during app exit.
+        self._stop_preview_player()
         super().closeEvent(event)
 
     def _audio_cpp_device_value(self) -> int | None:
@@ -3978,6 +4028,24 @@ class MainWindow(QMainWindow):
         self.live_panel.update_from_progress(progress)
         if self.preview_dialog is not None:
             self.preview_dialog.update_progress(progress)
+
+    def _on_preview_playback_status(self, status) -> None:  # type: ignore[no-untyped-def]
+        # NEVER call stop()/deleteLater() on the player from inside its own
+        # mediaStatusChanged emission — that is a QtMultimedia use-after-free
+        # (backend threads still mid-emission). Defer any stop out of the
+        # handler with a zero-timer so the backend finishes delivering first.
+        end_state = getattr(status, "EndOfMedia", None)
+        if end_state is not None and status == end_state:
+            QTimer.singleShot(0, self._stop_preview_player)
+
+    def _stop_preview_player(self) -> None:
+        # GUI-thread contexts only (EndOfMedia deferral, window close) — the
+        # persistent player is stopped, never deleted, so it can be reused for
+        # the next preview without backend teardown churn.
+        try:
+            self.player.stop()
+        except Exception:
+            pass
 
     def _finish_preview(self, row: int, preview_path: str) -> None:
         # Do NOT persist preview state to row-level render fields.
