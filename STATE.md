@@ -62,6 +62,17 @@ rewritten by the loop).
 - Re-render `Input/What is, reality.txt` on the Vulkan backend with generic
   voices as live verification of the assembly fix (hardware-dependent).
 
+## Noticed, not yet actioned
+
+- Serpent-circle inventory scan updated (2026-09-08, in
+  `~/.agents/skills/serpent-circle/`): the bloat scan and language
+  histogram now honor `.gitignore` — untracked+gitignored residue
+  (bytecode, `.venv/`, vendored clones) is treated as repo-declared
+  retention, while tracked junk and non-ignored strays stay flagged. This
+  lets the omega loop terminate **CONVERGED** instead of NO-PROGRESS on a
+  fresh campaign; the change lives in the skill (outside this repo), so
+  it is documented here rather than committed here.
+
 ## Deferred (intentional)
 
 - **Open investigation — GUI closes instantly on Render click (native
