@@ -33,6 +33,7 @@ from the_oracle.tts_engines.vulkan_backend import (
 )
 from the_oracle.utils.chunking import chunk_utterance, TextChunk
 from the_oracle.utils.hashing import build_chunk_hash, hash_file
+from the_oracle.utils.pacing import chunk_seam_pause_ms, pause_for_utterance
 from the_oracle.utils.logging import get_logger
 from the_oracle.correction_modes import normalize_correction_mode
 
@@ -816,11 +817,22 @@ class OraclePipeline:
     def _blend_control(base_value: float | int, target_value: float | int, intensity: float) -> float:
         return float(base_value) + ((float(target_value) - float(base_value)) * intensity)
 
+    # Emotion acts on the PERFORMANCE of the voice (emphasis + breathing), never
+    # on the timbre/sampling identity knobs: temperature and cfg_weight are what
+    # give a speaker their consistent character, so letting each line's detected
+    # emotion nudge them per-utterance made the same voice drift sentence to
+    # sentence (perceived as inconsistent inflection). The speaker-level
+    # Naturalness heuristic may still relax those knobs below, but it is applied
+    # once per speaker and is constant for the whole render.
+    _EMOTION_PERFORMANCE_KEYS = ("exaggeration", "pause_ms")
+
     def _apply_emotion_and_naturalness(self, base: VoiceSettings, emotion_label: str) -> VoiceSettings:
         merged = VoiceSettings.from_mapping(base)
         intensity = max(0.0, min(2.0, merged.emotion_intensity))
-        for key, value in self._emotion_classifier().controls_for_emotion(emotion_label).items():
-            if not hasattr(merged, key):
+        controls = self._emotion_classifier().controls_for_emotion(emotion_label)
+        for key in self._EMOTION_PERFORMANCE_KEYS:
+            value = controls.get(key)
+            if value is None or not hasattr(merged, key):
                 continue
             blended = self._blend_control(getattr(base, key), value, intensity)
             setattr(merged, key, int(round(blended)) if isinstance(getattr(base, key), int) else blended)
@@ -931,6 +943,10 @@ class OraclePipeline:
                         emotion.label,
                     )
             merged = self._apply_emotion_and_naturalness(base, emotion.label)
+            # Punctuation-aware pacing: scale the speaker's base turn pause by
+            # how this line actually ends before author directives are applied,
+            # so an explicit [pause=...] / rate directive still wins outright.
+            merged.pause_ms = pause_for_utterance(cleaned_text, merged.pause_ms)
             merged = apply_directives(merged, directives)
             merged.variant = variant
             merged.language = base.language if variant == "multilingual" else "en"
@@ -1251,6 +1267,16 @@ class OraclePipeline:
                     raw_tasks.append(task)
                     task_to_utterance_map[task_index] = utterance
                     task_chunk_hashes[task_index] = task.chunk_hash
+
+        # Final synthesis task per source utterance: a chunked utterance renders
+        # as several tasks, but only its LAST stem carries the full turn pause in
+        # assembly. Intermediate chunk seams get a small breath instead of the
+        # full pause stacked after every chunk (the source of double pauses at
+        # punctuation-free seams). Iterating in task order makes the final
+        # occurrence win for each source index.
+        last_task_per_source: dict[int, int] = {}
+        for task in raw_tasks:
+            last_task_per_source[task.source_index] = task.utterance_index
 
         # Recalculate total_steps after chunking, since chunked utterances
         # expand into multiple synthesis tasks. The +3 accounts for:
@@ -1612,14 +1638,21 @@ class OraclePipeline:
                 utterance_durations[utterance.index] += result.duration_seconds
                 utterance_success_chunks[utterance.index] += 1
 
-                # Only add successful stems to assembly
+                # Only add successful stems to assembly. The full turn pause
+                # belongs to the utterance's final chunk only; intermediate
+                # chunk seams get a short breath (see last_task_per_source).
+                is_final_chunk = result.utterance_index == last_task_per_source.get(utterance.index)
                 stem_segments.append(
                     (
                         result.utterance_index,
                         AudioSegment(
                             path=str(result.stem_path),
                             sample_rate=result.sample_rate,
-                            pause_after_ms=utterance.pause_after_ms,
+                            pause_after_ms=(
+                                utterance.pause_after_ms
+                                if is_final_chunk
+                                else chunk_seam_pause_ms(utterance.pause_after_ms)
+                            ),
                             duration_seconds=result.duration_seconds,
                             segment_index=utterance.index,
                             speaker=utterance.speaker,

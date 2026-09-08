@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -33,6 +32,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QInputDialog,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -65,7 +65,9 @@ from the_oracle.gui_settings import (
     save_gui_settings,
     save_template,
 )
+from the_oracle.audio import recorder
 from the_oracle.gui_tooltips import install_ctrl_hover_help
+from the_oracle.gui_widgets import PerceptualSlider
 from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings, Utterance
 from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
@@ -937,6 +939,468 @@ class LivePanel(QWidget):
         self.progress_bar.setValue(0)
 
 
+class RecordStudioWorker(QThread):
+    """Records microphone input until stopped, emitting live level updates.
+
+    Runs recorder.record_until_stop (sounddevice) on a worker thread so the
+    Recording Studio UI stays responsive while the take is in progress.
+    """
+
+    level = Signal(float)
+    captured = Signal(object)  # numpy float32 mono array
+    failed = Signal(str)
+
+    def __init__(self, device_index: int, samplerate: int, channels: int = 1) -> None:
+        super().__init__()
+        self._device_index = int(device_index)
+        self._samplerate = int(samplerate)
+        self._channels = max(1, int(channels))
+        self._stop_event = threading.Event()
+
+    def request_stop(self) -> None:
+        self._stop_event.set()
+
+    def run(self) -> None:
+        try:
+            audio = recorder.record_until_stop(
+                self._device_index,
+                self._samplerate,
+                channels=self._channels,
+                stop_event=self._stop_event,
+                on_level=lambda level: self.level.emit(level),
+            )
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.captured.emit(audio)
+
+
+class RecordingStudioDialog(QDialog):
+    """Separate window for recording new reference "Seashell" voices.
+
+    Reads a script from a teleprompter area (fed by the repo's Input/ folder),
+    picks the microphone/sample-rate, and records mono WAV into the voice
+    folder under an auto-incrementing ``Seashell_No_<n>.wav`` name that never
+    overwrites an existing file. The parent window refreshes its voice pickers
+    on this dialog's ``finished`` signal - success or not.
+    """
+
+    def __init__(
+        self,
+        repo_root: str | Path,
+        voice_dir: str | Path,
+        input_dir: str | Path,
+        parent: QWidget | None = None,
+        on_assign: Callable[[str, Path], None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Recording Studio - record a new Seashell voice")
+        self.resize(760, 640)
+        self.repo_root = Path(repo_root)
+        self.voice_dir = Path(voice_dir)
+        self.input_dir = Path(input_dir)
+        self.on_assign = on_assign
+        self._worker: RecordStudioWorker | None = None
+        self._stop_requested = False
+        self._last_saved_path: Path | None = None
+        self._name_edited = False
+        self._player: QMediaPlayer | None = None
+
+        self.script_combo = QComboBox()
+        self.script_combo.currentIndexChanged.connect(self._load_script)
+        self.font_spin = QSpinBox()
+        self.font_spin.setRange(8, 48)
+        self.font_spin.setValue(16)
+        self.font_spin.valueChanged.connect(self._update_prompt_font)
+        self.prompt_area = QPlainTextEdit()
+        self.prompt_area.setPlaceholderText(
+            "Pick a script from the teleprompter file list (the repo's Input/ "
+            "folder) or paste lines here to read while recording."
+        )
+        self._update_prompt_font()
+
+        # --- capture row ---
+        self.mic_combo = QComboBox()
+        self.mic_combo.currentIndexChanged.connect(self._on_mic_selected)
+        self.rate_combo = QComboBox()
+        self.rate_combo.setEnabled(False)
+        self.outdir_combo = QComboBox()
+        self.outdir_combo.setEditable(True)
+        self.outdir_combo.addItem(str(self.voice_dir), str(self.voice_dir))
+        self.outdir_browse = QPushButton("Browse...")
+        self.outdir_browse.clicked.connect(self._browse_outdir)
+        self.name_edit = QLineEdit()
+        self.name_edit.editingFinished.connect(lambda: setattr(self, "_name_edited", True))
+        self.name_edit.textChanged.connect(self._refresh_target)
+        self.level_bar = QProgressBar()
+        self.level_bar.setRange(0, 100)
+        self.level_bar.setValue(0)
+        self.level_bar.setFormat("input level: %p%")
+        self.elapsed_label = QLabel("0:00")
+        self.record_button = QPushButton("Record")
+        self.record_button.setEnabled(False)
+        self.record_button.clicked.connect(self._toggle_record)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+
+        # Take actions: audition the saved take and point a speaker at it.
+        self.audition_check = QCheckBox("Auto-play new take")
+        self.audition_check.setChecked(True)
+        self.audition_check.setToolTip(
+            "Play each finished take back immediately so you can judge the voice "
+            "before recording the next one."
+        )
+        self.play_button = QPushButton("Listen again")
+        self.play_button.setEnabled(False)
+        self.play_button.setToolTip("Play the last saved take again.")
+        self.play_button.clicked.connect(self._play_take)
+        self.assign_a_button = QPushButton("Use for Speaker A")
+        self.assign_b_button = QPushButton("Use for Speaker B")
+        for button in (self.assign_a_button, self.assign_b_button):
+            button.setEnabled(False)
+            button.setToolTip(
+                "Point that speaker's voice at the Seashell you just recorded "
+                "(the voice pickers refresh automatically)."
+            )
+        self.assign_a_button.clicked.connect(lambda: self._use_for_speaker("A"))
+        self.assign_b_button.clicked.connect(lambda: self._use_for_speaker("B"))
+
+        self._elapsed_seconds = 0
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(1000)
+        self._elapsed_timer.timeout.connect(self._tick_elapsed)
+
+        self._build_layout()
+        self._populate_scripts()
+        self._refresh_devices()
+        self._refresh_target()
+
+    # -- layout -------------------------------------------------------------
+
+    def _build_layout(self) -> None:
+        top_row = QHBoxLayout()
+        top_row.addWidget(QLabel("Teleprompter script:"))
+        top_row.addWidget(self.script_combo, 1)
+        top_row.addWidget(QLabel("Font:"))
+        top_row.addWidget(self.font_spin)
+
+        prompt_box = QGroupBox("Reading prompt")
+        prompt_layout = QVBoxLayout(prompt_box)
+        prompt_layout.addWidget(self.prompt_area)
+
+        capture_box = QGroupBox("Capture")
+        capture_layout = QVBoxLayout(capture_box)
+        form = QFormLayout()
+        mic_row = QHBoxLayout()
+        mic_row.addWidget(self.mic_combo, 1)
+        form.addRow("Microphone", mic_row)
+        form.addRow("Sample rate", self.rate_combo)
+        outdir_row = QHBoxLayout()
+        outdir_row.addWidget(self.outdir_combo, 1)
+        outdir_row.addWidget(self.outdir_browse)
+        form.addRow("Save to", outdir_row)
+        form.addRow("File name", self.name_edit)
+
+        control_row = QHBoxLayout()
+        control_row.addWidget(self.record_button)
+        control_row.addWidget(self.elapsed_label)
+        control_row.addWidget(self.level_bar, 1)
+        capture_layout.addLayout(form)
+        capture_layout.addLayout(control_row)
+
+        take_row = QHBoxLayout()
+        take_row.addWidget(self.audition_check)
+        take_row.addWidget(self.play_button)
+        take_row.addWidget(self.assign_a_button)
+        take_row.addWidget(self.assign_b_button)
+        take_row.addStretch(1)
+        capture_layout.addLayout(take_row)
+        capture_layout.addWidget(self.status)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(top_row)
+        layout.addWidget(prompt_box, 1)
+        layout.addWidget(capture_box, 0)
+
+    def _populate_scripts(self) -> None:
+        self.script_combo.blockSignals(True)
+        self.script_combo.clear()
+        self.script_combo.addItem("<no script - type your own lines>", "")
+        if self.input_dir.is_dir():
+            for path in sorted(self.input_dir.glob("*")):
+                if path.suffix.lower() in (".txt", ".md") and path.is_file():
+                    self.script_combo.addItem(path.name, str(path))
+        self.script_combo.blockSignals(False)
+
+    def _load_script(self, _index: int) -> None:
+        path = self.script_combo.currentData()
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except OSError as exc:
+            self.status.setText(f"Could not read script: {exc}")
+            return
+        self.prompt_area.setPlainText(text)
+        self.status.setText(f"Loaded {Path(path).name} into the prompt.")
+
+    def _update_prompt_font(self) -> None:
+        font = self.prompt_area.font()
+        font.setPointSize(self.font_spin.value())
+        self.prompt_area.setFont(font)
+
+    # -- capture state ------------------------------------------------------
+
+    def _refresh_devices(self) -> None:
+        devices = recorder.list_input_devices()
+        self.mic_combo.blockSignals(True)
+        self.mic_combo.clear()
+        self._devices = devices
+        if devices:
+            for device in devices:
+                self.mic_combo.addItem(device.name, device.index)
+            self.mic_combo.setCurrentIndex(0)
+            self.mic_combo.blockSignals(False)
+            self._on_mic_selected(0)
+            self.record_button.setEnabled(True)
+        else:
+            self.mic_combo.addItem(
+                "(no microphone found)" if recorder.have_capture_backend()
+                else "(recording backend not installed)",
+                None,
+            )
+            self.mic_combo.blockSignals(False)
+            self.rate_combo.setEnabled(False)
+            self.record_button.setEnabled(False)
+
+    def _on_mic_selected(self, _index: int) -> None:
+        index = self.mic_combo.currentData()
+        self.rate_combo.clear()
+        self.rate_combo.setEnabled(False)
+        if index is None:
+            return
+        try:
+            rates = recorder.samplerates_for_device(int(index))
+        except recorder.RecorderUnavailableError:
+            self.rate_combo.addItem("(backend unavailable)", None)
+            return
+        for rate in rates:
+            self.rate_combo.addItem(f"{rate} Hz", rate)
+        self.rate_combo.setEnabled(True)
+
+    def _browse_outdir(self) -> None:
+        start = self.voice_dir if self.voice_dir.is_dir() else self.repo_root
+        chosen = QFileDialog.getExistingDirectory(self, "Save recordings to", str(start))
+        if chosen:
+            self.outdir_combo.setCurrentText(chosen)
+
+    def _refresh_target(self) -> None:
+        folder = self.outdir_combo.currentText().strip() or str(self.voice_dir)
+        stem = Path(self.name_edit.text().strip()).stem
+        if not stem:
+            stem = recorder.next_seashell_name(folder)
+            self._name_edited = False
+            self.name_edit.setText(stem)
+        suffix = Path(self.name_edit.text().strip()).suffix.lower()
+        if suffix not in (".wav", ""):
+            self.name_edit.setText(f"{stem}{suffix}")
+        if not self.name_edit.text().lower().endswith(".wav"):
+            self.name_edit.setText(f"{self.name_edit.text()}.wav")
+        self._target_path = Path(folder) / self.name_edit.text().strip()
+        self._warn_if_overwrite()
+
+    def _warn_if_overwrite(self) -> None:
+        target = getattr(self, "_target_path", None)
+        if target is not None and target.exists():
+            self.status.setText(
+                f"{target.name} already exists - recording would overwrite it. "
+                "Consider renaming (or the next Seashell_No_x will be used)."
+            )
+
+    def _default_filename(self) -> str:
+        return f"{recorder.next_seashell_name(self._out_folder())}.wav"
+
+    def _out_folder(self) -> Path:
+        folder = self.outdir_combo.currentText().strip()
+        return Path(folder) if folder else self.voice_dir
+
+    def _toggle_record(self) -> None:
+        if self._worker is None:
+            self._start_recording()
+        else:
+            self._stop_recording()
+
+    def _start_recording(self) -> None:
+        if self.mic_combo.currentData() is None:
+            self.status.setText("Pick a microphone first.")
+            return
+        if self.rate_combo.currentData() is None:
+            self.status.setText("Pick a supported sample rate first.")
+            return
+        # Never overwrite: if the typed name collides and the user declines the
+        # overwrite prompt, fall back to the next free Seashell_No_x name.
+        target = Path(self._out_folder()) / self.name_edit.text().strip()
+        if target.exists():
+            answer = QMessageBox.question(
+                self,
+                "File exists",
+                f"{target.name} already exists. Overwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                fresh = self._default_filename()
+                self.name_edit.setText(fresh)
+                self._name_edited = True
+                self._refresh_target()
+        self._target_path = Path(self._out_folder()) / self.name_edit.text().strip()
+        self._stop_requested = False
+        self._elapsed_seconds = 0
+        self._elapsed_label_text()
+        self.level_bar.setValue(0)
+        self.record_button.setText("Stop")
+        self.record_button.setEnabled(True)
+        self.mic_combo.setEnabled(False)
+        self.rate_combo.setEnabled(False)
+        self._elapsed_timer.start()
+        self._stop_playback()
+        self._set_take_actions_enabled(False)
+        self.status.setText("Recording... click Stop when done.")
+        self._worker = RecordStudioWorker(
+            device_index=int(self.mic_combo.currentData()),
+            samplerate=int(self.rate_combo.currentData()),
+            channels=1,
+        )
+        self._worker.level.connect(self._on_level)
+        self._worker.captured.connect(self._on_captured)
+        self._worker.failed.connect(self._on_recording_failed)
+        self._worker.start()
+
+    def _stop_recording(self) -> None:
+        if self._worker is not None:
+            self._worker.request_stop()
+        self._stop_requested = True
+        self.record_button.setEnabled(False)
+        self.record_button.setText("Finishing...")
+
+    def _on_level(self, level: float) -> None:
+        # RMS in [-0..~0.5 for speech]; scale so typical speech sits mid-meter.
+        self.level_bar.setValue(int(min(100.0, level * 500.0)))
+
+    def _on_captured(self, audio) -> None:
+        self._elapsed_timer.stop()
+        self.record_button.setText("Record")
+        self.record_button.setEnabled(True)
+        self.mic_combo.setEnabled(True)
+        self.rate_combo.setEnabled(True)
+        worker = self._worker
+        self._worker = None
+        if worker is not None:
+            worker.deleteLater()
+        if audio is None or len(audio) == 0:
+            self.status.setText("No audio was captured - check the microphone and try again.")
+            return
+        try:
+            saved = recorder.save_recording_wav(self._target_path, audio, int(self.rate_combo.currentData()))
+        except Exception as exc:
+            self.status.setText(f"Could not save the recording: {exc}")
+            return
+        self._last_saved_path = saved
+        seconds = len(audio) / float(self.rate_combo.currentData())
+        self.status.setText(f"Saved {saved.name} ({seconds:.1f}s) in {saved.parent}.")
+        # Next take auto-names one higher so nothing is ever overwritten.
+        self._name_edited = False
+        self.name_edit.setText(self._default_filename())
+        self._refresh_target()
+        # Offer audition + quick-assign now that a take exists on disk.
+        self._refresh_take_actions()
+        if self.audition_check.isChecked():
+            self._play_take()
+
+    def _on_recording_failed(self, message: str) -> None:
+        self._elapsed_timer.stop()
+        self.record_button.setText("Record")
+        self.record_button.setEnabled(True)
+        self.mic_combo.setEnabled(True)
+        self.rate_combo.setEnabled(True)
+        worker = self._worker
+        self._worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self.status.setText(f"Recording failed: {message}")
+        if self._last_saved_path is not None:
+            self._refresh_take_actions()
+
+    def _tick_elapsed(self) -> None:
+        self._elapsed_seconds += 1
+        self._elapsed_label_text()
+
+    def _elapsed_label_text(self) -> None:
+        minutes, seconds = divmod(self._elapsed_seconds, 60)
+        self.elapsed_label.setText(f"{minutes}:{seconds:02d}")
+
+    # -- audition + assign --------------------------------------------------
+
+    def _set_take_actions_enabled(self, enabled: bool) -> None:
+        self.play_button.setEnabled(enabled and self._last_saved_path is not None)
+        self.assign_a_button.setEnabled(enabled and self._last_saved_path is not None)
+        self.assign_b_button.setEnabled(enabled and self._last_saved_path is not None)
+
+    def _refresh_take_actions(self) -> None:
+        self._set_take_actions_enabled(True)
+
+    def _play_take(self) -> None:
+        if self._last_saved_path is None or not self._last_saved_path.exists():
+            return
+        self._stop_playback()
+        audio_output = QAudioOutput(self)
+        player = QMediaPlayer(self)
+        player.setAudioOutput(audio_output)
+        player.setSource(QUrl.fromLocalFile(str(self._last_saved_path)))
+        player.mediaStatusChanged.connect(self._on_playback_status)
+        # Keep both alive for the duration of playback.
+        self._player = player
+        self._player_output = audio_output
+        player.play()
+        self.status.setText(f"Auditioning {self._last_saved_path.name}...")
+
+    def _on_playback_status(self, status) -> None:  # type: ignore[no-untyped-def]
+        end_state = getattr(status, "EndOfMedia", None)
+        if end_state is not None and status == end_state:
+            self._stop_playback()
+
+    def _stop_playback(self) -> None:
+        player = self._player
+        self._player = None
+        self._player_output = None
+        if player is not None:
+            try:
+                player.stop()
+            except Exception:
+                pass
+            player.deleteLater()
+
+    def _use_for_speaker(self, speaker: str) -> None:
+        if self._last_saved_path is None:
+            return
+        if self.on_assign is not None:
+            try:
+                self.on_assign(speaker, self._last_saved_path)
+            except Exception as exc:
+                self.status.setText(f"Could not assign to Speaker {speaker}: {exc}")
+                return
+        self.status.setText(f"Assigned {self._last_saved_path.name} as the voice for Speaker {speaker}.")
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt casing)
+        # A take in progress is stopped before the window closes; the take
+        # itself is discarded, but the parent still refreshes pickers via the
+        # finished signal (which always fires on close).
+        if self._worker is not None:
+            self._stop_recording()
+        self._stop_playback()
+        super().closeEvent(event)
+
+
 class SpeakerGroup(QGroupBox):
     def __init__(
         self,
@@ -964,14 +1428,21 @@ class SpeakerGroup(QGroupBox):
             "conditions Chatterbox on a deterministic blend of the two clips. "
             "None keeps the single-voice behavior."
         )
-        self.blend_weight_spin = QSpinBox()
-        self.blend_weight_spin.setRange(0, 100)
-        self.blend_weight_spin.setValue(50)
-        self.blend_weight_spin.setSuffix("%")
+        self.blend_weight_spin = PerceptualSlider(
+            minimum=0,
+            maximum=100,
+            value=50,
+            suffix="%",
+            int_mode=True,
+            caption=(
+                "0% = the blend target's voice dominates; 100% = this speaker's "
+                "base voice dominates."
+            ),
+        )
         self.blend_weight_spin.setToolTip(
-            "How strongly the base voice dominates the blend (100% = pure base "
-            "voice, 0% = pure blend target). This is the preference knob for "
-            "which voice's qualities win."
+            "Which voice wins the blend: 100% = pure base voice, 0% = pure "
+            "blend target. This is the preference knob for which voice's "
+            "qualities dominate."
         )
         self.blend_mode_combo = QComboBox()
         self.blend_mode_combo.addItem("Mix (voices blended together)", "mix")
@@ -991,14 +1462,55 @@ class SpeakerGroup(QGroupBox):
         self.save_blend_button.clicked.connect(self._save_blend_clicked)
 
         self.language_combo = QComboBox()
-        self.cfg_weight = self._double_box(0.0, 1.5, 0.5, 0.05)
-        self.exaggeration = self._double_box(0.0, 1.5, 0.5, 0.05)
-        self.temperature = self._double_box(0.1, 1.5, 0.8, 0.05)
-        self.emotion_intensity = self._double_box(0.0, 2.0, 1.0, 0.1)
-        self.naturalness = self._double_box(0.0, 1.0, 0.0, 0.05)
-        self.pause_spin = QSpinBox()
-        self.pause_spin.setRange(0, 2000)
-        self.pause_spin.setValue(180)
+        # Perceptual voice-modulation sliders: the scale and caption say what
+        # the change SOUNDS like. Values still map onto the exact engine ranges
+        # the spin boxes used, so profiles/projects/manifests are unchanged.
+        self.cfg_weight = PerceptualSlider(
+            minimum=0.0, maximum=1.5, value=0.5,
+            caption=(
+                "How strictly this voice stays glued to its reference. High = "
+                "steadier and closer to the original; low = freer, drifts more."
+            ),
+        )
+        self.exaggeration = PerceptualSlider(
+            minimum=0.0, maximum=1.5, value=0.5,
+            caption=(
+                "How hard emphasis lands. High = bigger swings in pitch and "
+                "stress; low = flat, matter-of-fact delivery."
+            ),
+        )
+        self.temperature = PerceptualSlider(
+            minimum=0.1, maximum=1.5, value=0.8,
+            caption=(
+                "How surprising the delivery can be. High = livelier, more "
+                "varied takes; low = steady, predictable, closer to the "
+                "reference."
+            ),
+        )
+        self.emotion_intensity = PerceptualSlider(
+            minimum=0.0, maximum=2.0, value=1.0,
+            caption=(
+                "How strongly detected emotions color the performance "
+                "(emphasis and pacing only - the voice's character stays "
+                "locked)."
+            ),
+        )
+        self.naturalness = PerceptualSlider(
+            minimum=0.0, maximum=1.0, value=0.0,
+            caption=(
+                "Loosens sampling for a more natural, less mechanical voice; "
+                "held steady for the whole render so the character stays "
+                "consistent."
+            ),
+        )
+        self.pause_spin = PerceptualSlider(
+            minimum=0, maximum=2000, value=180, suffix=" ms", int_mode=True,
+            caption=(
+                "Silence after this speaker's turns, scaled by how each line "
+                "ends - longer after !? and ellipses, shorter when a line "
+                "trails on."
+            ),
+        )
 
         form = QFormLayout(self)
         self.form = form  # kept so Ctrl+hover help can register row labels
@@ -1007,23 +1519,15 @@ class SpeakerGroup(QGroupBox):
         blend_row.addWidget(self.blend_picker, 1)
         blend_row.addWidget(self.save_blend_button, 0)
         form.addRow("Blend With Voice", blend_row)
-        form.addRow("Base Voice Presence", self.blend_weight_spin)
+        form.addRow("Which Voice Wins", self.blend_weight_spin)
         form.addRow("Blend Mode", self.blend_mode_combo)
         form.addRow("Language", self.language_combo)
-        form.addRow("CFG Weight", self.cfg_weight)
-        form.addRow("Exaggeration", self.exaggeration)
-        form.addRow("Temperature", self.temperature)
-        form.addRow("Emotion Intensity", self.emotion_intensity)
-        form.addRow("Naturalness (Heuristic)", self.naturalness)
-        form.addRow("Pause After Speaker Turn (ms)", self.pause_spin)
-
-    def _double_box(self, minimum: float, maximum: float, value: float, step: float) -> QDoubleSpinBox:
-        box = QDoubleSpinBox()
-        box.setRange(minimum, maximum)
-        box.setDecimals(2)
-        box.setSingleStep(step)
-        box.setValue(value)
-        return box
+        form.addRow("Voice Lock", self.cfg_weight)
+        form.addRow("Emotional Punch", self.exaggeration)
+        form.addRow("Delivery Variety", self.temperature)
+        form.addRow("Emotion Strength", self.emotion_intensity)
+        form.addRow("Human Drift", self.naturalness)
+        form.addRow("Breath After This Speaker", self.pause_spin)
 
     def _pick_audio(self) -> None:
         current_reference = Path(self.reference_path.text()).expanduser()
@@ -1061,7 +1565,7 @@ class SpeakerGroup(QGroupBox):
             header_item = self.reference_picker.model().item(header_index)
             if header_item is not None:
                 header_item.setEnabled(False)
-            for voice in defaults[:10]:
+            for voice in defaults:
                 self.reference_picker.addItem(f"  {voice.label}", voice.path)
                 self._available_reference_paths.add(voice.path)
         if blends:
@@ -1118,7 +1622,7 @@ class SpeakerGroup(QGroupBox):
             header_item = self.blend_picker.model().item(header_index)
             if header_item is not None:
                 header_item.setEnabled(False)
-            for voice in defaults[:10]:
+            for voice in defaults:
                 self.blend_picker.addItem(f"  {voice.label}", voice.path)
         if blends:
             header_index = self.blend_picker.count()
@@ -1419,6 +1923,17 @@ class MainWindow(QMainWindow):
         self.download_vulkan_model_action.triggered.connect(self.download_vulkan_model)
         settings_menu.addAction(self.download_vulkan_model_action)
 
+        # Top-of-window Recording Studio: a plain menu-bar action (not a menu)
+        # that opens the voice-recording window in its own dialog.
+        self.recording_studio_action = QAction("Recording Studio…", self)
+        self.recording_studio_action.setToolTip(
+            "Open the Custom Voice Recording Studio: record a new reference "
+            "voice (a 'Seashell') from a microphone with a teleprompter, then "
+            "pick it for any speaker."
+        )
+        self.recording_studio_action.triggered.connect(self.open_recording_studio)
+        self.menuBar().addAction(self.recording_studio_action)
+
         # Keep references for Ctrl+hover help registration (see
         # _register_ctrl_help_descriptions).
         self.new_action = new_action
@@ -1569,34 +2084,44 @@ class MainWindow(QMainWindow):
                     "multilingual variant; otherwise fixed to English.",
                 ),
                 (
+                    group.blend_weight_spin,
+                    "Which voice wins a two-voice blend: 100% is this speaker's "
+                    "base voice alone, 0% is the blend target alone. See the "
+                    "caption under the slider.",
+                ),
+                (
                     group.cfg_weight,
-                    "CFG guidance weight for the voice clone (0.0-1.5). "
-                    "Higher values follow the reference voice more strictly.",
+                    "Voice Lock: how strictly this voice stays glued to its "
+                    "reference. High = steadier and closer to the original; "
+                    "low = freer and drifts more.",
                 ),
                 (
                     group.exaggeration,
-                    "How much the speaker's emotion and intonation are "
-                    "exaggerated (0.0-1.5).",
+                    "Emotional Punch: how hard emphasis lands. High = bigger "
+                    "swings in pitch and stress; low = flat, matter-of-fact.",
                 ),
                 (
                     group.temperature,
-                    "Sampling temperature (0.1-1.5). Higher is more varied "
-                    "delivery; lower is steadier and closer to the reference.",
+                    "Delivery Variety: how surprising the delivery can be. "
+                    "High = livelier, more varied takes; low = steady and "
+                    "predictable.",
                 ),
                 (
                     group.emotion_intensity,
-                    "Strength applied to the detected emotion for this "
-                    "speaker (0.0-2.0).",
+                    "Emotion Strength: how strongly detected emotions color "
+                    "the performance. Only emphasis and pacing move - the "
+                    "voice's character stays locked.",
                 ),
                 (
                     group.naturalness,
-                    "Heuristic naturalness boost applied after synthesis "
-                    "(0.0-1.0).",
+                    "Human Drift: loosens sampling for a more natural, less "
+                    "mechanical voice. Constant for the whole render.",
                 ),
                 (
                     group.pause_spin,
-                    "Pause in milliseconds inserted after this speaker's "
-                    "turns.",
+                    "Breath After This Speaker: silence after this speaker's "
+                    "turns in ms, scaled by how each line ends (longer after "
+                    "!? and ellipses, shorter when a line trails on).",
                 ),
             ])
         ctrl_help.register_many([
@@ -1642,6 +2167,9 @@ class MainWindow(QMainWindow):
         for group in self._all_speaker_groups().values():
             ctrl_help.register_form_labels(group.form, [
                 group.reference_picker,
+                group.blend_picker,
+                group.blend_weight_spin,
+                group.blend_mode_combo,
                 group.language_combo,
                 group.cfg_weight,
                 group.exaggeration,
@@ -1655,6 +2183,8 @@ class MainWindow(QMainWindow):
             ctrl_help.register_action(menubar_actions[0], "Project management: new, open, save, save-as.")
         if len(menubar_actions) >= 2:
             ctrl_help.register_action(menubar_actions[1], "GUI settings: profiles, templates, and Vulkan backend setup.")
+        if len(menubar_actions) >= 3:
+            ctrl_help.register_action(menubar_actions[2], self.recording_studio_action.toolTip())
 
     def _build_project_settings(self) -> QGroupBox:
         box = QGroupBox("Shared Render Settings")
@@ -2505,12 +3035,64 @@ class MainWindow(QMainWindow):
             self.error_panel.append("Restored the remembered Vulkan backend from the last session.")
 
     def _refresh_reference_pickers(self) -> None:
-        defaults = default_voice_choices(self.repo_root)
+        # Generous limit so a freshly recorded Seashell (in Seashells/ root)
+        # shows up in the pickers right after the bundled generic voices
+        # instead of being cut off by the catalog's default 10-entry cap.
+        defaults = default_voice_choices(self.repo_root, limit=40)
         blends = blend_voice_choices(self.paths.profile_dir)
         recents = [path for path in load_recent_reference_paths() if Path(path).exists()]
         for group in self._all_speaker_groups().values():
             group.set_reference_choices(defaults, recents, group.reference_path.text(), blends=blends)
             group.set_blend_choices(defaults, recents, group.blend_target_path(), blends=blends)
+
+    # --------------------
+    # Custom Voice Recording Studio
+    # --------------------
+    def open_recording_studio(self) -> None:
+        """Open the Recording Studio (non-modal, its own window)."""
+        dialog = RecordingStudioDialog(
+            repo_root=self.repo_root,
+            voice_dir=self.paths.voice_dir,
+            input_dir=self.paths.input_dir,
+            parent=self,
+            on_assign=self._assign_recording_to_speaker,
+        )
+        self._recording_studio = dialog
+        # Refresh the Speaker A/B (and any cast) voice pickers whenever the
+        # studio closes - whether or not a recording was saved.
+        dialog.finished.connect(self._on_recording_studio_closed)
+        dialog.finished.connect(dialog.deleteLater)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _assign_recording_to_speaker(self, speaker: str, path: Path) -> None:
+        """Point a speaker's Custom Voice Reference Audio at a fresh Seashell.
+
+        Sets the group's reference path and refreshes the pickers so the new
+        voice is selected everywhere immediately (the dialog stays open for
+        further takes; the main window's pickers update behind it).
+        """
+        try:
+            group = self._all_speaker_groups()[speaker]
+        except KeyError:
+            self.error_panel.append(f"No Speaker {speaker} group exists to assign the voice to.")
+            return
+        group.reference_path.setText(str(path))
+        self._refresh_reference_pickers()
+        self.error_panel.append(
+            f"Assigned {Path(path).name} as the voice for Speaker {speaker} - it will "
+            "be used on the next render."
+        )
+
+    def _on_recording_studio_closed(self, _result: int) -> None:
+        self._refresh_reference_pickers()
+        studio = getattr(self, "_recording_studio", None)
+        if studio is not None and studio._last_saved_path is not None:
+            self.error_panel.append(
+                f"Recorded new Seashell: {studio._last_saved_path.name} - "
+                "pick it under Custom Voice Reference Audio for any speaker."
+            )
 
     def _save_blend_as_voice(self, group: SpeakerGroup) -> None:
         """Save the group's current blend configuration as a named picker voice.
