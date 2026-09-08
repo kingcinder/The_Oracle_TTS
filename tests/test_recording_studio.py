@@ -183,6 +183,174 @@ def test_auto_audition_can_be_disabled(tmp_path, monkeypatch, qt_app):
     assert _FakeMediaPlayer.last is None  # nothing auto-played
 
 
+class _TakeSignal:
+    def __init__(self) -> None:
+        self._slots: list = []
+
+    def connect(self, slot) -> None:
+        self._slots.append(slot)
+
+    def emit(self, *args) -> None:
+        for slot in list(self._slots):
+            slot(*args)
+
+
+class _SpyMediaPlayer:
+    """Fake with an actually-emittable mediaStatusChanged signal."""
+
+    last = None
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        self.source = None
+        self.played = 0
+        self.stopped = 0
+        self.deleted = False
+        self.mediaStatusChanged = _TakeSignal()
+        _SpyMediaPlayer.last = self
+
+    def setAudioOutput(self, output) -> None:
+        self.audio_output = output
+
+    def setSource(self, source) -> None:
+        self.source = source
+
+    def play(self) -> None:
+        self.played += 1
+
+    def stop(self) -> None:
+        self.stopped += 1
+
+    def deleteLater(self) -> None:
+        self.deleted = True
+
+
+class _SpyAudioOutput:
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+
+def test_end_of_media_does_not_delete_or_stop_player_in_handler(
+    tmp_path, monkeypatch, qt_app
+):
+    """Regression: deleting the QMediaPlayer from inside its own
+    mediaStatusChanged handler is a QtMultimedia use-after-free (the kernel
+    crash signature). The handler must defer the stop and never delete the
+    persistent player.
+    """
+    import numpy as np
+
+    import the_oracle.app_gui as app_gui
+
+    monkeypatch.setattr(app_gui, "QMediaPlayer", _SpyMediaPlayer)
+    monkeypatch.setattr(app_gui, "QAudioOutput", _SpyAudioOutput)
+    _SpyMediaPlayer.last = None
+    dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
+    dialog._on_captured(np.full(4800, 0.2, dtype=np.float32))  # saves + auditions
+    player = _SpyMediaPlayer.last
+    assert player is not None
+    assert player.played == 1
+
+    # EndOfMedia arrives: the old code called stop() + deleteLater() right here
+    # (crash). Now it must defer and keep the persistent player alive.
+    dialog._on_playback_status(player.mediaStatusChanged)
+    assert player.deleted is False, "player must never be deleteLater'd by its own handler"
+    # The zero-timer defers the stop; drive the event loop so it lands.
+    import PySide6.QtCore as qtcore
+
+    qtcore.QTimer.singleShot(0, lambda: None)
+    dialog._on_playback_status(player.mediaStatusChanged)
+    assert dialog._player is player, "persistent player must survive EndOfMedia"
+
+
+def test_playback_reuses_one_player_across_takes(tmp_path, monkeypatch, qt_app):
+    """Regression: a fresh QMediaPlayer per take (stop + deleteLater each
+    time) races the FFmpeg backend threads. The dialog must reuse one player.
+    """
+    import numpy as np
+
+    import the_oracle.app_gui as app_gui
+
+    monkeypatch.setattr(app_gui, "QMediaPlayer", _SpyMediaPlayer)
+    monkeypatch.setattr(app_gui, "QAudioOutput", _SpyAudioOutput)
+    dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
+    dialog._on_captured(np.full(4800, 0.2, dtype=np.float32))
+    first = _SpyMediaPlayer.last
+    assert first is not None
+    # Second take: same player object reused, old one never deleted.
+    (voice / "Seashell_No_2.wav").write_bytes(b"\x00" * 44)
+    dialog._last_saved_path = voice / "Seashell_No_2.wav"
+    dialog._play_take()
+    assert dialog._player is first
+    assert first.deleted is False
+    assert first.played == 2
+
+
+class _SpyWorker:
+    """Stand-in for RecordStudioWorker exposing the finished lifecycle."""
+
+    def __init__(self) -> None:
+        self.finished = _TakeSignal()
+        self.delete_later_called = False
+        self.running = True
+
+    def isRunning(self) -> bool:
+        return self.running
+
+    def request_stop(self) -> None:
+        self.running = False
+
+    def wait(self, _ms: int) -> bool:
+        self.running = False
+        return True
+
+    def deleteLater(self) -> None:
+        self.delete_later_called = True
+
+
+def test_worker_teardown_happens_via_finished_not_captured_slot(
+    tmp_path, monkeypatch, qt_app
+):
+    """Regression: deleteLater on the QThread from the captured/failed slots
+    races run()'s exit (QThread destroyed while running -> abort). Teardown
+    must happen only from the finished handler.
+    """
+    import numpy as np
+
+    dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
+    worker = _SpyWorker()
+    dialog._worker = worker
+    dialog._worker.finished.connect(dialog._on_worker_finished)
+
+    # Simulate a take completing: captured arrives while the thread is still
+    # winding down. The old code deleteLater'd here — the fix must not.
+    dialog._on_captured(np.full(4800, 0.2, dtype=np.float32))
+    assert worker.delete_later_called is False, "captured must not delete the worker"
+    assert dialog._worker is worker, "worker stays owned until finished fires"
+
+    # Thread fully exits -> finished fires -> safe detach + delete.
+    worker.running = False
+    worker.finished.emit()
+    assert dialog._worker is None
+    assert worker.delete_later_called is True
+
+
+def test_close_waits_for_worker_before_destroying(tmp_path, monkeypatch, qt_app):
+    """Regression: closing mid-take must join the capture thread, not destroy
+    a live QThread (hard Qt abort / use-after-free).
+    """
+    dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
+    worker = _SpyWorker()
+    dialog._worker = worker
+    dialog._stop_recording()  # requests stop, as closeEvent does
+    # closeEvent's bounded wait joins the thread and then detaches it.
+    import PySide6.QtGui as qtgui
+
+    evt = qtgui.QCloseEvent()
+    dialog.closeEvent(evt)
+    assert dialog._worker is None
+    assert worker.delete_later_called is True
+
+
 def test_assign_to_speaker_invokes_callback_with_path(tmp_path, monkeypatch, qt_app):
     assigned = []
     repo, voice, inputs = _make_dirs(tmp_path)
@@ -195,6 +363,51 @@ def test_assign_to_speaker_invokes_callback_with_path(tmp_path, monkeypatch, qt_
     assert dialog.assign_b_button.isEnabled() is True
     dialog._use_for_speaker("A")
     assert assigned == [("A", saved)]
+
+
+def test_main_window_preview_player_deferred_end_of_media(monkeypatch, tmp_path, qt_app):
+    """Regression: the MainWindow preview player must reuse one persistent
+    instance and defer its EndOfMedia stop out of the signal handler — the
+    same use-after-free discipline as the Recording Studio audition player.
+    """
+    window, _ = _build_main_window(monkeypatch, tmp_path)
+    player = window.player
+    assert player is not None
+
+    # A preview starts playback on the persistent player (no per-preview
+    # create/delete churn).
+    window._finish_preview(0, "/tmp/some_preview.wav")
+    assert window.player is player
+    assert player.played == 1
+    assert player.stopped == 0
+
+    # EndOfMedia arrives: the handler must defer the stop (zero-timer), never
+    # stop/delete the player from inside the emission, and keep the same
+    # persistent instance alive for the next preview.
+    player.mediaStatusChanged.emit(player.mediaStatusChanged)
+    assert window.player is player
+    assert player.stopped == 0, "stop must be deferred, not run inside the handler"
+
+    # Drive the deferred stop so the next preview starts from a stopped state.
+    window._stop_preview_player()
+    assert player.stopped == 1
+    window._finish_preview(1, "/tmp/another_preview.wav")
+    assert window.player is player, "one persistent player across previews"
+
+
+def test_main_window_close_stops_preview_player(monkeypatch, tmp_path, qt_app):
+    """Regression: closing the main window must stop the persistent preview
+    player so the QtMultimedia backend isn't torn down mid-playback.
+    """
+    import PySide6.QtGui as qtgui
+
+    window, _ = _build_main_window(monkeypatch, tmp_path)
+    window._finish_preview(0, "/tmp/some_preview.wav")
+    assert window.player.stopped == 0
+
+    evt = qtgui.QCloseEvent()
+    window.closeEvent(evt)
+    assert window.player.stopped >= 1, "close must stop the preview player"
 
 
 def test_main_window_assign_wires_the_group_reference(monkeypatch, tmp_path, qt_app):

@@ -26,6 +26,9 @@ class _FakeMediaPlayer:
     def __init__(self, *_args, **_kwargs) -> None:
         self.audio_output = None
         self.source = None
+        self.played = 0
+        self.stopped = 0
+        self.mediaStatusChanged = _FakeSignal()
 
     def setAudioOutput(self, output) -> None:
         self.audio_output = output
@@ -34,7 +37,10 @@ class _FakeMediaPlayer:
         self.source = source
 
     def play(self) -> None:
-        return None
+        self.played += 1
+
+    def stop(self) -> None:
+        self.stopped += 1
 
 
 class _FakePipeline:
@@ -64,11 +70,20 @@ class _FakeChatterboxEngine:
 
 
 class _FakeSignal:
-    def connect(self, *_args, **_kwargs) -> None:
-        return None
+    def __init__(self) -> None:
+        self._slots = []
+
+    def connect(self, *args, **kwargs) -> None:
+        slot = args[0] if args else kwargs.get("slot")
+        if callable(slot):
+            self._slots.append(slot)
 
     def disconnect(self, *_args, **_kwargs) -> None:
-        return None
+        self._slots.clear()
+
+    def emit(self, *args) -> None:
+        for slot in list(self._slots):
+            slot(*args)
 
 
 class _FakeVulkanProbeThread:
