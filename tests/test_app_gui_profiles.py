@@ -228,7 +228,7 @@ def _build_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(app_gui, "VulkanSetupThread", _FakeVulkanSetupThread)
     monkeypatch.setattr(app_gui, "ModelDownloadThread", _FakeModelDownloadThread)
     monkeypatch.setattr(app_gui, "ensure_repo_default_paths", lambda _repo_root: paths)
-    monkeypatch.setattr(app_gui, "default_voice_choices", lambda _repo_root: [])
+    monkeypatch.setattr(app_gui, "default_voice_choices", lambda _repo_root, **_kwargs: [])
     monkeypatch.setattr(app_gui, "load_recent_reference_paths", lambda limit=10: [])
     # Vulkan-backend prerequisites are "configured" by default so tests that
     # select the backend don't trip the selection-time warning (the model env
@@ -2024,7 +2024,7 @@ def test_save_blend_as_voice_creates_named_picker_voice(
         monkeypatch.setattr(
             app_gui,
             "default_voice_choices",
-            lambda _repo_root: [VoiceChoice("Voice A", str(ref_a)), VoiceChoice("Voice B", str(ref_b))],
+            lambda _repo_root, **_kwargs: [VoiceChoice("Voice A", str(ref_a)), VoiceChoice("Voice B", str(ref_b))],
         )
         monkeypatch.setattr(
             app_gui.QInputDialog,
@@ -2066,7 +2066,7 @@ def test_save_blend_as_voice_requires_base_and_target(
     import the_oracle.app_gui as app_gui
     from the_oracle.voice_catalog import blend_voice_choices
 
-    monkeypatch.setattr(app_gui, "default_voice_choices", lambda _repo_root: [])
+    monkeypatch.setattr(app_gui, "default_voice_choices", lambda _repo_root, **_kwargs: [])
     monkeypatch.setattr(app_gui.QMessageBox, "information", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(app_gui.QMessageBox, "critical", lambda *_args, **_kwargs: None)
 

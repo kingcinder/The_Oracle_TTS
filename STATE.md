@@ -32,8 +32,30 @@ rewritten by the loop).
 - Fidelity fixes (commit `d77c278`): assembly no longer drops chunks of
   chunked utterances (parallel loader keyed by position, regression-tested);
   monologue renders no longer require/construct an unused speaker profile.
-- Test suite: 416 passing tests including the new assembly/blend/monologue
-  coverage.
+- Test suite: 454 passing tests on the `feature/voice-craft-and-
+  recording-studio` tree (416 on `main`) including the new assembly/
+  blend/monologue/pacing/parity/recorder coverage.
+- Voice-craft + Recording Studio (branch
+  `feature/voice-craft-and-recording-studio`, **uncommitted pending review**):
+  punctuation-aware pacing (turn pause scaled by terminal punctuation;
+  chunk seams breathe ~35%, the full turn pause applies only after an
+  utterance's final chunk), timbre-locked emotion (per-line emotion moves
+  emphasis/pause only; temperature/CFG stay per-speaker so the voice
+  character is consistent), perceptual voice sliders (Voice Lock, Emotional
+  Punch, Delivery Variety, Emotion Strength, Human Drift, Breath After This
+  Speaker, Which Voice Wins), and the Custom Voice Recording Studio window
+  (teleprompter fed from `Input/`, mic + supported-sample-rate pickers,
+  auto-incrementing `Seashell_No_x.wav` saving into `Seashells/`, live
+  level meter, auto-audition of each take, Listen again, Use for Speaker
+  A/B quick-assign that refreshes the voice pickers on close).
+- **CPU (PyTorch) ⇄ Vulkan parity** for the voice-craft decisions:
+  `tests/test_backend_parity.py` plans a mixed-punctuation dialogue with
+  `inference_backend=pytorch` vs `vulkan` and asserts per-utterance pauses
+  and engine settings are identical on both, with timbre-lock holding (one
+  temperature per speaker); the Vulkan/engine-path suites pass
+  (84 tests in the batching/backend/synthesis/render-worker files). Pacing
+  and emotion live in shared plan/assembly code, never in the engine call,
+  so both inference backends behave identically by construction.
 
 ## Next
 
@@ -60,3 +82,7 @@ rewritten by the loop).
   RDNA1 hardware.
 - `Seashells/` runtime caches and `Output/` renders stay gitignored;
   `.venv/` bytecode is documented retention (see `.omega/CHANGELIST.md`).
+- Recording Studio extras (deferred): a waveform/trim editor for cropping a
+  take before saving, punch-in/overdub re-recording from a chosen prompt
+  line while keeping earlier audio, and per-Seashell metadata sidecars
+  (recorded-in sample rate, speaker tag) surfaced in the voice picker.
