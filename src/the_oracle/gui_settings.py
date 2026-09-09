@@ -13,7 +13,7 @@ from the_oracle.platform_support import app_config_dir
 
 
 GUI_SETTINGS_VERSION = 1
-_SUPPORTED_DEVICE_MODES = {"cpu"}
+_SUPPORTED_DEVICE_MODES = {"cpu", "cuda"}
 _SUPPORTED_INFERENCE_BACKENDS = {"pytorch", "vulkan"}
 _LOG = logging.getLogger(__name__)
 
@@ -108,6 +108,8 @@ def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
         "version": 1,
         "remember_backend": _normalize_remember_backend(data.get("remember_backend", True)),
         "inference_backend": _normalize_inference_backend(data.get("inference_backend", "pytorch")),
+        "device_mode": _normalize_device_mode(data.get("device_mode", "cpu")),
+        "cuda_device": _normalize_audio_cpp_device(data.get("cuda_device")),
         "audio_cpp_device": _normalize_audio_cpp_device(data.get("audio_cpp_device")),
         "audio_cpp_threads": _normalize_audio_cpp_threads(data.get("audio_cpp_threads")),
         "audio_cpp_timeout": _normalize_audio_cpp_timeout(data.get("audio_cpp_timeout")),
@@ -126,6 +128,16 @@ def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
     for key in ("gui", "splitters", "sections", "window_geometry"):
         if isinstance(data.get(key), (dict, list)):
             normalized[key] = data[key]
+    if isinstance(data.get("inference_wizard_completed"), bool):
+        normalized["inference_wizard_completed"] = data["inference_wizard_completed"]
+    if isinstance(data.get("inference_wizard_dismissed"), bool):
+        normalized["inference_wizard_dismissed"] = data["inference_wizard_dismissed"]
+    if isinstance(data.get("recording_wizard_completed"), bool):
+        normalized["recording_wizard_completed"] = data["recording_wizard_completed"]
+    if isinstance(data.get("recording_wizard_dismissed"), bool):
+        normalized["recording_wizard_dismissed"] = data["recording_wizard_dismissed"]
+    if isinstance(data.get("recording_settings"), dict):
+        normalized["recording_settings"] = data["recording_settings"]
     return normalized
 
 
@@ -170,12 +182,10 @@ def remember_recent_reference_path(path_value: str, limit: int = 10) -> None:
 
 
 def _normalize_device_mode(value: str) -> str:
-    """Coerce device_mode to a supported value.
+    """Coerce device_mode to a supported PyTorch device.
 
-    Only "cpu" is a verified execution path.  Any other value in a saved
-    settings file (e.g. an old "vulkan" entry) is silently replaced with
-    "cpu" so round-tripped files stay clean and users are not left in an
-    unverified state.
+    CUDA is retained when selected in a profile; runtime hardware validation
+    happens when the render starts so a profile can move between machines.
     """
     candidate = str(value).strip().lower()
     if candidate not in _SUPPORTED_DEVICE_MODES:
@@ -292,6 +302,8 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "loudness_preset": str(project.get("loudness_preset", "light")),
         "crossfade_ms": int(project.get("crossfade_ms", 20)),
         "inference_backend": _normalize_inference_backend(project.get("inference_backend", "pytorch")),
+        "device_mode": _normalize_device_mode(project.get("device_mode", payload.get("device_mode", "cpu"))),
+        "cuda_device": _normalize_audio_cpp_device(project.get("cuda_device")),
         "audio_cpp_device": _normalize_audio_cpp_device(project.get("audio_cpp_device")),
         "audio_cpp_threads": _normalize_audio_cpp_threads(project.get("audio_cpp_threads")),
         "audio_cpp_timeout": _normalize_audio_cpp_timeout(project.get("audio_cpp_timeout")),
@@ -309,6 +321,7 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         # Always normalise device_mode so stale values in old settings files
         # do not leave the app in an unverified execution state.
         "device_mode": _normalize_device_mode(payload.get("device_mode", "cpu")),
+        "cuda_device": _normalize_audio_cpp_device(payload.get("cuda_device")),
         "speakers": {},
     }
     for speaker, config in speakers.items():

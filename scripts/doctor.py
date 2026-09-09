@@ -654,6 +654,40 @@ def _vulkan_backend_status(repo_root: Path) -> dict[str, Any]:
     }
 
 
+def _cuda_backend_status(repo_root: Path) -> dict[str, Any]:
+    """Report NVIDIA/CUDA readiness without making CUDA a required check."""
+    _prepend_repo_src(repo_root)
+    try:
+        from the_oracle.device_support import cuda_devices, cuda_reason, cuda_runtime_available
+
+        devices = cuda_devices()
+        runtime_available = cuda_runtime_available()
+        return {
+            "ok": runtime_available,
+            "runtime_available": runtime_available,
+            "reason": cuda_reason(),
+            "devices": [
+                {
+                    "index": device.index,
+                    "name": device.name,
+                    "vram_gib": device.vram_gib,
+                    "driver_version": device.driver_version,
+                    "torch_available": device.torch_available,
+                    "suitable": device.suitable,
+                    "reason": device.reason,
+                }
+                for device in devices
+            ],
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "runtime_available": False,
+            "reason": f"CUDA probe failed: {type(exc).__name__}: {exc}",
+            "devices": [],
+        }
+
+
 def _turbo_status(repo_root: Path, timeout: float) -> dict[str, Any]:
     code = f"""
 from __future__ import annotations
@@ -764,6 +798,15 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
             f"(ORACLE_AUDIOCPP_MAX_BATCH={batch_env or 'unset'}); set it "
             f"to a value in the sensible 1-128 range or unset it for the default 32."
         )
+    cuda = report.get("cuda_backend", {"devices": [], "runtime_available": True, "reason": "CUDA probe not requested."})
+    if cuda.get("devices") and not cuda.get("runtime_available"):
+        cuda_update_command = "oracle.ps1 update --pytorch-runtime cuda" if is_windows() else "./oracle update --pytorch-runtime cuda"
+        steps.append(
+            "CUDA is not currently usable: " + cuda.get("reason", "unknown reason") +
+            " Choose CPU, install the CUDA PyTorch runtime with " +
+            f"{cuda_update_command}, or replace an undersized GPU."
+        )
+
     if report["voice_sources"]["primary_source"] != "seashells":
         steps.append("Add curated local reference clips to ./Seashells so the GUI stops defaulting to smoke/build fallback voices.")
 
@@ -806,6 +849,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
             "error": chatterbox_probe.get("perth_error", ""),
         },
         "turbo": _turbo_status(repo_root, timeout=model_timeout),
+        "cuda_backend": _cuda_backend_status(repo_root),
         "qt": _qt_status(repo_root, timeout=qt_timeout),
         "voice_sources": voice_catalog_audit(repo_root),
         "deterministic_smoke": _deterministic_smoke_status(repo_root),
@@ -912,7 +956,15 @@ def _print_human_report(report: dict[str, Any]) -> None:
         detail = real_engine.get("error") or str(real_engine.get("chatterbox_import", {}))
         print(f"{_status(False)} Real-engine smoke readiness: {detail}")
 
-    # Opt-in backend: never a hard FAIL (machines without Vulkan are fine), but
+    print("\nCUDA / NVIDIA backend (optional):")
+    cuda = report.get("cuda_backend", {"runtime_available": False, "reason": "CUDA probe not included in this report.", "devices": []})
+    cuda_label = "PASS" if cuda.get("runtime_available") else "WARN"
+    print(f"{cuda_label} {cuda.get('reason', 'CUDA probe unavailable')}")
+    for device in cuda.get("devices", []):
+        vram = "unknown VRAM" if device.get("vram_gib") is None else f"{device['vram_gib']:.1f} GiB VRAM"
+        state = "usable" if device.get("torch_available") and device.get("suitable") else "not suitable"
+        print(f"      CUDA {device['index']}: {device['name']} ({vram}) — {state}")
+
     # readiness and the RDNA1 device-lost caveat are surfaced for the user.
     vulkan = report["vulkan_backend"]
     vulkan_label = "PASS" if vulkan["ok"] else "WARN"

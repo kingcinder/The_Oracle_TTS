@@ -115,6 +115,28 @@ def test_manifest_round_trips_audio_cpp_knobs(tmp_path: Path) -> None:
     assert loaded.render_settings.audio_cpp_max_batch == 16
 
 
+def test_manifest_round_trips_cuda_device_selection(tmp_path: Path) -> None:
+    plan = RenderPlan(
+        title="t",
+        source_path="in.txt",
+        output_dir=str(tmp_path / "output"),
+        engine="chatterbox",
+        correction_mode="moderate",
+    )
+    settings = RenderSettings(device_mode="cuda", cuda_device=1)
+    speakers = {
+        "A": SpeakerSettings(reference_path="a.wav", voice_settings=VoiceSettings()),
+        "B": SpeakerSettings(reference_path="b.wav", voice_settings=VoiceSettings()),
+    }
+
+    manifest_path = tmp_path / "cuda-project.json"
+    save_project_manifest(manifest_path, build_saved_project(plan, settings, speakers))
+    loaded = load_project_manifest(manifest_path)
+
+    assert loaded.render_settings.device_mode == "cuda"
+    assert loaded.render_settings.cuda_device == 1
+
+
 def test_manifest_without_audio_cpp_knobs_loads_with_defaults(tmp_path: Path) -> None:
     """Manifests saved before the knobs existed (no keys in render_settings)
     must still load, with the new fields defaulting to None."""

@@ -1,12 +1,12 @@
 # The Oracle — State (completeness manifest)
 
+**Current release: V1.10 (CUDA inference + guided onboarding)**
+
 This file is the repo's self-designated completeness record. It is the
 authoritative context for the Omega meta-skill loop (searched, never
 rewritten by the loop).
 
-## Done
-
-- **V1.01 GUI release** (2026-09-08, this campaign):
+## Done  - **V1.01 GUI release** (2026-09-08, this campaign):
   - Pain-point `~` markers (`word~word`) in input scripts are replaced by a
     normal spoken word boundary at the single synthesis chokepoint
     (`Utterance.text_for_tts`) in every correction mode — including Verbatim —
@@ -42,15 +42,34 @@ rewritten by the loop).
     (Windows) with Install / Start / Update / Uninstall actions
     delegating to `scripts/manage_install.py` (new `update` action keeps
     user data); version bumped to 1.0.1.
+  - First-run inference onboarding (`src/the_oracle/inference_wizard.py`):
+    hardware-aware CUDA/CPU/Vulkan discovery, unsuitable-GPU explanations,
+    a dependency-ordered Continue-driven GUI tutorial, live control
+    highlighting with beside-the-tooltip placement, and Settings replay modes
+    for the full tour, hardware discovery only, and main GUI tour only. The
+    chosen inference path is applied to the real picker and tutorial completion
+    or dismissal is persisted.
+  - First-open Recording Studio onboarding (`src/the_oracle/recording_wizard.py`):
+    microphone and supported sample-rate selection, shared Input/ teleprompter
+    script selection, configurable Seashells/ destination, generic-name caution
+    with disable checkbox, persisted recording preferences, and a staged
+    dependency-ordered guide with detailed mic placement, room, plosive,
+    breath, enunciation, emotional delivery, audition, and speaker-assignment
+    instructions. Settings can replay the guide at any time.
   - Certification: `scripts/certify_gui_themes.py` builds the real window
     under all six themes offscreen and asserts no truncation (geometry
     sweep with a populated table), WCAG legibility, working section
     sliders, collapse behavior, and a full persistence round-trip; full
-    suite at 467 passing tests, deterministic smoke render green.
+    suite at 492 passing tests, deterministic smoke render green.
 
-- Chatterbox-only render pipeline: `standard`, `multilingual`, `turbo`
-  variants on PyTorch (CPU) and an opt-in Vulkan backend via audio.cpp
-  (AMD RDNA1-class GPUs; vendored RDNA1 device-lost fix).
+- Chatterbox-only render pipeline: `standard`, `multilingual`, and `turbo`
+  variants on PyTorch, with CPU/system-DRAM as the guaranteed fallback, an
+  opt-in CUDA device mode for suitable NVIDIA GPUs, and an opt-in Vulkan
+  backend via audio.cpp for AMD RDNA1-class GPUs (vendored RDNA1 device-lost
+  fix). CUDA remains the existing PyTorch/Chatterbox path rather than a
+  second synthesis engine: hardware discovery reports card name, VRAM, driver
+  visibility, runtime availability, and rejects cards below the 4 GiB
+  suitability floor with an actionable reason.
 - Cross-platform bootstrap/install/doctor/run/uninstall for Linux and
   Windows; managed launcher + desktop integration.
 - Desktop GUI: review table, per-row preview, repair, live progress panel,
@@ -74,7 +93,9 @@ rewritten by the loop).
 - Fidelity fixes (commit `d77c278`): assembly no longer drops chunks of
   chunked utterances (parallel loader keyed by position, regression-tested);
   monologue renders no longer require/construct an unused speaker profile.
+- Test suite: 492 passing tests after CUDA and guided-onboarding coverage.
 - Test suite: 454 passing tests on the `feature/voice-craft-and-
+
   recording-studio` tree (416 on `main`) including the new assembly/
   blend/monologue/pacing/parity/recorder coverage.
 - Voice-craft + Recording Studio (branch
@@ -157,8 +178,13 @@ rewritten by the loop).
   model fidelity, not improve it. "Inflection at punctuation" is canonical
   model behavior, identical on both backends.
 - `turbo` variant on Vulkan (PyTorch-only by design, rejected clearly).
-- Additional GPU paths beyond Vulkan/CPU (CUDA/ROCm) — out of scope for
-  RDNA1 hardware.
+- AMD ROCm remains intentionally out of scope for this release: AMD systems
+  use CPU or the existing Vulkan/audio.cpp path. CUDA support is now present
+  for NVIDIA through the PyTorch path, including GUI/CLI pickers, persisted
+  device selection, manifest round-tripping, installer runtime selection
+  (`auto`, `cpu`, `cuda`), and doctor diagnostics. A live CUDA render still
+  requires compatible NVIDIA hardware, driver, CUDA-enabled PyTorch wheels,
+  model availability, and cannot be certified on this CPU-only CI host.
 - `Seashells/` runtime caches and `Output/` renders stay gitignored;
   `.venv/` bytecode is documented retention (see `.omega/CHANGELIST.md`).
 - Recording Studio extras (deferred): a waveform/trim editor for cropping a

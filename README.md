@@ -1,5 +1,7 @@
 # The Oracle
 
+**Release V1.10** — CUDA inference support and guided first-run onboarding.
+
 The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The repository now ships with a cross-platform bootstrap/install surface for both Linux and Windows.
 
 Chatterbox outputs include built-in Perth watermarking by design. This project does not remove or hide that.
@@ -16,6 +18,7 @@ Chatterbox outputs include built-in Perth watermarking by design. This project d
 - CLI render flow with saved project manifests
 - Deterministic smoke render path for repo-local verification without live model generation
 - Managed bootstrap, install, doctor, run, and uninstall entrypoints for Linux and Windows, plus a one-stop manager (`./oracle` / `oracle.ps1`) with install, start, update, and uninstall actions
+- Opt-in CUDA inference through the existing PyTorch/Chatterbox path, with automatic NVIDIA hardware/VRAM suitability detection, CPU fallback, and selectable CUDA device index
 - Opt-in Vulkan inference backend via audio.cpp (`--inference-backend vulkan`) for AMD RDNA1-class GPUs with no CUDA/ROCm path
 - Pain-point markers: a `~` glued between two words in an input script (e.g. `syncronized~lockstep`) marks a junction where the engine used to hang up or mispronounce; the marker is stripped from synthesis automatically in every correction mode (including Verbatim) while the review table keeps your annotation — an unattached `~` (e.g. `~42`) is still read verbatim
 
@@ -49,7 +52,7 @@ settings untouched. The underlying per-action scripts
 
 - Supported Python: `3.11` or `3.12`
 - Supported operating systems: Linux and Windows
-- Default execution path: CPU (PyTorch Chatterbox in-process)
+- Default execution path: CPU (PyTorch Chatterbox in-process); CUDA is available when a CUDA-enabled PyTorch wheel and a suitable NVIDIA GPU are detected
 - Vulkan is available as an opt-in inference backend via audio.cpp (`--inference-backend vulkan`); see "Vulkan Backend (audio.cpp)" below
 
 ## Quick Start
@@ -206,7 +209,36 @@ from starting duplicate downloads). If the tool is cached but slow to start,
 the load is bounded to 25 seconds — set `ORACLE_LANGUAGE_TOOL_TIMEOUT=<seconds>`
 to tune that bound.
 
-## Vulkan Backend (audio.cpp)
+### First-run inference setup and tutorial
+
+On the first launch after installation, The Oracle opens a non-modal **Inference Setup & Tour**. It inventories NVIDIA devices through PyTorch and `nvidia-smi`, reports each card's name/VRAM/runtime status, disables cards that are below the 4 GiB Chatterbox suitability floor, and leaves CPU/system DRAM as the guaranteed fallback. It also explains that AMD GPUs cannot use CUDA and that Vulkan/audio.cpp is the separate GPU path. The Continue button advances through a dependency-ordered tour: hardware discovery, backend choice, input/output, model and correction behavior, voice character, timing, hybrid voices, and finally Analyze/Preview/Render. The tutorial highlights the live control and positions itself beside it so its explanation and the control's tooltip remain readable.
+
+After completion, use **Settings → Replay Setup & Tutorial** to replay the **Entire Setup & Tutorial**, **Hardware Discovery Only**, or **Main GUI Tour Only**. The selected PyTorch CPU/CUDA device or Vulkan backend is applied to the real inference picker and persisted with the existing Remember GPU/CPU choice setting. A skipped first-run tour can be replayed from the same menu at any time.
+
+The first time **Recording Studio** is opened, a second setup guide appears. It configures the microphone and device-supported sample rate, the shared Input/ teleprompter script, the Seashells/ voice-recording folder, and the safe boilerplate naming policy. It explains that a missing microphone disables recording, provides detailed microphone placement, room, breath, plosive, enunciation, and emotional-delivery guidance, and teaches audition/assignment after a take. The guide's **Continue** button applies choices as dependencies are introduced. Its folder, script, microphone, naming warning, and replay state are remembered; the generic filename caution can be disabled in the popup and restored from Settings. Use **Settings → Replay Recording Studio Setup & Guide** to replay it.
+
+### CUDA / NVIDIA GPU
+
+CUDA is an additional PyTorch device mode, not a second synthesis engine. The existing Chatterbox pipeline, voice conditioning, cache behavior, previews, and render workers are reused unchanged. The GUI's **PyTorch Device** picker lists CPU plus detected NVIDIA cards; cards below the 4 GiB Chatterbox suitability floor are shown but disabled with the reason, and a machine with no usable GPU keeps CPU/DRAM available as the guaranteed fallback.
+
+The installer probes `nvidia-smi` before installing PyTorch. Its default `auto` policy installs the CUDA 12.4 PyTorch wheels only when at least one NVIDIA card reports enough VRAM; otherwise it installs the CPU wheels. You can explicitly choose the runtime:
+
+```bash
+./oracle install --pytorch-runtime auto   # recommended: hardware-aware
+./oracle install --pytorch-runtime cuda   # force CUDA 12.4 PyTorch wheels
+./oracle install --pytorch-runtime cpu    # force CPU wheels
+./oracle update --pytorch-runtime cuda
+```
+
+The CLI selects a device with `--device-mode cuda` and optionally pins a card with `--cuda-device N`:
+
+```bash
+the-oracle render --input Input/cli_short.txt --outdir Output \
+  --device-mode cuda --cuda-device 0
+```
+
+A CUDA choice is validated again at render time using PyTorch's actual runtime and device properties. The live render panel identifies the selected NVIDIA card rather than merely saying "GPU". If the driver, wheel, or VRAM is unsuitable, The Oracle fails with an actionable message and CPU remains selectable. The GUI remembers the selected PyTorch device when **Remember GPU/CPU choice** is enabled, and saved project manifests/profiles round-trip the CUDA device index. `scripts/doctor.py` reports every detected NVIDIA card, VRAM, driver version, and whether the installed runtime can use it. CUDA cannot accelerate AMD cards; AMD systems should use CPU or the Vulkan/audio.cpp backend described below.
+
 
 The default render path runs Chatterbox in-process on PyTorch (CPU). An opt-in
 `--inference-backend vulkan` path instead shells out to

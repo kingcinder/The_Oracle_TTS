@@ -303,6 +303,22 @@ QLabel {{
 QLabel#warning {{
     color: {tokens.warning};
 }}
+QWidget[wizardFocus="true"] {{
+    border: 3px solid {tokens.accent};
+    border-radius: {tokens.radius}px;
+    background-color: {tokens.panel_alt};
+}}
+QLabel#wizardHardwareSummary, QLabel#wizardProgress, QLabel#wizardHelpNote {{
+    color: {tokens.text_muted};
+}}
+QPlainTextEdit#wizardExplanation, QPlainTextEdit#recordingWizardExplanation {{
+    background-color: {tokens.panel_alt};
+    color: {tokens.text};
+    border: 1px solid {tokens.accent};
+}}
+QLabel#recordingWizardSummary, QLabel#recordingWizardProgress, QLabel#recordingWizardNote {{
+    color: {tokens.text_muted};
+}}
 QLabel:disabled {{
     color: {tokens.text_disabled};
 }}
