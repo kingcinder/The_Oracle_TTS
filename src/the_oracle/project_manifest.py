@@ -58,6 +58,7 @@ def _render_settings_to_dict(settings: RenderSettings) -> dict[str, Any]:
         "pause_between_turns_ms": settings.pause_between_turns_ms,
         "crossfade_ms": settings.crossfade_ms,
         "device_mode": settings.device_mode,
+        "cuda_device": settings.cuda_device,
         "inference_backend": settings.inference_backend,
         "audio_cpp_device": settings.audio_cpp_device,
         "audio_cpp_threads": settings.audio_cpp_threads,

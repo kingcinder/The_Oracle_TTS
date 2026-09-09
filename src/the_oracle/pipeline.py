@@ -15,7 +15,7 @@ from the_oracle import __version__
 from the_oracle.app_paths import normalize_output_filename
 from the_oracle.audio.assemble import AudioSegment, assemble_dialogue, load_audio, save_wav
 from the_oracle.audio.export_flac import next_available_output_path, write_flac
-from the_oracle.device_support import resolve_chatterbox_device
+from the_oracle.device_support import cuda_devices, resolve_chatterbox_device
 from the_oracle.emotion.goemotions import EmotionResult, GoEmotionsClassifier, SUPPORTED_EMOTIONS
 from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings
@@ -133,6 +133,7 @@ class RenderSettings:
     pause_between_turns_ms: int = 180
     crossfade_ms: int = 20
     device_mode: str = "cpu"
+    cuda_device: int | None = None
     inference_backend: str = "pytorch"
     audio_cpp_device: int | None = None
     audio_cpp_threads: int | None = None
@@ -175,6 +176,13 @@ class RenderSettings:
         if self.audio_cpp_max_batch is not None and self.audio_cpp_max_batch < 1:
             raise ValueError(
                 f"audio_cpp_max_batch must be a positive request count, got {self.audio_cpp_max_batch!r}."
+            )
+        # CUDA device selection is only meaningful for the PyTorch path, but
+        # validating it here keeps malformed manifests from failing deep inside
+        # a worker process.
+        if self.cuda_device is not None and self.cuda_device < 0:
+            raise ValueError(
+                f"cuda_device must be a non-negative CUDA device index, got {self.cuda_device!r}."
             )
         if self.seed is not None and self.seed < 0:
             raise ValueError(f"seed must be a non-negative integer, got {self.seed!r}.")
@@ -720,6 +728,20 @@ def synthesize_tasks_batched(
     return sorted(results, key=lambda result: result.utterance_index)
 
 
+def _pytorch_device_label(device_mode: str, cuda_device: int | None) -> str:
+    """Return a human-readable label for the active PyTorch device."""
+    if device_mode != "cuda":
+        return "CPU / system DRAM"
+    devices = cuda_devices()
+    selected = next(
+        (device for device in devices if cuda_device is None or device.index == cuda_device),
+        None,
+    )
+    if selected is not None:
+        return selected.label
+    return f"CUDA {cuda_device}" if cuda_device is not None else "CUDA"
+
+
 def _vulkan_device_label(engine: AudioCppVulkanEngine) -> str:
     """Human label for the active Vulkan device (best-effort, one probe).
 
@@ -1140,7 +1162,7 @@ class OraclePipeline:
         # "not verified" error before the audio.cpp backend is even reached.
         should_parallelize = _should_use_worker_pool(
             settings,
-            "cpu" if backend == "vulkan" else resolve_chatterbox_device(settings.device_mode),
+            "cpu" if backend == "vulkan" else resolve_chatterbox_device(settings.device_mode, settings.cuda_device),
             force_sequential=force_sequential,
         )
         if backend == "vulkan":
@@ -1148,7 +1170,7 @@ class OraclePipeline:
             engine_device = "vulkan"
         else:
             engine_cls = ChatterboxEngine
-            engine_device = resolve_chatterbox_device(settings.device_mode)
+            engine_device = resolve_chatterbox_device(settings.device_mode, settings.cuda_device)
         # The Vulkan device/threads knobs ride the settings (CLI flags or saved
         # manifest), not just ORACLE_AUDIOCPP_DEVICE/THREADS. Constructor args
         # win over the env vars inside the engine.
@@ -1170,7 +1192,9 @@ class OraclePipeline:
         # The live progress panel labels the active device (the GPU name for
         # Vulkan; CPU for PyTorch). One cheap probe at render start.
         render_state["device_label"] = (
-            _vulkan_device_label(engine) if backend == "vulkan" else "CPU"
+            _vulkan_device_label(engine)
+            if backend == "vulkan"
+            else _pytorch_device_label(settings.device_mode, settings.cuda_device)
         )
 
         # Hash references up front without loading the model so we can short-circuit
@@ -1901,6 +1925,7 @@ class OraclePipeline:
         model_variant: str,
         device_mode: str = "cpu",
         inference_backend: str = "pytorch",
+        cuda_device: int | None = None,
         audio_cpp_device: int | None = None,
         audio_cpp_threads: int | None = None,
         audio_cpp_timeout: int | None = None,
@@ -1942,8 +1967,12 @@ class OraclePipeline:
             )
             device_label = "audio.cpp Vulkan backend"
         else:
-            engine = ChatterboxEngine(variant=model_variant, device=resolve_chatterbox_device(device_mode), seed=seed)
-            device_label = engine.device
+            engine = ChatterboxEngine(
+                variant=model_variant,
+                device=resolve_chatterbox_device(device_mode, cuda_device),
+                seed=seed,
+            )
+            device_label = _pytorch_device_label(device_mode, cuda_device)
         emit_preview_progress("Loading model", f"Loading Chatterbox {model_variant} on {device_label}", 0)
         ensure_model_ready = getattr(engine, "ensure_model_ready", None)
         if callable(ensure_model_ready):

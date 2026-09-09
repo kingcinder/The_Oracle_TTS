@@ -517,6 +517,44 @@ def test_custom_reference_picker_custom_option_works_on_first_click(qt_app, monk
         window.close()
 
 
+def test_inference_wizard_first_launch_is_scheduled_and_replay_actions_exist(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        assert window.replay_full_wizard_action.text() == "Replay Entire Setup & Tutorial"
+        assert window.replay_discovery_wizard_action.text() == "Replay Hardware Discovery Only"
+        assert window.replay_main_wizard_action.text() == "Replay Main GUI Tour Only"
+        assert window._inference_wizard is None
+        window._start_inference_wizard("discovery", force=True)
+        assert window._inference_wizard is not None
+        assert window._inference_wizard.mode == "discovery"
+    finally:
+        window.close()
+
+
+def test_inference_wizard_selection_applies_to_real_pickers(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import the_oracle.app_gui as app_gui
+
+    cuda_info = app_gui.CUDADeviceInfo(
+        index=0,
+        name="Test NVIDIA",
+        vram_bytes=8 * 1024**3,
+        torch_available=True,
+        suitable=True,
+    )
+    monkeypatch.setattr(app_gui, "cuda_devices", lambda: [cuda_info])
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        window._start_inference_wizard("discovery", force=True)
+        wizard = window._inference_wizard
+        assert wizard is not None
+        wizard.device_picker.setCurrentIndex(wizard.device_picker.findData("cuda:0"))
+        wizard._continue()
+        assert window.inference_backend_combo.currentData() == "pytorch"
+        assert window.pytorch_device_combo.currentData() == "cuda:0"
+    finally:
+        window.close()
+
+
 def test_inference_backend_selector_defaults_to_pytorch(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     window, _paths = _build_window(monkeypatch, tmp_path)
     try:
@@ -1809,6 +1847,38 @@ def test_remembered_backend_stale_model_path_not_applied(qt_app, monkeypatch: py
         assert os.environ.get("ORACLE_AUDIOCPP_CLI") == str(cli)
         assert window.inference_backend_combo.currentData() == "vulkan"
         assert "no longer exists" in window.error_panel.toPlainText()
+    finally:
+        window.close()
+
+
+def test_cuda_device_selection_wires_into_render_and_persists(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import the_oracle.app_gui as app_gui
+
+    cuda_info = app_gui.CUDADeviceInfo(
+        index=1,
+        name="Test NVIDIA",
+        vram_bytes=8 * 1024**3,
+        torch_available=True,
+        suitable=True,
+    )
+    monkeypatch.setattr(app_gui, "cuda_devices", lambda: [cuda_info])
+    monkeypatch.setattr(app_gui, "cuda_reason", lambda: "test CUDA available")
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        index = window.pytorch_device_combo.findData("cuda:1")
+        assert index >= 0
+        window.pytorch_device_combo.setCurrentIndex(index)
+
+        settings = window._render_settings()
+        assert settings.inference_backend == "pytorch"
+        assert settings.device_mode == "cuda"
+        assert settings.cuda_device == 1
+
+        window._app_settings_ready = True
+        window._persist_remembered_settings()
+        payload = load_app_settings()
+        assert payload["device_mode"] == "cuda"
+        assert payload["cuda_device"] == 1
     finally:
         window.close()
 

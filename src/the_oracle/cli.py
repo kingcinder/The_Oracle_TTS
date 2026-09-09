@@ -75,7 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Render the whole input as a single narrator voice (Speaker A), ignoring per-line attribution.",
     )
     render.add_argument("--model-variant", choices=["standard", "multilingual", "turbo"], default="standard")
-    render.add_argument("--device-mode", choices=["cpu", "vulkan"], default="cpu")
+    render.add_argument("--device-mode", choices=["cpu", "cuda", "vulkan"], default="cpu", help="PyTorch device: cpu or CUDA; Vulkan is retained for compatibility and uses the audio.cpp backend.")
+    render.add_argument("--cuda-device", type=_nonnegative_int, default=None, metavar="N", help="CUDA device index for PyTorch inference (default: CUDA's default device). Requires --device-mode cuda.")
     render.add_argument("--no-audio-cpp-setup", action="store_true", help="Skip the automatic audio.cpp build/model download before a Vulkan render; fail fast instead.")
     render.add_argument("--inference-backend",
         choices=["pytorch", "vulkan"],
@@ -181,6 +182,10 @@ def handle_render(args: argparse.Namespace) -> int:
                 "render requires either --project, or --input and --outdir. "
                 f"Missing: {', '.join(missing)}"
             )
+        if args.device_mode != "cuda" and args.cuda_device is not None:
+            raise SystemExit("--cuda-device requires --device-mode cuda.")
+        if args.device_mode == "cuda" and args.inference_backend == "vulkan":
+            raise SystemExit("--device-mode cuda cannot be combined with --inference-backend vulkan; use --inference-backend pytorch.")
         if args.inference_backend != "vulkan" and (
             args.audio_cpp_device is not None
             or args.audio_cpp_threads is not None
@@ -225,6 +230,7 @@ def handle_render(args: argparse.Namespace) -> int:
             export_stems=not args.no_stems,
             loudness_preset=args.loudness,
             device_mode=args.device_mode,
+            cuda_device=args.cuda_device,
             inference_backend=args.inference_backend,
             audio_cpp_device=args.audio_cpp_device,
             audio_cpp_threads=args.audio_cpp_threads,

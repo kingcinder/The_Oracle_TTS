@@ -12,6 +12,7 @@ import sys
 import signal
 import subprocess
 import threading
+from typing import Callable
 
 from PySide6.QtCore import QThread, Qt, QUrl, Signal, QTimer
 from PySide6.QtGui import QAction
@@ -68,8 +69,11 @@ from the_oracle.gui_settings import (
     save_template,
 )
 from the_oracle.audio import recorder
+from the_oracle.device_support import CUDADeviceInfo, cuda_devices, cuda_reason
 from the_oracle.gui_themes import DEFAULT_THEME, THEMES, apply_theme
 from the_oracle.gui_tooltips import install_ctrl_hover_help
+from the_oracle.inference_wizard import InferenceSetupWizard
+from the_oracle.recording_wizard import RecordingStudioSetupWizard
 from the_oracle.gui_widgets import PerceptualSlider
 from the_oracle.gui_sections import QHSectionGroup, collapsible_section
 from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings, Utterance
@@ -418,6 +422,7 @@ class PreviewWorker(QThread):
         *,
         pipeline: OraclePipeline | None = None,
         inference_backend: str = "pytorch",
+        cuda_device: int | None = None,
         audio_cpp_device: int | None = None,
         audio_cpp_threads: int | None = None,
         audio_cpp_timeout: int | None = None,
@@ -433,6 +438,7 @@ class PreviewWorker(QThread):
         self.model_variant = model_variant
         self.device_mode = device_mode
         self.inference_backend = inference_backend
+        self.cuda_device = cuda_device
         self.audio_cpp_device = audio_cpp_device
         self.audio_cpp_threads = audio_cpp_threads
         self.audio_cpp_timeout = audio_cpp_timeout
@@ -482,6 +488,7 @@ class PreviewWorker(QThread):
                     "model_variant": self.model_variant,
                     "device_mode": self.device_mode,
                     "inference_backend": self.inference_backend,
+                    "cuda_device": self.cuda_device,
                     "audio_cpp_device": self.audio_cpp_device,
                     "audio_cpp_threads": self.audio_cpp_threads,
                     "audio_cpp_timeout": self.audio_cpp_timeout,
@@ -584,6 +591,7 @@ class PreviewWorker(QThread):
                     self.model_variant,
                     device_mode=self.device_mode,
                     inference_backend=self.inference_backend,
+                    cuda_device=self.cuda_device,
                     audio_cpp_device=self.audio_cpp_device,
                     audio_cpp_threads=self.audio_cpp_threads,
                     audio_cpp_timeout=self.audio_cpp_timeout,
@@ -813,7 +821,7 @@ class RenderProgressDialog(QDialog):
         device it renders on (the GPU name for Vulkan, CPU for PyTorch)."""
         if not progress.backend:
             return "Backend: ..."
-        label = "Vulkan (audio.cpp)" if progress.backend == "vulkan" else "PyTorch (CPU)"
+        label = "Vulkan (audio.cpp)" if progress.backend == "vulkan" else "PyTorch"
         if progress.device_label:
             label += f" — {progress.device_label}"
         return f"Backend: {label}"
@@ -907,7 +915,7 @@ class LivePanel(QWidget):
 
         # Backend line
         if progress.backend:
-            label = "Vulkan (audio.cpp)" if progress.backend == "vulkan" else "PyTorch (CPU)"
+            label = "Vulkan (audio.cpp)" if progress.backend == "vulkan" else "PyTorch"
             if progress.device_label:
                 label += f" — {progress.device_label}"
             self.backend_label.setText(f"Backend: {label}")
@@ -1034,10 +1042,14 @@ class RecordingStudioDialog(QDialog):
         self.outdir_combo = QComboBox()
         self.outdir_combo.setEditable(True)
         self.outdir_combo.addItem(str(self.voice_dir), str(self.voice_dir))
+        self.outdir_combo.currentTextChanged.connect(self._on_output_folder_changed)
         self.outdir_browse = QPushButton("Browse...")
         self.outdir_browse.clicked.connect(self._browse_outdir)
         self.name_edit = QLineEdit()
         self.name_edit.editingFinished.connect(lambda: setattr(self, "_name_edited", True))
+        self.generic_name_warning_enabled = True
+        self.remember_input_default = True
+        self.remember_output_default = True
         self.name_edit.textChanged.connect(self._refresh_target)
         self.level_bar = QProgressBar()
         self.level_bar.setRange(0, 100)
@@ -1080,6 +1092,43 @@ class RecordingStudioDialog(QDialog):
         self._build_layout()
         self._populate_scripts()
         self._refresh_devices()
+        self._refresh_target()
+
+    def _on_output_folder_changed(self, folder: str) -> None:
+        """Keep the suggested name aligned with a newly chosen folder."""
+        if not self._name_edited:
+            self.name_edit.blockSignals(True)
+            self.name_edit.setText(f"{recorder.next_seashell_name(folder or self.voice_dir)}.wav")
+            self.name_edit.blockSignals(False)
+        self._refresh_target()
+
+    def apply_setup_preferences(self, payload: dict) -> None:
+        """Apply Recording Studio wizard settings to this live dialog."""
+        mic = payload.get("microphone_index")
+        if mic is not None:
+            index = self.mic_combo.findData(mic)
+            if index >= 0:
+                self.mic_combo.setCurrentIndex(index)
+        rate = payload.get("samplerate")
+        if rate is not None:
+            index = self.rate_combo.findData(rate)
+            if index >= 0:
+                self.rate_combo.setCurrentIndex(index)
+        script = str(payload.get("input_file") or "")
+        if script:
+            index = self.script_combo.findData(script)
+            if index >= 0:
+                self.script_combo.setCurrentIndex(index)
+        folder = str(payload.get("output_dir") or "").strip()
+        if folder:
+            self.outdir_combo.setCurrentText(folder)
+        name = str(payload.get("output_filename") or "").strip()
+        if name:
+            self.name_edit.setText(name)
+            self._name_edited = not name.lower().startswith("seashell_no_")
+        self.generic_name_warning_enabled = bool(payload.get("generic_name_warning", True))
+        self.remember_input_default = bool(payload.get("remember_input_default", True))
+        self.remember_output_default = bool(payload.get("remember_output_default", True))
         self._refresh_target()
 
     # -- layout -------------------------------------------------------------
@@ -1247,6 +1296,25 @@ class RecordingStudioDialog(QDialog):
         if self.rate_combo.currentData() is None:
             self.status.setText("Pick a supported sample rate first.")
             return
+        # A generated boilerplate filename gets one actionable caution. It is
+        # intentionally shown at record time, when the user can still close it
+        # and replace the name; the checkbox preference is persisted by MainWindow.
+        if self.generic_name_warning_enabled and not self._name_edited and self.name_edit.text().strip().lower().startswith("seashell_no_"):
+            warning = QMessageBox(self)
+            warning.setIcon(QMessageBox.Icon.Warning)
+            warning.setWindowTitle("Generic Seashell filename")
+            warning.setText("This recording will use a generic default filename.")
+            warning.setInformativeText("Close this warning and choose a descriptive filename now if you want this take to be easy to identify later.")
+            disable = QCheckBox("Click here to disable this warning; re-enable it in File → Settings")
+            warning.setCheckBox(disable)
+            warning.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+            warning.setDefaultButton(QMessageBox.StandardButton.Cancel)
+            result = warning.exec()
+            if disable.isChecked():
+                self.generic_name_warning_enabled = False
+                self.status.setText("Generic filename warning disabled; change it in Settings if needed.")
+            if result == QMessageBox.StandardButton.Cancel:
+                return
         # Never overwrite: if the typed name collides and the user declines the
         # overwrite prompt, fall back to the next free Seashell_No_x name.
         target = Path(self._out_folder()) / self.name_edit.text().strip()
@@ -1784,6 +1852,8 @@ class MainWindow(QMainWindow):
         # over the remembered choice.
         self._app_settings = load_app_settings()
         self._app_settings_ready = False
+        self._inference_wizard: InferenceSetupWizard | None = None
+        self._recording_wizard: RecordingStudioSetupWizard | None = None
         # Section layout registry: key -> (section, splitter, index). Filled
         # during _build_ui; drives persistence of splitter sizes, section
         # size sliders, and collapse states.
@@ -1808,6 +1878,7 @@ class MainWindow(QMainWindow):
         self.preview_worker: PreviewWorker | None = None
         self._vulkan_probe_thread: VulkanDeviceProbeThread | None = None
         self._vulkan_devices_probed = False
+        self._cuda_devices: list[CUDADeviceInfo] = cuda_devices()
         self._vulkan_preflight_thread: VulkanPreflightThread | None = None
         self._model_download_thread: ModelDownloadThread | None = None
         # Automatic CPU→GPU setup: when the Vulkan backend is selected but its
@@ -1875,6 +1946,11 @@ class MainWindow(QMainWindow):
         # with widget defaults.
         self._app_settings_ready = True
         self._start_prewarm()
+        # A new installation gets a guided hardware discovery and GUI tour.
+        # Use a short queued delay so the first frame, theme, and tooltips are
+        # fully realized before the non-modal tutorial highlights a control.
+        if not self._app_settings.get("inference_wizard_completed", False) and not self._app_settings.get("inference_wizard_dismissed", False):
+            QTimer.singleShot(250, self._start_inference_wizard)
 
     def _log_action_timing(self, label: str, wall: float | None = None, extra: dict | None = None) -> None:
         try:
@@ -2082,6 +2158,19 @@ class MainWindow(QMainWindow):
         settings_menu.addAction(load_settings_action)
         settings_menu.addSeparator()
         settings_menu.addAction(save_template_action)
+        settings_menu.addSeparator()
+        self.inference_wizard_menu = settings_menu.addMenu("Replay Setup & Tutorial")
+        self.replay_full_wizard_action = QAction("Replay Entire Setup & Tutorial", self)
+        self.replay_full_wizard_action.triggered.connect(lambda: self._start_inference_wizard("full", force=True))
+        self.replay_discovery_wizard_action = QAction("Replay Hardware Discovery Only", self)
+        self.replay_discovery_wizard_action.triggered.connect(lambda: self._start_inference_wizard("discovery", force=True))
+        self.replay_main_wizard_action = QAction("Replay Main GUI Tour Only", self)
+        self.replay_main_wizard_action.triggered.connect(lambda: self._start_inference_wizard("main", force=True))
+        for wizard_action in (self.replay_full_wizard_action, self.replay_discovery_wizard_action, self.replay_main_wizard_action):
+            self.inference_wizard_menu.addAction(wizard_action)
+        self.recording_wizard_action = QAction("Replay Recording Studio Setup & Guide", self)
+        self.recording_wizard_action.triggered.connect(lambda: self._start_recording_wizard(force=True))
+        settings_menu.addAction(self.recording_wizard_action)
 
         self.templates_menu = settings_menu.addMenu("Load Template")
         self.templates_menu.aboutToShow.connect(self._rebuild_templates_menu)
@@ -2256,9 +2345,17 @@ class MainWindow(QMainWindow):
             ),
             (
                 self.inference_backend_combo,
-                "Which engine synthesizes audio: PyTorch (CPU, in-process "
-                "Chatterbox) or Vulkan (opt-in; shells out to audio.cpp, "
-                "needs audiocpp_cli + model).",
+                "Inference backend: PyTorch runs the Chatterbox model through the "
+                "installed PyTorch runtime, while Vulkan delegates to audio.cpp. "
+                "The separate PyTorch Device picker chooses CPU/DRAM or a usable "
+                "CUDA/NVIDIA card when PyTorch has CUDA support.",
+            ),
+            (
+                self.pytorch_device_combo,
+                "PyTorch execution device: CPU / system DRAM, or a suitable "
+                "CUDA / NVIDIA GPU. Disabled CUDA entries are detected hardware "
+                "that is missing a CUDA-enabled PyTorch runtime or does not meet "
+                "the 4 GiB Chatterbox VRAM floor. " + cuda_reason(),
             ),
             (
                 self.test_vulkan_button,
@@ -2375,6 +2472,10 @@ class MainWindow(QMainWindow):
             (self.confirmation_action, "Re-enable the delete-confirmation prompt for removing review-table rows."),
             (self.remember_backend_action, "Remember which inference backend was chosen (PyTorch CPU or Vulkan GPU) plus the audiocpp_cli and Chatterbox model paths, and restore them automatically at next launch so the GPU needs no setup again. Uncheck to always start on PyTorch (CPU)."),
             (self.download_vulkan_model_action, "Fetch the audio.cpp Chatterbox model in the background and report the ORACLE_AUDIOCPP_MODEL path to use."),
+            (self.replay_full_wizard_action, "Replay the complete hardware discovery and dependency-ordered GUI tutorial."),
+            (self.replay_discovery_wizard_action, "Replay only the hardware and inference availability discovery step."),
+            (self.replay_main_wizard_action, "Replay only the main-page GUI feature tour, starting after hardware discovery."),
+            (self.recording_wizard_action, "Replay the Recording Studio setup guide, including microphone, folder, naming, and speaking technique."),
         ])
         # The row labels and Browse buttons share their field's description,
         # so hovering the *name* of a control works too (the user asked for
@@ -2397,6 +2498,7 @@ class MainWindow(QMainWindow):
             self.audio_cpp_threads_spin,
             self.audio_cpp_timeout_spin,
             self.audio_cpp_max_batch_spin,
+            self.pytorch_device_combo,
         ])
         # The Inference Backend row's field is a layout, so its label is not
         # covered by register_form_labels; register it explicitly.
@@ -2474,12 +2576,31 @@ class MainWindow(QMainWindow):
             "narrator instead of a cast of characters."
         )
         self.inference_backend_combo = QComboBox()
-        self.inference_backend_combo.addItem("PyTorch (CPU)", "pytorch")
+        self.inference_backend_combo.addItem("PyTorch", "pytorch")
         self.inference_backend_combo.addItem("Vulkan (audio.cpp)", "vulkan")
         self.inference_backend_combo.setCurrentIndex(0)
+        self.pytorch_device_combo = QComboBox()
+        self.pytorch_device_combo.addItem("CPU / system DRAM", "cpu")
+        for device in self._cuda_devices:
+            self.pytorch_device_combo.addItem(device.label, f"cuda:{device.index}")
+            item = self.pytorch_device_combo.model().item(self.pytorch_device_combo.count() - 1)
+            if item is not None and (not device.torch_available or not device.suitable):
+                item.setEnabled(False)
+        has_usable_cuda = any(device.torch_available and device.suitable for device in self._cuda_devices)
+        if not has_usable_cuda:
+            self.pytorch_device_combo.addItem("CUDA unavailable (see tooltip)", "cuda-unavailable")
+            item = self.pytorch_device_combo.model().item(self.pytorch_device_combo.count() - 1)
+            if item is not None:
+                item.setEnabled(False)
+        self.pytorch_device_combo.setToolTip(
+            "PyTorch execution device. CPU uses system DRAM. CUDA uses a suitable "
+            "NVIDIA GPU when the installed PyTorch runtime exposes it. "
+            + cuda_reason()
+        )
         self.inference_backend_combo.setToolTip(
-            "Inference backend for render and preview. PyTorch (CPU) is the default "
-            "in-process Chatterbox path. Vulkan (audio.cpp) is the GPU path: selecting "
+            "Inference backend for render and preview. PyTorch is the in-process "
+            "Chatterbox path and uses the separate PyTorch Device picker for CPU or "
+            "CUDA. Vulkan (audio.cpp) is the alternate GPU path: selecting "
             "it automatically builds audiocpp_cli and downloads the Chatterbox model "
             "if missing, then sets the env vars for the session (see README "
             "'Vulkan Backend')."
@@ -2543,6 +2664,7 @@ class MainWindow(QMainWindow):
         )
         self.variant_combo.currentTextChanged.connect(self._refresh_inference_backend_options)
         self.inference_backend_combo.currentIndexChanged.connect(self._refresh_audio_cpp_knob_options)
+        self.pytorch_device_combo.currentIndexChanged.connect(self._persist_remembered_settings)
         # Keep the remembered backend choice and Vulkan knobs in sync with the
         # widgets so the next launch restores exactly what the user last had
         # selected. The handlers are gated on _app_settings_ready, so the
@@ -2558,6 +2680,7 @@ class MainWindow(QMainWindow):
         backend_row.addWidget(self.inference_backend_combo, 1)
         backend_row.addWidget(self.test_vulkan_button, 0)
         form.addRow("Inference Backend", backend_row)
+        form.addRow("PyTorch Device", self.pytorch_device_combo)
         # The row's field is a layout, so labelForField() must be given the
         # layout (not the combo) to find the "Inference Backend" label; kept
         # for Ctrl+hover label registration.
@@ -2679,6 +2802,10 @@ class MainWindow(QMainWindow):
         self.audio_cpp_timeout_spin.setEnabled(is_vulkan)
         self.audio_cpp_max_batch_spin.setEnabled(is_vulkan)
         self.audio_cpp_device_label.setEnabled(is_vulkan)
+        # Keep the CPU choice available even when no suitable CUDA device is
+        # present; only the unavailable CUDA rows are disabled. Vulkan uses a
+        # separate backend picker and temporarily disables this control.
+        self.pytorch_device_combo.setEnabled(not is_vulkan)
         if is_vulkan:
             self._start_vulkan_device_probe()
             self._refresh_vulkan_prerequisite_warning()
@@ -3235,6 +3362,8 @@ class MainWindow(QMainWindow):
         self._app_settings.update({
             "remember_backend": enabled,
             "inference_backend": self.inference_backend_combo.currentData() or "pytorch",
+            "device_mode": self._pytorch_device_selection()[0],
+            "cuda_device": self._pytorch_device_selection()[1],
             "audio_cpp_device": self._audio_cpp_device_value(),
             "audio_cpp_threads": self._audio_cpp_threads_value(),
             "audio_cpp_timeout": self._audio_cpp_timeout_value(),
@@ -3311,6 +3440,12 @@ class MainWindow(QMainWindow):
             self._set_audio_cpp_timeout_value(self._app_settings.get("audio_cpp_timeout"))
             self._set_audio_cpp_max_batch_value(self._app_settings.get("audio_cpp_max_batch"))
             self.error_panel.append("Restored the remembered Vulkan backend from the last session.")
+        elif self._app_settings.get("device_mode") == "cuda":
+            target = self._app_settings.get("cuda_device")
+            target_data = f"cuda:{int(target)}" if target is not None else None
+            index = self.pytorch_device_combo.findData(target_data) if target_data else -1
+            self.pytorch_device_combo.setCurrentIndex(index if index >= 0 else 0)
+            self.error_panel.append("Restored the remembered CUDA PyTorch device from the last session.")
 
     def _refresh_reference_pickers(self) -> None:
         # Generous limit so a freshly recorded Seashell (in Seashells/ root)
@@ -3324,10 +3459,101 @@ class MainWindow(QMainWindow):
             group.set_blend_choices(defaults, recents, group.blend_target_path(), blends=blends)
 
     # --------------------
+    # Inference setup and replayable GUI tutorial
+    # --------------------
+    def _apply_inference_wizard_selection(self, device_mode: str, cuda_device: int | None) -> None:
+        """Apply the wizard's chosen inference path to the real GUI pickers."""
+        if device_mode == "vulkan":
+            index = self.inference_backend_combo.findData("vulkan")
+            if index >= 0 and self.inference_backend_combo.model().item(index).isEnabled():
+                self.inference_backend_combo.setCurrentIndex(index)
+            return
+        backend_index = self.inference_backend_combo.findData("pytorch")
+        if backend_index >= 0:
+            self.inference_backend_combo.setCurrentIndex(backend_index)
+        target = f"cuda:{int(cuda_device)}" if device_mode == "cuda" and cuda_device is not None else "cpu"
+        device_index = self.pytorch_device_combo.findData(target)
+        if device_index >= 0:
+            self.pytorch_device_combo.setCurrentIndex(device_index)
+        else:
+            self.pytorch_device_combo.setCurrentIndex(self.pytorch_device_combo.findData("cpu"))
+        self._persist_remembered_settings()
+
+    def _handle_inference_wizard_completed(self, accepted: bool, mode: str) -> None:
+        """Remember whether first-run onboarding was completed or dismissed."""
+        self._inference_wizard = None
+        if mode == "full" and accepted:
+            self._app_settings["inference_wizard_completed"] = True
+            self._app_settings["inference_wizard_dismissed"] = False
+        elif mode == "full" and not accepted:
+            self._app_settings["inference_wizard_dismissed"] = True
+        if mode == "full":
+            try:
+                save_app_settings(self._app_settings)
+            except Exception as exc:
+                self.error_panel.append(f"Could not save tutorial state: {exc}")
+        self.error_panel.append(
+            "Inference setup and tutorial completed. Replay it from Settings when needed."
+            if accepted else
+            "Inference setup tutorial skipped. Replay it from Settings at any time."
+        )
+
+    def _refresh_pytorch_device_options(self) -> None:
+        """Re-probe and rebuild the PyTorch device picker for wizard replay.
+
+        A GPU can be installed or enabled while The Oracle is still open. A
+        replayed discovery stage must therefore use fresh hardware facts,
+        rather than the snapshot captured during MainWindow construction.
+        """
+        if not hasattr(self, "pytorch_device_combo"):
+            return
+        current = self.pytorch_device_combo.currentData()
+        combo = self.pytorch_device_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("CPU / system DRAM", "cpu")
+        for device in self._cuda_devices:
+            combo.addItem(device.label, f"cuda:{device.index}")
+            item = combo.model().item(combo.count() - 1)
+            if item is not None and (not device.torch_available or not device.suitable):
+                item.setEnabled(False)
+                item.setToolTip(device.reason)
+        if not any(device.torch_available and device.suitable for device in self._cuda_devices):
+            combo.addItem("CUDA unavailable (see tooltip)", "cuda-unavailable")
+            item = combo.model().item(combo.count() - 1)
+            if item is not None:
+                item.setEnabled(False)
+                item.setToolTip("CUDA is not currently usable: " + cuda_reason())
+        restored = combo.findData(current)
+        combo.setCurrentIndex(restored if restored >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _start_inference_wizard(self, mode: str = "full", *, force: bool = False) -> None:
+        """Show the hardware-aware tutorial, keeping only one copy alive."""
+        if self._inference_wizard is not None:
+            self._inference_wizard.raise_()
+            self._inference_wizard.activateWindow()
+            return
+        if mode == "full" and not force and (self._app_settings.get("inference_wizard_completed") or self._app_settings.get("inference_wizard_dismissed")):
+            return
+        self._cuda_devices = cuda_devices()
+        self._refresh_pytorch_device_options()
+        wizard = InferenceSetupWizard(
+            self,
+            devices=self._cuda_devices,
+            mode=mode,
+            on_selection=self._apply_inference_wizard_selection,
+        )
+        wizard.completed.connect(self._handle_inference_wizard_completed)
+        wizard.finished.connect(wizard.deleteLater)
+        self._inference_wizard = wizard
+        wizard.start()
+
+    # --------------------
     # Custom Voice Recording Studio
     # --------------------
     def open_recording_studio(self) -> None:
-        """Open the Recording Studio (non-modal, its own window)."""
+        """Open the Recording Studio and launch its first-open guide once."""
         dialog = RecordingStudioDialog(
             repo_root=self.repo_root,
             voice_dir=self.paths.voice_dir,
@@ -3335,6 +3561,7 @@ class MainWindow(QMainWindow):
             parent=self,
             on_assign=self._assign_recording_to_speaker,
         )
+        dialog.apply_setup_preferences(self._app_settings.get("recording_settings") or {})
         self._recording_studio = dialog
         # Refresh the Speaker A/B (and any cast) voice pickers whenever the
         # studio closes - whether or not a recording was saved.
@@ -3343,6 +3570,66 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+        if not self._app_settings.get("recording_wizard_completed", False) and not self._app_settings.get("recording_wizard_dismissed", False):
+            QTimer.singleShot(150, self._start_recording_wizard)
+
+    def _apply_recording_wizard_preferences(self, payload: dict) -> None:
+        """Apply and persist the setup choices made in the recording guide."""
+        studio = getattr(self, "_recording_studio", None)
+        if studio is None:
+            return
+        studio.apply_setup_preferences(payload)
+        if payload.get("remember_input_default"):
+            self._app_settings["recording_settings"] = dict(payload)
+        elif isinstance(self._app_settings.get("recording_settings"), dict):
+            self._app_settings["recording_settings"].pop("input_file", None)
+        if payload.get("remember_output_default"):
+            self._app_settings.setdefault("recording_settings", {}).update({"output_dir": payload.get("output_dir", "")})
+        else:
+            self._app_settings.setdefault("recording_settings", {}).pop("output_dir", None)
+        self._app_settings["recording_settings"] = {
+            **self._app_settings.get("recording_settings", {}),
+            "microphone_index": payload.get("microphone_index"),
+            "samplerate": payload.get("samplerate"),
+            "generic_name_warning": payload.get("generic_name_warning", True),
+            "remember_input_default": payload.get("remember_input_default", True),
+            "remember_output_default": payload.get("remember_output_default", True),
+        }
+        self._persist_recording_settings()
+
+    def _persist_recording_settings(self) -> None:
+        if not self._app_settings_ready:
+            return
+        try:
+            save_app_settings(self._app_settings)
+        except Exception as exc:
+            self.error_panel.append(f"Could not persist Recording Studio settings: {exc}")
+
+    def _start_recording_wizard(self, *, force: bool = False) -> None:
+        """Show the first-open/replayable Recording Studio guide."""
+        studio = getattr(self, "_recording_studio", None)
+        if studio is None or self._recording_wizard is not None:
+            return
+        if not force and (self._app_settings.get("recording_wizard_completed") or self._app_settings.get("recording_wizard_dismissed")):
+            return
+        studio.apply_setup_preferences(self._app_settings.get("recording_settings") or {})
+        wizard = RecordingStudioSetupWizard(studio, on_apply=self._apply_recording_wizard_preferences)
+        wizard.completed.connect(self._handle_recording_wizard_completed)
+        wizard.finished.connect(wizard.deleteLater)
+        self._recording_wizard = wizard
+        wizard.start()
+
+    def _handle_recording_wizard_completed(self, accepted: bool, mode: str) -> None:
+        self._recording_wizard = None
+        if mode == "full":
+            self._app_settings["recording_wizard_completed"] = bool(accepted)
+            self._app_settings["recording_wizard_dismissed"] = not accepted
+            self._persist_recording_settings()
+        self.error_panel.append(
+            "Recording Studio setup and speaking guide completed."
+            if accepted else
+            "Recording Studio guide skipped; replay it from Settings when ready."
+        )
 
     def _assign_recording_to_speaker(self, speaker: str, path: Path) -> None:
         """Point a speaker's Custom Voice Reference Audio at a fresh Seashell.
@@ -3425,7 +3712,7 @@ class MainWindow(QMainWindow):
         # Keep the UI responsive: disable heavy actions while warmup runs, but do not block the event loop.
         self.analyze_button.setEnabled(False)
         self.render_button.setEnabled(False)
-        self._prewarm_thread = PrewarmThread(device=_DEVICE_MODE)
+        self._prewarm_thread = PrewarmThread(device=self._pytorch_device_selection()[0])
         self._prewarm_thread.ready.connect(self._handle_prewarm_ready)
         self._prewarm_thread.failed.connect(self._handle_prewarm_failed)
         # Teardown only via finished: ready/failed fire from run()'s final
@@ -3629,14 +3916,24 @@ class MainWindow(QMainWindow):
             )
         return result
 
+    def _pytorch_device_selection(self) -> tuple[str, int | None]:
+        """Return the selected PyTorch device mode and CUDA index."""
+        value = self.pytorch_device_combo.currentData()
+        if isinstance(value, str) and value.startswith("cuda:"):
+            try:
+                return "cuda", int(value.split(":", 1)[1])
+            except ValueError:
+                pass
+        return "cpu", None
+
     def _render_settings(self) -> RenderSettings:
         variant = self.variant_combo.currentText()
         mode_value = self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText()
         inference_backend = self.inference_backend_combo.currentData() or "pytorch"
-        # The device/threads/timeout knobs are Vulkan-only; emit None on the
-        # PyTorch path so stale widget values never leak into render metadata
-        # or saved profiles as if they were in effect.
+        device_mode, cuda_device = self._pytorch_device_selection()
         is_vulkan = inference_backend == "vulkan"
+        if is_vulkan:
+            device_mode, cuda_device = "cpu", None
         return RenderSettings(
             correction_mode=mode_value,
             model_variant=variant,
@@ -3645,7 +3942,8 @@ class MainWindow(QMainWindow):
             loudness_preset=self.loudness_combo.currentText(),
             pause_between_turns_ms=self.speaker_a.pause_spin.value(),
             crossfade_ms=self.crossfade_spin.value(),
-            device_mode=_DEVICE_MODE,
+            device_mode=device_mode,
+            cuda_device=cuda_device,
             inference_backend=inference_backend,
             audio_cpp_device=self._audio_cpp_device_value() if is_vulkan else None,
             audio_cpp_threads=self._audio_cpp_threads_value() if is_vulkan else None,
@@ -3693,12 +3991,15 @@ class MainWindow(QMainWindow):
             "version": 1,
             "name": "",
             "device_mode": default_render.device_mode,
+            "cuda_device": default_render.cuda_device,
             "project": {
                 "model_variant": default_render.model_variant,
                 "correction_mode": default_render.correction_mode,
                 "loudness_preset": default_render.loudness_preset,
                 "crossfade_ms": default_render.crossfade_ms,
                 "inference_backend": default_render.inference_backend,
+                "device_mode": default_render.device_mode,
+                "cuda_device": default_render.cuda_device,
                 "audio_cpp_device": default_render.audio_cpp_device,
                 "audio_cpp_threads": default_render.audio_cpp_threads,
                 "audio_cpp_timeout": default_render.audio_cpp_timeout,
@@ -3753,6 +4054,14 @@ class MainWindow(QMainWindow):
         backend_index = self.inference_backend_combo.findData(saved_project.render_settings.inference_backend)
         if backend_index >= 0:
             self.inference_backend_combo.setCurrentIndex(backend_index)
+        cuda_target = (
+            f"cuda:{saved_project.render_settings.cuda_device}"
+            if saved_project.render_settings.device_mode == "cuda"
+            and saved_project.render_settings.cuda_device is not None
+            else "cpu"
+        )
+        cuda_index = self.pytorch_device_combo.findData(cuda_target)
+        self.pytorch_device_combo.setCurrentIndex(cuda_index if cuda_index >= 0 else 0)
         self._set_audio_cpp_device_value(saved_project.render_settings.audio_cpp_device)
         self._set_audio_cpp_threads_value(saved_project.render_settings.audio_cpp_threads)
         self._set_audio_cpp_timeout_value(saved_project.render_settings.audio_cpp_timeout)
@@ -3777,16 +4086,20 @@ class MainWindow(QMainWindow):
         # a disabled widget left over from an earlier selection must not be
         # saved alongside inference_backend: pytorch.
         is_vulkan = inference_backend == "vulkan"
+        device_mode, cuda_device = self._pytorch_device_selection()
         return {
             "version": 1,
             "name": "",
-            "device_mode": _DEVICE_MODE,
+            "device_mode": device_mode,
+            "cuda_device": cuda_device,
             "project": {
                 "model_variant": self.variant_combo.currentText(),
                 "correction_mode": normalize_correction_mode(self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText()),
                 "loudness_preset": self.loudness_combo.currentText(),
                 "crossfade_ms": self.crossfade_spin.value(),
                 "inference_backend": inference_backend,
+                "device_mode": device_mode,
+                "cuda_device": cuda_device,
                 "audio_cpp_device": self._audio_cpp_device_value() if is_vulkan else None,
                 "audio_cpp_threads": self._audio_cpp_threads_value() if is_vulkan else None,
                 "audio_cpp_timeout": self._audio_cpp_timeout_value() if is_vulkan else None,
@@ -3815,6 +4128,13 @@ class MainWindow(QMainWindow):
         self._set_correction_mode(project.get("correction_mode", "moderate"))
         self.loudness_combo.setCurrentText(project.get("loudness_preset", RenderSettings().loudness_preset))
         self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
+        device_mode = str(project.get("device_mode", payload.get("device_mode", "cpu")))
+        cuda_device = project.get("cuda_device")
+        target_device = "cpu"
+        if device_mode == "cuda" and cuda_device is not None:
+            target_device = f"cuda:{int(cuda_device)}"
+        device_index = self.pytorch_device_combo.findData(target_device)
+        self.pytorch_device_combo.setCurrentIndex(device_index if device_index >= 0 else 0)
         self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
         self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
         self.export_srt_check.setChecked(bool(project.get("export_srt", False)))
@@ -4201,16 +4521,14 @@ class MainWindow(QMainWindow):
         # Vulkan backend is actually selected; render_preview ignores them on
         # the PyTorch path regardless.
         is_vulkan = inference_backend == "vulkan"
+        device_mode, cuda_device = self._pytorch_device_selection()
         self.preview_worker = PreviewWorker(
             utterance,
             self.plan.voice_profiles[utterance.speaker],
             self.variant_combo.currentText(),
-            _DEVICE_MODE,
-            # Preview must use the same GUI-safe pipeline as Analyze/render.
-            # Omitting this causes PreviewWorker to construct a default
-            # feature-rich OraclePipeline in its QThread, reintroducing the
-            # native PyTorch/transformers import crash we avoid in the GUI.
+            device_mode,
             pipeline=self._pipeline(),
+            cuda_device=cuda_device,
             inference_backend=inference_backend,
             audio_cpp_device=self._audio_cpp_device_value() if is_vulkan else None,
             audio_cpp_threads=self._audio_cpp_threads_value() if is_vulkan else None,
