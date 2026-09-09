@@ -104,7 +104,7 @@ def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
     None, non-bool remember flag -> True) and unknown keys are dropped.
     """
     data = payload if isinstance(payload, dict) else {}
-    return {
+    normalized = {
         "version": 1,
         "remember_backend": _normalize_remember_backend(data.get("remember_backend", True)),
         "inference_backend": _normalize_inference_backend(data.get("inference_backend", "pytorch")),
@@ -115,6 +115,18 @@ def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
         "audio_cpp_cli": _normalize_path_string(data.get("audio_cpp_cli")),
         "audio_cpp_model": _normalize_path_string(data.get("audio_cpp_model")),
     }
+    # Workspace-persistence keys (theme, remembered input file, splitter
+    # sizes, section shares/collapses, window geometry). Pass-through with
+    # light type hygiene: anything malformed falls back to the default on the
+    # reading side, so a hand-edited file can never crash the GUI at launch.
+    if isinstance(data.get("theme"), str):
+        normalized["theme"] = data["theme"]
+    if isinstance(data.get("last_input_file"), str):
+        normalized["last_input_file"] = data["last_input_file"]
+    for key in ("gui", "splitters", "sections", "window_geometry"):
+        if isinstance(data.get(key), (dict, list)):
+            normalized[key] = data[key]
+    return normalized
 
 
 def load_app_settings() -> dict[str, Any]:

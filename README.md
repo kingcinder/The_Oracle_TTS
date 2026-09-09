@@ -9,11 +9,41 @@ Chatterbox outputs include built-in Perth watermarking by design. This project d
 - Chatterbox-only render path with `standard`, `multilingual`, and `turbo` variants
 - Voice cloning via per-speaker reference clips passed through `audio_prompt_path`
 - Desktop GUI with review, repair, progress, and profile/template workflows
-- Ctrl+hover help: hold the left **Control** key and hover any control for a short description of what it does
+- Six stylized, contrast-certified themes (menu-bar **Theme** menu): Studio Light, Night Deck, Sephiroth, Pulp Science Fiction, Tape Deck, Ocean Depths
+- Collapsible GUI sections with per-section size sliders, all persisted across restarts
+- The workspace remembers itself: theme, input file, every option and slider position, splitter layout, and window size are restored at launch
+- Ctrl+hover help: hold the left **Control** key and hover any control for a short description of what it does; every slider also carries an exact-mechanics tooltip (engine knob, range, and formula-level effect)
 - CLI render flow with saved project manifests
 - Deterministic smoke render path for repo-local verification without live model generation
-- Managed bootstrap, install, doctor, run, and uninstall entrypoints for Linux and Windows
+- Managed bootstrap, install, doctor, run, and uninstall entrypoints for Linux and Windows, plus a one-stop manager (`./oracle` / `oracle.ps1`) with install, start, update, and uninstall actions
 - Opt-in Vulkan inference backend via audio.cpp (`--inference-backend vulkan`) for AMD RDNA1-class GPUs with no CUDA/ROCm path
+- Pain-point markers: a `~` glued between two words in an input script (e.g. `syncronized~lockstep`) marks a junction where the engine used to hang up or mispronounce; the marker is stripped from synthesis automatically in every correction mode (including Verbatim) while the review table keeps your annotation — an unattached `~` (e.g. `~42`) is still read verbatim
+
+## One-Stop Manager (Install / Start / Update / Uninstall)
+
+Linux/macOS, from the repository root:
+
+```bash
+./oracle install      # set up the venv, register launchers, verify (doctor)
+./oracle start        # launch the desktop GUI
+./oracle update       # refresh an existing install (keeps your data)
+./oracle uninstall    # remove launchers and the local venv
+```
+
+Windows (PowerShell, from the repository root):
+
+```powershell
+.\oracle.ps1 install
+.\oracle.ps1 start
+.\oracle.ps1 update
+.\oracle.ps1 uninstall
+```
+
+`update` reinstalls dependencies and rebuilds the managed launchers while
+keeping `Input/`, `Seashells/`, `Profiles/`, `Output/`, and your saved app
+settings untouched. The underlying per-action scripts
+(`install_oracle_tts.*`, `run_oracle_tts.*`, `doctor_oracle_tts.*`,
+`bootstrap_oracle_tts.*`, `uninstall_oracle_tts.*`) remain available.
 
 ## Platform Support
 

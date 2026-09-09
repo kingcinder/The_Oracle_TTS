@@ -376,6 +376,26 @@ def install() -> int:
     return 0
 
 
+def update(skip_doctor: bool = False) -> int:
+    """Refresh an existing install in place: reinstall dependencies (picking up
+    pyproject changes) and rebuild the managed launchers. User data (Input/,
+    Seashells/, Profiles/, Output/, and the app settings file) is untouched."""
+    if not (REPO_ROOT / ".venv").exists():
+        print("No existing install found; running a full install instead.")
+        return install()
+    ensure_supported_python()
+    passed(f"Using Python {sys.version.split()[0]} from {sys.executable}")
+    venv_python = ensure_venv()
+    install_dependencies(venv_python)
+    install_managed_wrapper()
+    if not skip_doctor:
+        doctor_status = run_doctor()
+        if doctor_status != 0:
+            return doctor_status
+    passed("Update complete. Your input files, voices, and profiles were kept.")
+    return 0
+
+
 def uninstall() -> int:
     remove_if_managed(managed_launcher_path(), MANAGED_WRAPPER_MARKER)
     if is_windows():
@@ -399,6 +419,8 @@ def main(argv: list[str] | None = None) -> int:
     bootstrap_parser.add_argument("--skip-doctor", action="store_true")
     bootstrap_parser.add_argument("--include-dev", action="store_true")
     subparsers.add_parser("install", help="Bootstrap and register desktop/start-menu launchers.")
+    update_parser = subparsers.add_parser("update", help="Refresh dependencies and launchers in an existing install; user data is kept.")
+    update_parser.add_argument("--skip-doctor", action="store_true", help="Skip the post-update diagnostics run.")
     doctor_parser = subparsers.add_parser("doctor", help="Run install diagnostics.")
     doctor_parser.add_argument("--skip-model-init", action="store_true")
     doctor_parser.add_argument("--ci", action="store_true")
@@ -410,6 +432,8 @@ def main(argv: list[str] | None = None) -> int:
         return bootstrap(skip_doctor=args.skip_doctor, include_dev=args.include_dev)
     if args.command == "install":
         return install()
+    if args.command == "update":
+        return update(skip_doctor=args.skip_doctor)
     if args.command == "doctor":
         return run_doctor(skip_model_init=args.skip_model_init, ci_mode=args.ci)
     if args.command == "run":

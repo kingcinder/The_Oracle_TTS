@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# The Oracle - one-stop manager for Linux/macOS.
+#
+#   ./oracle install     set up the venv, register launchers, verify (doctor)
+#   ./oracle start       launch the desktop GUI
+#   ./oracle update      refresh an existing install (keeps Input/, Seashells/,
+#                        Profiles/, Output/, and your saved settings)
+#   ./oracle uninstall   remove launchers and the local venv
+#
+# Each command delegates to the same managed installer the per-action scripts
+# use, so behavior matches install_oracle_tts.sh / run_oracle_tts.sh exactly.
+
+set -Eeuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+select_python() {
+  local candidate
+  for candidate in python3.12 python3.11 python3; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+    if "$candidate" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if (3, 11) <= sys.version_info[:3] < (3, 13) else 1)
+PY
+    then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+show_help() {
+  cat <<'EOF'
+The Oracle - manager
+
+  ./oracle install      Set up the venv, register launchers, run the doctor.
+  ./oracle start        Launch the desktop GUI.
+  ./oracle update       Refresh an existing install (your data is kept).
+  ./oracle uninstall    Remove launchers and the local venv.
+  ./oracle doctor       Diagnostics only.
+  ./oracle bootstrap    Venv + dependencies without desktop integration.
+  ./oracle help         Show this message.
+
+EOF
+}
+
+main() {
+  local action="${1:-help}"
+  case "$action" in
+    install|start|update|uninstall|doctor|bootstrap|run|gui)
+      shift || true
+      ;;
+    help|-h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      echo "Unknown action: $action" >&2
+      show_help >&2
+      exit 1
+      ;;
+  esac
+
+  if [ "$action" = "start" ]; then
+    action="run"
+  fi
+
+  local python_bin
+  if ! python_bin="$(select_python)"; then
+    printf 'FAIL: Need Python 3.11 or 3.12 with venv support.\n' >&2
+    exit 1
+  fi
+  exec "$python_bin" "$REPO_ROOT/scripts/manage_install.py" "$action" "$@"
+}
+
+main "$@"
