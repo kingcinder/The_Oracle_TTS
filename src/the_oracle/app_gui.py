@@ -36,10 +36,12 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -66,8 +68,10 @@ from the_oracle.gui_settings import (
     save_template,
 )
 from the_oracle.audio import recorder
+from the_oracle.gui_themes import DEFAULT_THEME, THEMES, apply_theme
 from the_oracle.gui_tooltips import install_ctrl_hover_help
 from the_oracle.gui_widgets import PerceptualSlider
+from the_oracle.gui_sections import QHSectionGroup, collapsible_section
 from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings, Utterance
 from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
@@ -859,7 +863,10 @@ class LivePanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedWidth(260)
+        # Resizable, not fixed: the Live column is now one arm of the main
+        # splitter, so users can widen it (or collapse it via its section
+        # header) without losing the rest of the layout.
+        self.setMinimumWidth(240)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
@@ -1430,7 +1437,7 @@ class RecordingStudioDialog(QDialog):
         super().closeEvent(event)
 
 
-class SpeakerGroup(QGroupBox):
+class SpeakerGroup(QHSectionGroup):
     def __init__(
         self,
         speaker: str,
@@ -1469,18 +1476,23 @@ class SpeakerGroup(QGroupBox):
             ),
         )
         self.blend_weight_spin.setToolTip(
-            "Which voice wins the blend: 100% = pure base voice, 0% = pure "
-            "blend target. This is the preference knob for which voice's "
-            "qualities dominate."
+            "The preference weight for the two-voice hybrid (0-100%). The "
+            "conditioning clip is derived from your base voice and the second "
+            "voice: 100% keeps the base voice's qualities alone, 0% hands the "
+            "voice entirely to the second clip, 50% meets in the middle. The "
+            "derived clip is deterministic and content-hashed, so the same "
+            "blend always renders the same voice on CPU and Vulkan."
         )
         self.blend_mode_combo = QComboBox()
         self.blend_mode_combo.addItem("Mix (voices blended together)", "mix")
         self.blend_mode_combo.addItem("Alternate (voices take turns)", "alternate")
         self.blend_mode_combo.addItem("Layer (base + texture under)", "layer")
         self.blend_mode_combo.setToolTip(
-            "How the two clips are combined into the conditioning reference: "
-            "Mix weight-averages them, Alternate plays them in sequence, and "
-            "Layer keeps the base full-level with the second voice underneath."
+            "How the two clips are physically combined into the conditioning "
+            "reference: Mix weight-averages the waveforms by the dominance "
+            "weight, Alternate concatenates segments of each so the voices "
+            "take turns, and Layer keeps the base at full level with the "
+            "second voice mixed underneath."
         )
         self.save_blend_button = QPushButton("Save Blend As...")
         self.save_blend_button.setToolTip(
@@ -1494,6 +1506,10 @@ class SpeakerGroup(QGroupBox):
         # Perceptual voice-modulation sliders: the scale and caption say what
         # the change SOUNDS like. Values still map onto the exact engine ranges
         # the spin boxes used, so profiles/projects/manifests are unchanged.
+        # Perceptual voice-modulation sliders: the scale and caption say what
+        # the change SOUNDS like; the tooltip states the exact engine knob,
+        # domain, and mechanics. Values still map onto the exact engine ranges
+        # the spin boxes used, so profiles/projects/manifests are unchanged.
         self.cfg_weight = PerceptualSlider(
             minimum=0.0, maximum=1.5, value=0.5,
             caption=(
@@ -1501,12 +1517,28 @@ class SpeakerGroup(QGroupBox):
                 "steadier and closer to the original; low = freer, drifts more."
             ),
         )
+        self.cfg_weight.setToolTip(
+            "Engine: cfg_weight (0.0-1.5; forwarded to audio.cpp as "
+            "--guidance-scale). Each spoken token is sampled twice - once "
+            "conditioned on your reference audio, once unconditioned - and "
+            "this weight sets how strongly the conditioned guess wins "
+            "(classifier-free guidance). High values keep the delivery glued "
+            "to the reference clip's cadence; low values let the model wander "
+            "from it. Applied identically on CPU and Vulkan."
+        )
         self.exaggeration = PerceptualSlider(
             minimum=0.0, maximum=1.5, value=0.5,
             caption=(
                 "How hard emphasis lands. High = bigger swings in pitch and "
                 "stress; low = flat, matter-of-fact delivery."
             ),
+        )
+        self.exaggeration.setToolTip(
+            "Engine: exaggeration (0.0-1.5), Chatterbox's own expression knob. "
+            "Scales how much pitch and stress swing around the neutral read: "
+            "0.0 is flat and matter-of-fact, 0.5 is the model default, 1.5 is "
+            "theatrical. Shapes emphasis WITHIN each line; the silence AFTER "
+            "each line belongs to the Timing slider below."
         )
         self.temperature = PerceptualSlider(
             minimum=0.1, maximum=1.5, value=0.8,
@@ -1516,6 +1548,13 @@ class SpeakerGroup(QGroupBox):
                 "reference."
             ),
         )
+        self.temperature.setToolTip(
+            "Engine: temperature (0.1-1.5). Controls randomness when the model "
+            "picks each sound: low = the most predictable, steady "
+            "pronunciation every time; high = livelier, more varied takes that "
+            "can occasionally stumble. Held at one value per speaker for the "
+            "whole render so the voice character does not drift between lines."
+        )
         self.emotion_intensity = PerceptualSlider(
             minimum=0.0, maximum=2.0, value=1.0,
             caption=(
@@ -1523,6 +1562,15 @@ class SpeakerGroup(QGroupBox):
                 "(emphasis and pacing only - the voice's character stays "
                 "locked)."
             ),
+        )
+        self.emotion_intensity.setToolTip(
+            "Blend weight (0.0-2.0) for the emotion auto-detected on each line. "
+            "At 1.0 a detected emotion fully applies its preset (that preset's "
+            "emphasis and pause values replace the sliders above for that "
+            "line); 0.5 halfway blends your slider value with the preset; 0.0 "
+            "ignores detection; above 1.0 over-drives past the preset. Only "
+            "emphasis and pacing move - the voice's timbre stays locked so one "
+            "speaker never changes character mid-render."
         )
         self.naturalness = PerceptualSlider(
             minimum=0.0, maximum=1.0, value=0.0,
@@ -1532,6 +1580,15 @@ class SpeakerGroup(QGroupBox):
                 "consistent."
             ),
         )
+        self.naturalness.setToolTip(
+            "Engine heuristic (0.0-1.0), applied once per speaker and constant "
+            "for the whole render. Moves four sampling knobs together: per 0.1 "
+            "of Human Drift, cfg_weight drops 0.12, temperature rises 0.18, "
+            "repetition_penalty falls 0.25, min_p rises 0.03, and breaths "
+            "lengthen by 12% - the combination reads as a relaxed human take "
+            "instead of a mechanical one. 0.0 leaves every other slider "
+            "exactly as set."
+        )
         self.pause_spin = PerceptualSlider(
             minimum=0, maximum=2000, value=180, suffix=" ms", int_mode=True,
             caption=(
@@ -1540,23 +1597,40 @@ class SpeakerGroup(QGroupBox):
                 "trails on."
             ),
         )
+        self.pause_spin.setToolTip(
+            "Silence (0-2000 ms) inserted after this speaker's turn ends. The "
+            "value is scaled by how the line ends: x1.0 after a period, x1.3 "
+            "after !, x1.25 after ?, x1.6 after an ellipsis, and x0.7 when a "
+            "line trails off on a comma or no punctuation. Between chunks of "
+            "one long line the gap is ~35% of this value (never below 40 ms) "
+            "instead of the full pause."
+        )
 
         form = QFormLayout(self)
         self.form = form  # kept so Ctrl+hover help can register row labels
-        form.addRow("Custom Voice Reference Audio", self.reference_picker)
+
+        def _section_divider(text: str) -> QLabel:
+            label = QLabel(text)
+            label.setStyleSheet("font-weight: 700; letter-spacing: 1px; padding-top: 8px; color: palette(mid);")
+            return label
+
+        form.addRow("Voice Reference", self.reference_picker)
+        form.addRow("Language", self.language_combo)
+        form.addRow(_section_divider("VOICE CHARACTER"))
+        form.addRow("Identity Lock", self.cfg_weight)
+        form.addRow("Emphasis Punch", self.exaggeration)
+        form.addRow("Delivery Variety", self.temperature)
+        form.addRow("Emotion Depth", self.emotion_intensity)
+        form.addRow("Human Drift", self.naturalness)
+        form.addRow(_section_divider("TIMING"))
+        form.addRow("Breath After This Speaker", self.pause_spin)
+        form.addRow(_section_divider("HYBRIDIZE VOICES"))
         blend_row = QHBoxLayout()
         blend_row.addWidget(self.blend_picker, 1)
         blend_row.addWidget(self.save_blend_button, 0)
-        form.addRow("Blend With Voice", blend_row)
-        form.addRow("Which Voice Wins", self.blend_weight_spin)
-        form.addRow("Blend Mode", self.blend_mode_combo)
-        form.addRow("Language", self.language_combo)
-        form.addRow("Voice Lock", self.cfg_weight)
-        form.addRow("Emotional Punch", self.exaggeration)
-        form.addRow("Delivery Variety", self.temperature)
-        form.addRow("Emotion Strength", self.emotion_intensity)
-        form.addRow("Human Drift", self.naturalness)
-        form.addRow("Breath After This Speaker", self.pause_spin)
+        form.addRow("Hybrid Second Voice", blend_row)
+        form.addRow("Voice Dominance", self.blend_weight_spin)
+        form.addRow("Hybridize Mode", self.blend_mode_combo)
 
     def _pick_audio(self) -> None:
         current_reference = Path(self.reference_path.text()).expanduser()
@@ -1710,6 +1784,13 @@ class MainWindow(QMainWindow):
         # over the remembered choice.
         self._app_settings = load_app_settings()
         self._app_settings_ready = False
+        # Section layout registry: key -> (section, splitter, index). Filled
+        # during _build_ui; drives persistence of splitter sizes, section
+        # size sliders, and collapse states.
+        self._section_registry: dict[str, tuple[QHSectionGroup, QSplitter, int]] = {}
+        self._current_theme = str(self._app_settings.get("theme") or DEFAULT_THEME)
+        if self._current_theme not in THEMES:
+            self._current_theme = DEFAULT_THEME
         self._startup_marks: list[tuple[str, float]] = []
         self._gui_shown_wall: float | None = None
         self.repo_root = Path(__file__).resolve().parents[2]
@@ -1751,7 +1832,8 @@ class MainWindow(QMainWindow):
         # stop out of the handler so the backend finishes delivering first.
         self.player.mediaStatusChanged.connect(self._on_preview_playback_status)
         self.setWindowTitle("The Oracle")
-        self.resize(1320, 900)
+        self.resize(1320, 1060)
+        self.setMinimumSize(1160, 760)
         self._mark_startup("mainwindow_init_begin")
         self._ctrl_help = install_ctrl_hover_help(QApplication.instance())
         self._build_ui()
@@ -1782,9 +1864,15 @@ class MainWindow(QMainWindow):
         # it left off. If the persisted paths are stale, the normal
         # selection-time prerequisite check auto-starts the setup again.
         self._apply_remembered_backend()
-        # Persistence of backend/knob changes is only enabled after the
-        # restore above, so the restore itself can never overwrite the stored
-        # choice with widget defaults.
+        # Restore the saved workspace layout (theme, splitters, section
+        # sliders/collapses, window size) before enabling persistence, so the
+        # restore itself never writes over the stored values.
+        self._apply_workspace_layout()
+        apply_theme(QApplication.instance(), self._current_theme)
+        self._sync_theme_actions()
+        # Persistence of backend/knob/layout changes is only enabled after the
+        # restores above, so a restore can never overwrite the stored values
+        # with widget defaults.
         self._app_settings_ready = True
         self._start_prewarm()
 
@@ -1808,6 +1896,11 @@ class MainWindow(QMainWindow):
         hbox.setContentsMargins(0, 0, 0, 0)
 
         left = QWidget()
+        # Explicit floor: QSplitter honors an explicit minimumWidth over the
+        # layout's minimumSizeHint (which sums every section's intrinsic
+        # minimum and would otherwise pin the whole window). 880 fits the
+        # three settings sections at their own explicit floors.
+        left.setMinimumWidth(880)
         layout = QVBoxLayout(left)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -1828,9 +1921,19 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.output_name_label, 2, 0)
         controls.addWidget(self.output_name, 2, 1, 1, 2)
         layout.addLayout(controls)
+        # Default input on a fresh install (or when the remembered input file
+        # no longer exists): the user's pain-point test file. A remembered
+        # input from a previous session wins over this default (see
+        # _apply_workspace_layout).
+        self._default_input_path = self.paths.input_dir / "What is, reality.txt"
+        if self._default_input_path.exists():
+            self.input_path.setText(str(self._default_input_path))
 
-        settings_row = QHBoxLayout()
-        settings_row.addWidget(self._build_project_settings())
+        # Section chrome: every settings area is a QHSectionGroup (collapse
+        # toggle + Section Size slider) laid out inside a QSplitter, so each
+        # section can be resized by dragging its slider or the splitter
+        # handle. Positions are persisted in the app settings file.
+        shared_settings = self._build_project_settings()
         self.speaker_a = SpeakerGroup("A", self.paths.voice_dir, on_save_blend=self._save_blend_as_voice)
         self.speaker_b = SpeakerGroup("B", self.paths.voice_dir, on_save_blend=self._save_blend_as_voice)
         # Extra character voices (C..X) for audiobook casts. They are created
@@ -1839,16 +1942,23 @@ class MainWindow(QMainWindow):
         self.extra_speaker_groups: dict[str, SpeakerGroup] = {}
         self.extra_speaker_scroll = QScrollArea()
         self.extra_speaker_scroll.setWidgetResizable(True)
-        self.extra_speaker_scroll.setFixedWidth(420)
+        self.extra_speaker_scroll.setMinimumWidth(300)
         self.extra_speaker_container = QWidget()
         self.extra_speaker_layout = QVBoxLayout(self.extra_speaker_container)
         self.extra_speaker_layout.setContentsMargins(0, 0, 0, 0)
         self.extra_speaker_scroll.setWidget(self.extra_speaker_container)
         self.extra_speaker_scroll.hide()
-        settings_row.addWidget(self.speaker_a)
-        settings_row.addWidget(self.speaker_b)
-        settings_row.addWidget(self.extra_speaker_scroll)
-        layout.addLayout(settings_row)
+
+        self._sections_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._sections_splitter.setHandleWidth(6)
+        self._sections_splitter.setChildrenCollapsible(False)
+        for widget in (shared_settings, self.speaker_a, self.speaker_b, self.extra_speaker_scroll):
+            self._sections_splitter.addWidget(widget)
+        self._register_section("shared", shared_settings, self._sections_splitter, 0)
+        self._register_section("speaker_a", self.speaker_a, self._sections_splitter, 1)
+        self._register_section("speaker_b", self.speaker_b, self._sections_splitter, 2)
+        self._sections_splitter.setSizes([460, 360, 360, 160])
+        layout.addWidget(self._sections_splitter)
 
         actions = QHBoxLayout()
         actions.setSpacing(12)
@@ -1864,6 +1974,9 @@ class MainWindow(QMainWindow):
         layout.addLayout(actions)
 
         self.table = QTableWidget(0, 9)
+        # Floor for the review table: splitters can shrink it, but never to
+        # an unreadable sliver (the settings sections above are tall).
+        self.table.setMinimumHeight(140)
         self.table.setHorizontalHeaderLabels([
             "Index",
             "Speaker",
@@ -1879,17 +1992,46 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        layout.addWidget(self.table, stretch=1)
 
+        # The review table and the status/error panel share a vertical
+        # splitter; the status panel is a section with its own size slider.
+        self._lower_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._lower_splitter.setHandleWidth(6)
+        self._lower_splitter.setChildrenCollapsible(False)
+        self._lower_splitter.addWidget(self.table)
+        status_section = QHSectionGroup("Status / Errors", collapsible=True, resizable=True)
+        status_layout = QVBoxLayout(status_section)
+        status_layout.setContentsMargins(0, 0, 0, 0)
         self.error_panel = QTextEdit()
         self.error_panel.setReadOnly(True)
+        self.error_panel.setMinimumHeight(70)
         self.error_panel.setPlaceholderText("Status and model errors appear here.")
-        self.status_label = QLabel("Status / Errors")
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.error_panel)
+        status_layout.addWidget(self.error_panel)
+        self._lower_splitter.addWidget(status_section)
+        self._register_section("status", status_section, self._lower_splitter, 1)
+        # The section header replaces the old plain label; kept as the
+        # Ctrl+hover registration target for the status area.
+        self.status_label = status_section
+        self._lower_splitter.setSizes([540, 180])
+        layout.addWidget(self._lower_splitter, stretch=1)
 
-        hbox.addWidget(left, stretch=1)
-        hbox.addWidget(self.live_panel)
+        # Live progress column: its own section so it can be resized (slider
+        # or handle) and collapsed like every other section.
+        live_section = QHSectionGroup("Live", collapsible=True, resizable=True)
+        live_section.setMinimumWidth(220)
+        live_layout = QVBoxLayout(live_section)
+        live_layout.setContentsMargins(0, 0, 0, 0)
+        live_layout.addWidget(self.live_panel)
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.setHandleWidth(6)
+        self._main_splitter.setChildrenCollapsible(False)
+        self._main_splitter.addWidget(left)
+        self._main_splitter.addWidget(live_section)
+        self._register_section("live", live_section, self._main_splitter, 1)
+        self._main_splitter.setSizes([1040, 280])
+        hbox.addWidget(self._main_splitter)
+        for splitter in (self._main_splitter, self._sections_splitter, self._lower_splitter):
+            splitter.splitterMoved.connect(lambda _pos, _index: self._persist_workspace_layout())
 
         self.setCentralWidget(root)
         self.outdir_path.setText(str(self.paths.output_dir))
@@ -1908,6 +2050,22 @@ class MainWindow(QMainWindow):
         save_as_action.triggered.connect(self.save_project_as)
         for action in (new_action, open_action, save_action, save_as_action):
             file_menu.addAction(action)
+        file_menu.addSeparator()
+        save_profile_action = QAction("Save Profile…", self)
+        save_profile_action.setToolTip(
+            "Save every current GUI option and slider position (shared render "
+            "settings and all speaker voice settings) to a reusable profile "
+            "file. Same as Settings → Save Settings..."
+        )
+        save_profile_action.triggered.connect(self.save_settings_profile)
+        file_menu.addAction(save_profile_action)
+        load_profile_action = QAction("Load Profile…", self)
+        load_profile_action.setToolTip(
+            "Load a saved profile file, restoring all options and slider "
+            "positions. Same as Settings → Load Settings..."
+        )
+        load_profile_action.triggered.connect(self.load_settings_profile)
+        file_menu.addAction(load_profile_action)
 
         settings_menu = self.menuBar().addMenu("Settings")
         reset_defaults_action = QAction("Reset to Defaults", self)
@@ -1977,6 +2135,43 @@ class MainWindow(QMainWindow):
         self.save_settings_action = save_settings_action
         self.load_settings_action = load_settings_action
         self.save_template_action = save_template_action
+        self.save_profile_action = save_profile_action
+        self.load_profile_action = load_profile_action
+
+        # Theme menu: six built-in looks; the choice is persisted immediately.
+        theme_menu = self.menuBar().addMenu("Theme")
+        self._theme_actions: dict[str, QAction] = {}
+        for key in THEMES:
+            tokens = THEMES[key]
+            action = QAction(tokens.name, self)
+            action.setCheckable(True)
+            action.setToolTip(f"{tokens.description} Contrast-checked for legibility.")
+            action.triggered.connect(lambda _checked=False, current=key: self._apply_theme_selection(current))
+            theme_menu.addAction(action)
+            self._theme_actions[key] = action
+
+        # Workspace persistence: the input file joins backend choice, theme,
+        # splitters, and section states in the app settings file.
+        self.input_path.textEdited.connect(lambda: self._persist_workspace_layout())
+
+    # --------------------
+    # Themes
+    # --------------------
+    def _apply_theme_selection(self, key: str) -> None:
+        """Switch to theme ``key``, persist it, and sync the checkmarks."""
+        if key not in THEMES:
+            return
+        self._current_theme = apply_theme(QApplication.instance(), key)
+        self._persist_workspace_layout()
+        self._sync_theme_actions()
+        tokens = THEMES[self._current_theme]
+        self.error_panel.append(f"Theme: {tokens.name} - {tokens.description}")
+
+    def _sync_theme_actions(self) -> None:
+        for key, action in self._theme_actions.items():
+            action.blockSignals(True)
+            action.setChecked(key == self._current_theme)
+            action.blockSignals(False)
 
     def _register_ctrl_help_descriptions(self) -> None:
         """Register Ctrl+hover help text for the main controls.
@@ -2118,43 +2313,54 @@ class MainWindow(QMainWindow):
                 ),
                 (
                     group.blend_weight_spin,
-                    "Which voice wins a two-voice blend: 100% is this speaker's "
-                    "base voice alone, 0% is the blend target alone. See the "
-                    "caption under the slider.",
+                    "Voice Dominance: preference weight (0-100%) for the "
+                    "two-voice hybrid. 100% keeps the base voice alone, 0% "
+                    "hands the voice to the second clip, 50% meets in the "
+                    "middle. Deterministic and content-hashed, so the same "
+                    "blend always renders identically on both backends.",
                 ),
                 (
                     group.cfg_weight,
-                    "Voice Lock: how strictly this voice stays glued to its "
-                    "reference. High = steadier and closer to the original; "
-                    "low = freer and drifts more.",
+                    "Identity Lock: classifier-free guidance weight (0.0-1.5). "
+                    "How strongly the conditioned guess wins over the "
+                    "unconditioned one when sampling each token. High = glued "
+                    "to the reference clip; low = freer and drifts more.",
                 ),
                 (
                     group.exaggeration,
-                    "Emotional Punch: how hard emphasis lands. High = bigger "
-                    "swings in pitch and stress; low = flat, matter-of-fact.",
+                    "Emphasis Punch: Chatterbox's expression knob (0.0-1.5). "
+                    "Scales pitch and stress swing around the neutral read: "
+                    "0.0 flat, 0.5 model default, 1.5 theatrical.",
                 ),
                 (
                     group.temperature,
-                    "Delivery Variety: how surprising the delivery can be. "
-                    "High = livelier, more varied takes; low = steady and "
-                    "predictable.",
+                    "Delivery Variety: sampling randomness (0.1-1.5). Low = the "
+                    "most predictable, steady pronunciation; high = livelier "
+                    "takes that can occasionally stumble. Held constant per "
+                    "speaker so the character does not drift between lines.",
                 ),
                 (
                     group.emotion_intensity,
-                    "Emotion Strength: how strongly detected emotions color "
-                    "the performance. Only emphasis and pacing move - the "
-                    "voice's character stays locked.",
+                    "Emotion Depth: blend weight (0.0-2.0) for the emotion "
+                    "auto-detected on each line. 1.0 fully applies the preset, "
+                    "0.5 halfway blends with your sliders, 0.0 ignores "
+                    "detection. Only emphasis and pacing move; timbre stays "
+                    "locked.",
                 ),
                 (
                     group.naturalness,
-                    "Human Drift: loosens sampling for a more natural, less "
-                    "mechanical voice. Constant for the whole render.",
+                    "Human Drift: heuristic (0.0-1.0) applied once per speaker. "
+                    "Per 0.1: cfg_weight -0.12, temperature +0.18, "
+                    "repetition_penalty -0.25, min_p +0.03, breaths +12%. "
+                    "Reads as a relaxed human take; 0.0 leaves every other "
+                    "slider untouched.",
                 ),
                 (
                     group.pause_spin,
-                    "Breath After This Speaker: silence after this speaker's "
-                    "turns in ms, scaled by how each line ends (longer after "
-                    "!? and ellipses, shorter when a line trails on).",
+                    "Breath After This Speaker: silence (0-2000 ms) after each "
+                    "turn, scaled by the line's final punctuation: x1.0 "
+                    "period, x1.3 !, x1.25 ?, x1.6 ellipsis, x0.7 trailing "
+                    "line. Chunk seams breathe ~35% (min 40 ms).",
                 ),
             ])
         ctrl_help.register_many([
@@ -2220,7 +2426,7 @@ class MainWindow(QMainWindow):
             ctrl_help.register_action(menubar_actions[2], self.recording_studio_action.toolTip())
 
     def _build_project_settings(self) -> QGroupBox:
-        box = QGroupBox("Shared Render Settings")
+        box = QHSectionGroup("Shared Render Settings", collapsible=True, resizable=True)
         form = QFormLayout(box)
         self._project_settings_form = form  # kept so Ctrl+hover help can register row labels
         self.variant_combo = QComboBox()
@@ -2241,9 +2447,24 @@ class MainWindow(QMainWindow):
         self.loudness_combo = QComboBox()
         self.loudness_combo.addItems(["off", "light", "medium"])
         self.loudness_combo.setCurrentText(RenderSettings().loudness_preset)
+        self.loudness_combo.setToolTip(
+            "Post-render loudness normalization of the finished FLAC and its "
+            "stems. Off writes the raw mix; Light applies a gentle gain "
+            "match; Medium applies stronger compression plus gain toward a "
+            "broadcast-ish level. Applied once to the assembled audio, after "
+            "all synthesis and crossfading."
+        )
         self.crossfade_spin = QSpinBox()
         self.crossfade_spin.setRange(0, 500)
         self.crossfade_spin.setValue(RenderSettings().crossfade_ms)
+        self.crossfade_spin.setToolTip(
+            "Equal-power crossfade (0-500 ms) applied where two synthesized "
+            "stems are spliced together in the final render. Higher values "
+            "soften the join between utterances but can smear word edges; 20 "
+            "ms is the default. This is a splice join, not a pause - silence "
+            "between turns is controlled per speaker by 'Breath After This "
+            "Speaker'."
+        )
         self.export_srt_check = QCheckBox("Export SRT subtitles")
         self.export_srt_check.setToolTip("Write a .srt subtitle file next to the rendered FLAC, one cue per utterance.")
         self.monologue_check = QCheckBox("Monologue (single narrator voice)")
@@ -2272,7 +2493,9 @@ class MainWindow(QMainWindow):
         self.test_vulkan_button.setEnabled(False)
         self.vulkan_prerequisite_warning = QLabel("")
         self.vulkan_prerequisite_warning.setWordWrap(True)
-        self.vulkan_prerequisite_warning.setStyleSheet("color: #b45309;")  # amber warning
+        # Theme-aware warning color (the themed stylesheet styles this via
+        # QLabel#warning, so no hardcoded amber can fight a dark theme).
+        self.vulkan_prerequisite_warning.setObjectName("warning")
         self.vulkan_prerequisite_warning.hide()
         self.audio_cpp_device_combo = QComboBox()
         self.audio_cpp_device_combo.addItem("Auto (audio.cpp default)", None)
@@ -2375,12 +2598,12 @@ class MainWindow(QMainWindow):
     def _style_action_button(self, button: QPushButton, accent: bool = False) -> None:
         button.setMinimumHeight(48)
         button.setMinimumWidth(170 if not accent else 210)
-        palette = (
-            "background-color: #19466d; color: white; border: 1px solid #133652;"
-            if accent
-            else "background-color: #f4f7fa; color: #12263a; border: 1px solid #9fb0c0;"
-        )
-        button.setStyleSheet(f"font-size: 15px; font-weight: 600; padding: 8px 18px; border-radius: 6px; {palette}")
+        # Theme classes, not hardcoded colors: the active theme styles
+        # QPushButton[accent="true"] and QPushButton.action itself.
+        if accent:
+            button.setProperty("accent", True)
+        else:
+            button.setProperty("buttonRole", "action")
 
     def _pick_input(self) -> None:
         current_text = self.input_path.text().strip()
@@ -2392,6 +2615,11 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Choose Input", str(start_dir), "Text Files (*.txt *.md)")
         if path:
             self.input_path.setText(path)
+            # A picked file becomes the remembered default for future sessions
+            # (settled before setText's textChanged side effects finish).
+            self._app_settings["last_input_file"] = path.strip()
+            if self._app_settings_ready:
+                self._persist_workspace_layout()
 
     def _handle_outdir_changed(self) -> None:
         folder = Path(self.outdir_path.text() or self.paths.output_dir).expanduser()
@@ -3155,12 +3383,12 @@ class MainWindow(QMainWindow):
         target = group.blend_target_path()
         if not base or not target:
             self.error_panel.append(
-                "Pick a base voice (Custom Voice Reference Audio) and a Blend With Voice before saving."
+                "Pick a base voice (Voice Reference) and a Hybrid Second Voice before saving."
             )
             QMessageBox.information(
                 self,
                 "Save Blend As",
-                "Pick a base voice and a Blend With Voice first, then save the blend.",
+                "Pick a base voice and a Hybrid Second Voice first, then save the blend.",
             )
             return
         name, ok = QInputDialog.getText(
@@ -3200,6 +3428,10 @@ class MainWindow(QMainWindow):
         self._prewarm_thread = PrewarmThread(device=_DEVICE_MODE)
         self._prewarm_thread.ready.connect(self._handle_prewarm_ready)
         self._prewarm_thread.failed.connect(self._handle_prewarm_failed)
+        # Teardown only via finished: ready/failed fire from run()'s final
+        # lines while the thread is still exiting, so deleteLater there races
+        # the thread's own exit (QThread destroyed while running -> abort).
+        self._prewarm_thread.finished.connect(self._cleanup_prewarm_thread)
         try:
             self._prewarm_thread.start()
         except Exception as exc:
@@ -3211,10 +3443,8 @@ class MainWindow(QMainWindow):
             self._prewarmed_pipeline = pipeline
             self._prewarmed_engine = engine
             self._prewarm_timing = timing
-            thread = self._prewarm_thread
-            self._prewarm_thread = None
-        if thread is not None:
-            thread.deleteLater()
+        # The worker detaches itself via finished -> _cleanup_prewarm_thread;
+        # never deleteLater from here (thread may still be exiting).
         self._write_prewarm_timing(success=True)
         # Enable actions now that warmup finished
         self.analyze_button.setEnabled(True)
@@ -3226,15 +3456,20 @@ class MainWindow(QMainWindow):
             self._prewarmed_pipeline = None
             self._prewarmed_engine = None
             self._prewarm_timing = timing | {"error": message}
-            thread = self._prewarm_thread
-            self._prewarm_thread = None
-        if thread is not None:
-            thread.deleteLater()
+        # Worker detaches itself via finished (see _cleanup_prewarm_thread).
         self.error_panel.append(f"Background prewarm failed: {message}")
         self._write_prewarm_timing(success=False)
         # Allow the user to proceed manually even if warmup failed.
         self.analyze_button.setEnabled(True)
         self.render_button.setEnabled(True)
+
+    def _cleanup_prewarm_thread(self) -> None:
+        # Run on the GUI thread only after run() has returned, so detaching
+        # and deleting the QThread object here is safe.
+        thread = self._prewarm_thread
+        if thread is not None:
+            self._prewarm_thread = None
+            thread.deleteLater()
 
     def _write_prewarm_timing(self, success: bool) -> None:
         try:
@@ -3247,6 +3482,104 @@ class MainWindow(QMainWindow):
             (log_dir / "gui_prewarm_timing.json").write_text(json.dumps(timing, indent=2), encoding="utf-8")
         except Exception:
             pass
+
+    # --------------------
+    # Section layout persistence (splitters, section-size sliders, collapses)
+    # --------------------
+    def _register_section(self, key: str, section: QHSectionGroup, splitter, index: int) -> None:
+        """Track one section and wire its chrome signals to persistence."""
+        self._section_registry[key] = (section, splitter, index)
+        section.attach_splitter(splitter, index)
+        section.size_share_changed.connect(self._persist_workspace_layout)
+        section.collapsed_changed.connect(self._persist_workspace_layout)
+
+    def _persist_workspace_layout(self, *_args) -> None:
+        """Snapshot splitters + section sliders/collapses into app settings."""
+        if not self._app_settings_ready:
+            return
+        sections: dict[str, dict] = {}
+        for key, (section, splitter, index) in self._section_registry.items():
+            sizes = splitter.sizes()
+            total = sum(sizes)
+            share = 50
+            if total > 0 and 0 <= index < len(sizes):
+                share = int(round(100.0 * sizes[index] / total))
+            sections[key] = {
+                "size_share": section.size_share(),
+                "collapsed": section.is_collapsed(),
+            }
+        self._app_settings.update({
+            "theme": self._current_theme,
+            "last_input_file": self.input_path.text().strip(),
+            # Every current option and slider position (shared + speakers),
+            # so the whole GUI returns exactly as left.
+            "gui": self._current_gui_settings_payload(),
+            "splitters": {
+                "main": self._main_splitter.sizes(),
+                "sections": self._sections_splitter.sizes(),
+                "lower": self._lower_splitter.sizes(),
+            },
+            "sections": sections,
+            "window_geometry": [self.width(), self.height()],
+        })
+        try:
+            save_app_settings(self._app_settings)
+        except Exception as exc:
+            self.error_panel.append(f"Could not persist layout: {exc}")
+
+    def _apply_workspace_layout(self) -> None:
+        """Restore the saved workspace: all options and slider positions first,
+        then splitters, section shares, collapses, and window geometry."""
+        saved_gui = self._app_settings.get("gui")
+        if isinstance(saved_gui, dict) and "project" in saved_gui and "speakers" in saved_gui:
+            try:
+                self._apply_gui_settings_payload(saved_gui)
+            except Exception as exc:
+                self.error_panel.append(f"Could not restore the saved options ({exc}); using defaults.")
+        splitters = self._app_settings.get("splitters") or {}
+
+        def restore_splitter(splitter, saved) -> bool:
+            """Apply saved sizes to a splitter's VISIBLE panes (Qt only honors
+            a setSizes request that matches the visible pane count)."""
+            if not isinstance(saved, list) or sum(1 for v in saved if isinstance(v, (int, float))) == 0:
+                return False
+            visible = [
+                index
+                for index in range(splitter.count())
+                if splitter.widget(index) is not None and not splitter.widget(index).isHidden()
+            ]
+            if len(visible) == 0 or len(saved) < len(visible):
+                return False
+            values = [max(20, int(saved[index])) for index in visible]
+            if sum(values) <= 0:
+                return False
+            splitter.setSizes(values)
+            return True
+
+        restore_splitter(self._main_splitter, splitters.get("main"))
+        restore_splitter(self._sections_splitter, splitters.get("sections"))
+        restore_splitter(self._lower_splitter, splitters.get("lower"))
+        sections = self._app_settings.get("sections") or {}
+        for key, (section, _splitter, _index) in self._section_registry.items():
+            data = sections.get(key)
+            if isinstance(data, dict):
+                share = data.get("size_share")
+                if isinstance(share, (int, float)):
+                    section.set_size_share(int(share))
+                if bool(data.get("collapsed", False)):
+                    section.set_collapsed(True)
+        geometry = self._app_settings.get("window_geometry")
+        if isinstance(geometry, list) and len(geometry) == 2:
+            width, height = geometry
+            if isinstance(width, int) and isinstance(height, int) and width >= 800 and height >= 600:
+                self.resize(width, height)
+        # Remembered input file wins over the launch default; fall back to the
+        # default when it is missing or no longer exists.
+        remembered_input = str(self._app_settings.get("last_input_file") or "")
+        if remembered_input and Path(remembered_input).expanduser().exists():
+            self.input_path.setText(remembered_input)
+        elif not self.input_path.text().strip():
+            self.input_path.setText("")
 
     def _all_speaker_groups(self) -> dict[str, SpeakerGroup]:
         """Every speaker group: A, B, and any extra character voices (C..X)."""

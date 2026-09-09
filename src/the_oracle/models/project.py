@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from the_oracle.utils.hashing import hash_payload
+
+# Author pain-point markers: a '~' glued between two words (word~word) marks a
+# junction where the TTS engine historically hung up or mispronounced. The
+# marker is a review-table annotation only — it must never reach synthesis or
+# emotion classification, so it is replaced with a normal word boundary at the
+# single text chokepoint (Utterance.text_for_tts). Unattached '~' characters
+# (e.g. "~42") are read verbatim, matching the engine's own pronunciation of
+# the symbol.
+_PAIN_POINT_MARKER_RE = re.compile(r"(?<=[A-Za-z0-9])~(?=[A-Za-z0-9])")
+
+
+def strip_pain_point_markers(text: str) -> str:
+    """Replace word~word pain-point markers with a normal spoken word space."""
+    return _PAIN_POINT_MARKER_RE.sub(" ", text)
 
 
 def utc_now_iso() -> str:
@@ -168,7 +183,8 @@ class Utterance:
     engine_settings: VoiceSettings = field(default_factory=VoiceSettings)
 
     def text_for_tts(self) -> str:
-        return self.repaired_text or self.original_text
+        text = self.repaired_text or self.original_text
+        return strip_pain_point_markers(text)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)

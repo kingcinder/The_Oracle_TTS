@@ -410,6 +410,66 @@ def test_main_window_close_stops_preview_player(monkeypatch, tmp_path, qt_app):
     assert window.player.stopped >= 1, "close must stop the preview player"
 
 
+class _PrewarmSpy:
+    """Stand-in for PrewarmThread exposing ready/failed/finished and a
+    deleteLater flag, without actually running a thread."""
+
+    def __init__(self) -> None:
+        self.ready = _TakeSignal()
+        self.failed = _TakeSignal()
+        self.finished = _TakeSignal()
+        self.delete_later_called = False
+
+    def start(self) -> None:
+        return None
+
+    def deleteLater(self) -> None:
+        self.delete_later_called = True
+
+
+def test_prewarm_thread_teardown_via_finished_not_ready_slot(
+    monkeypatch, tmp_path, qt_app
+):
+    """Regression: _handle_prewarm_ready/failed fire from run()'s final lines
+    while the thread is still exiting. deleteLater must happen only from the
+    finished handler (QThread destroyed while running -> abort), matching the
+    RecordStudio worker and every other GUI worker thread.
+    """
+    window, _ = _build_main_window(monkeypatch, tmp_path)
+    thread = _PrewarmSpy()
+    window._prewarm_thread = thread
+    window._prewarm_thread.finished.connect(window._cleanup_prewarm_thread)
+
+    # ready arrives while the thread is still winding down: the old code
+    # deleteLater'd right here — the fix must not.
+    window._handle_prewarm_ready(None, None, {"prewarm_start": 1.0})
+    assert thread.delete_later_called is False, "ready must not delete the worker"
+    assert window._prewarm_thread is thread, "worker stays owned until finished fires"
+
+    # Thread fully exits -> finished -> safe detach + delete.
+    thread.finished.emit()
+    assert window._prewarm_thread is None
+    assert thread.delete_later_called is True
+
+
+def test_prewarm_failed_teardown_via_finished_not_failed_slot(
+    monkeypatch, tmp_path, qt_app
+):
+    """Same teardown discipline for the prewarm failure path."""
+    window, _ = _build_main_window(monkeypatch, tmp_path)
+    thread = _PrewarmSpy()
+    window._prewarm_thread = thread
+    window._prewarm_thread.finished.connect(window._cleanup_prewarm_thread)
+
+    window._handle_prewarm_failed("boom", {"prewarm_failed": 1.0})
+    assert thread.delete_later_called is False
+    assert window._prewarm_thread is thread
+
+    thread.finished.emit()
+    assert window._prewarm_thread is None
+    assert thread.delete_later_called is True
+
+
 def test_main_window_assign_wires_the_group_reference(monkeypatch, tmp_path, qt_app):
     window, paths = _build_main_window(monkeypatch, tmp_path)
     saved = paths.voice_dir / "Seashell_No_9.wav"

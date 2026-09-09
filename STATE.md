@@ -6,6 +6,48 @@ rewritten by the loop).
 
 ## Done
 
+- **V1.01 GUI release** (2026-09-08, this campaign):
+  - Pain-point `~` markers (`word~word`) in input scripts are replaced by a
+    normal spoken word boundary at the single synthesis chokepoint
+    (`Utterance.text_for_tts`) in every correction mode — including Verbatim —
+    so the annotated junctions (e.g. `syncronized~lockstep` in
+    `Input/What is, reality.txt`) no longer cause engine hang-ups/
+    mispronunciations, while unattached `~` (e.g. `~42`) is still read
+    verbatim and the review table keeps the annotation.
+  - Theme system (`src/the_oracle/gui_themes.py`): six stylized themes
+    (Studio Light, Night Deck, Sephiroth, Pulp Science Fiction, Tape Deck,
+    Ocean Depths), each a full design-token set (surfaces, typography,
+    geometry) machine-contrast-checked at import time (WCAG AA body,
+    3.0:1 large/on-accent). Default stays Studio Light. Theme menu in the
+    menu bar; the choice persists.
+  - Voice-modifier sliders renamed to match their mechanics (Identity Lock,
+    Emphasis Punch, Delivery Variety, Emotion Depth, Human Drift, Breath
+    After This Speaker) and given exact-mechanics tooltips: engine knob,
+    domain, formula-level behavior (CFG dual-guess sampling, emotion
+    preset blend weights, the per-0.1 Human Drift deltas, punctuation
+    pause multipliers). Hybridize Voices is its own labeled section inside
+    each speaker panel (Hybrid Second Voice / Voice Dominance / Hybridize
+    Mode).
+  - Every GUI section (Shared Render Settings, Speaker A/B, Status/Errors,
+    Live, extra cast voices) is a collapsible section with a per-section
+    Section Size slider redistributing its splitter share; three nested
+    splitters (main/sections/lower) are resizable by handle or slider.
+  - Workspace persistence in `app_settings.json`: theme, last input file
+    (defaults to `Input/What is, reality.txt` on fresh installs when no
+    remembered file exists), ALL options + slider positions (shared and
+    per-speaker), splitter sizes, section shares, collapses, window size.
+  - File → Save Profile… / Load Profile… (same payload as Settings →
+    Save/Load Settings).
+  - One-stop manager wrappers `./oracle` (Linux/macOS) and `oracle.ps1`
+    (Windows) with Install / Start / Update / Uninstall actions
+    delegating to `scripts/manage_install.py` (new `update` action keeps
+    user data); version bumped to 1.0.1.
+  - Certification: `scripts/certify_gui_themes.py` builds the real window
+    under all six themes offscreen and asserts no truncation (geometry
+    sweep with a populated table), WCAG legibility, working section
+    sliders, collapse behavior, and a full persistence round-trip; full
+    suite at 467 passing tests, deterministic smoke render green.
+
 - Chatterbox-only render pipeline: `standard`, `multilingual`, `turbo`
   variants on PyTorch (CPU) and an opt-in Vulkan backend via audio.cpp
   (AMD RDNA1-class GPUs; vendored RDNA1 device-lost fix).
@@ -97,9 +139,16 @@ rewritten by the loop).
      EndOfMedia defers the stop via a zero-timer (never stop/delete from
      inside `mediaStatusChanged`), one persistent player is reused across
      previews, and window close stops the player before teardown.
+  4. A full-file audit of every QObject teardown site found one more
+     in-handler hazard: `PrewarmThread` emitted `ready`/`failed` from the
+     last lines of `run()` and `_handle_prewarm_ready`/`_handle_prewarm_failed`
+     called `thread.deleteLater()` with no `finished` connection — the same
+     QThread-destroyed-while-running race. Fixed to match every other worker
+     (teardown only from `finished` → `_cleanup_prewarm_thread`).
   Regression tests: `tests/test_recording_studio.py` (EndOfMedia handler
   safety, single-player reuse, finished-based worker teardown, close waits
-  for worker, MainWindow preview-player deferral and close-stop). The pre-voice-craft Render-click crash report remains
+  for worker, MainWindow preview-player deferral and close-stop, prewarm
+  teardown via finished for both ready and failed paths). The pre-voice-craft Render-click crash report remains
   separate and still blocked-on-repro; repro launcher: `bash
   /tmp/gui_crash_catcher.sh`. Findings: `.serpent-circle/04-debug/root-causes.md`.
 - **audio.cpp punctuation normalization is NOT patched**: its replacement

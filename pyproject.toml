@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "the-oracle"
-version = "0.2.0"
+version = "1.0.1"
 description = "The Oracle is a local desktop app for rendering dialogue (monologue or multi-speaker casts) to FLAC with the Chatterbox TTS model, on CPU (PyTorch) or a Vulkan GPU backend."
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
