@@ -63,11 +63,14 @@ DEFAULT_SAMPLE_RATE = 24000
 
 def _synthesis_timeout_seconds() -> float:
     # Parsed lazily so a malformed ORACLE_AUDIOCPP_TIMEOUT env value cannot
-    # crash the module at import time.
+    # crash the module at import time. Clamped to a positive value: a
+    # negative (or zero) timeout would make every synthesis fail immediately
+    # with a misleading "timed out after -Ns" error.
     try:
-        return float(os.environ.get("ORACLE_AUDIOCPP_TIMEOUT", "600"))
+        value = float(os.environ.get("ORACLE_AUDIOCPP_TIMEOUT", "600"))
     except ValueError:
         return 600.0
+    return max(1.0, value)
 
 _RDNA1_DEVICE_LOST_MARKERS = (
     "VK_ERROR_DEVICE_LOST",
@@ -264,6 +267,13 @@ class AudioCppVulkanEngine:
         if batch_limit is not None and (not isinstance(batch_limit, int) or batch_limit < 1):
             raise ValueError(
                 f"batch_limit must be a positive request count, got {batch_limit!r}."
+            )
+        # A non-positive timeout would make subprocess.run fail every
+        # synthesis immediately with a misleading "timed out after -Ns"
+        # message; reject it at construction like the other knobs above.
+        if timeout is not None and timeout < 1:
+            raise ValueError(
+                f"timeout must be a positive timeout in seconds, got {timeout!r}."
             )
         self.variant = variant
         self.device = device or "vulkan"
@@ -711,30 +721,51 @@ class AudioCppVulkanEngine:
             thread.start()
 
         reported: set[int] = set()
-        deadline = time.monotonic() + timeout
-        while proc.poll() is None:
-            if time.monotonic() > deadline:
-                proc.kill()
-                proc.wait(timeout=5)
-                raise RuntimeError(_timeout_error_message(timeout))
+        try:
+            deadline = time.monotonic() + timeout
+            while proc.poll() is None:
+                if time.monotonic() > deadline:
+                    raise RuntimeError(_timeout_error_message(timeout))
+                for index in range(request_count):
+                    if index not in reported and (out_dir / f"request_{index}.wav").exists():
+                        reported.add(index)
+                        on_request_complete(index)
+                time.sleep(0.05)
+            for thread in threads:
+                thread.join(timeout=5)
+            # Final sweep: the last wav(s) may land in the instant before exit.
             for index in range(request_count):
                 if index not in reported and (out_dir / f"request_{index}.wav").exists():
                     reported.add(index)
                     on_request_complete(index)
-            time.sleep(0.05)
-        for thread in threads:
-            thread.join(timeout=5)
-        # Final sweep: the last wav(s) may land in the instant before exit.
-        for index in range(request_count):
-            if index not in reported and (out_dir / f"request_{index}.wav").exists():
-                reported.add(index)
-                on_request_complete(index)
-        return subprocess.CompletedProcess(
-            args=command,
-            returncode=proc.returncode,
-            stdout="".join(stdout_lines),
-            stderr="".join(stderr_lines),
-        )
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=proc.returncode,
+                stdout="".join(stdout_lines),
+                stderr="".join(stderr_lines),
+            )
+        finally:
+            # Every exit path — timeout, a progress-callback exception, or a
+            # normal return — must leave no child process, pipe, or drain
+            # thread behind. Cleanup is fully guarded so it can never raise
+            # and mask the original failure.
+            if proc.poll() is None:
+                proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            for thread in threads:
+                try:
+                    thread.join(timeout=5)
+                except Exception:
+                    pass
+            for stream in (proc.stdout, proc.stderr):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except Exception:
+                    pass
 
     def list_devices(self) -> list[dict[str, Any]]:
         """Return the Vulkan devices audio.cpp sees, as [{"index", "name"}, ...].

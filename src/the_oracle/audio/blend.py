@@ -30,6 +30,7 @@ import numpy as np
 import soundfile as sf
 
 from the_oracle.audio.assemble import normalize_loudness
+from the_oracle.models.cache import atomic_write
 from the_oracle.utils.audio import ensure_mono, resample_audio, trim_silence
 from the_oracle.utils.hashing import hash_file, hash_payload
 
@@ -107,5 +108,7 @@ def blend_references(
         blended[: audio_b.size] += audio_b * (1.0 - weight)
 
     blended = normalize_loudness(np.clip(blended, -1.0, 1.0), preset="light")
-    sf.write(str(destination), blended, _BLEND_TARGET_SR, format="WAV")
+    # Atomic write: parallel renders share the blend cache, so a plain
+    # sf.write could leave a torn WAV for the racing reader.
+    atomic_write(destination, lambda tmp: sf.write(str(tmp), blended, _BLEND_TARGET_SR, format="WAV"))
     return destination

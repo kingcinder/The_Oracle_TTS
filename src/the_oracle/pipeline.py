@@ -11,13 +11,15 @@ from pathlib import Path
 from time import perf_counter, time
 from typing import Any, Callable
 
+import numpy as np
+
 from the_oracle import __version__
 from the_oracle.app_paths import normalize_output_filename
 from the_oracle.audio.assemble import AudioSegment, assemble_dialogue, load_audio, save_wav
 from the_oracle.audio.export_flac import next_available_output_path, write_flac
 from the_oracle.device_support import resolve_chatterbox_device
 from the_oracle.emotion.goemotions import EmotionResult, GoEmotionsClassifier, SUPPORTED_EMOTIONS
-from the_oracle.models.cache import CachedReference, ProjectCache
+from the_oracle.models.cache import CachedReference, ProjectCache, atomic_write, sanitize_speaker_component, write_render_plan
 from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings
 from the_oracle.speaker_attribution.heuristics import AnchorAssignments, DualSpeakerAttributor
 from the_oracle.text_ingest import TextIngestor
@@ -32,7 +34,7 @@ from the_oracle.tts_engines.vulkan_backend import (
     _vulkan_batch_max_requests,
 )
 from the_oracle.utils.chunking import chunk_utterance, TextChunk
-from the_oracle.utils.hashing import build_chunk_hash, hash_file
+from the_oracle.utils.hashing import build_chunk_hash, hash_file, hash_payload
 from the_oracle.utils.pacing import chunk_seam_pause_ms, pause_for_utterance
 from the_oracle.utils.logging import get_logger
 from the_oracle.correction_modes import normalize_correction_mode
@@ -216,6 +218,10 @@ class SynthesisTask:
     device_mode: str
     export_stems: bool
     inference_backend: str = "pytorch"
+    # Deterministic sampling seed for this task's stem. Part of the stem
+    # cache key: the same text with different seeds must not share cache
+    # entries. Populated from settings.seed at task construction.
+    seed: int | None = None
     # Precomputed stem-cache hash for this task. Computed once at task
     # construction (the render loop already needs it for the cache check) so
     # neither synthesize_task nor the batched path has to rebuild the JSON +
@@ -308,6 +314,21 @@ def _worker_process_task(task: SynthesisTask) -> SynthesisResult:
     return result
 
 
+def _worker_process_task_guarded(task: SynthesisTask) -> SynthesisResult:
+    """Pool-safe wrapper: per-task exceptions become failure-marker results.
+
+    Without this, a single failing utterance makes pool.map/imap_unordered
+    raise, discarding every successful result and forcing a full sequential
+    redo. The guarded form keeps the pool's work and marks only the failed
+    utterance, matching the sequential path's per-task convention.
+    """
+    try:
+        return _worker_process_task(task)
+    except Exception as exc:
+        LOGGER.error("Synthesis failed for task %s: %s", task.utterance_index, exc)
+        return _failed_stem_result(task, f"{type(exc).__name__}: {exc}")
+
+
 def _sequential_worker_execution(
     tasks: list[SynthesisTask],
     engine_cls: type[ChatterboxEngine],
@@ -381,20 +402,30 @@ def _run_tasks_with_worker_pool(
             initargs=(engine_cls, variant, device, project_dir, seed),
         )
         if stream:
-            iterator = pool.imap_unordered(_worker_process_task, tasks, chunksize=1)
+            iterator = pool.imap_unordered(_worker_process_task_guarded, tasks, chunksize=1)
 
             def _generate() -> Any:
                 try:
                     for item in iterator:
                         yield item
-                finally:
+                except GeneratorExit:
+                    # Consumer abandoned the stream: terminate the pool so
+                    # workers blocked on queued tasks don't linger as zombies.
+                    pool.terminate()
+                    raise
+                except Exception:
+                    pool.terminate()
+                    raise
+                else:
+                    # Fully consumed: normal close.
                     pool.close()
+                finally:
                     pool.join()
 
             results = _generate()
         else:
             with pool:
-                results = pool.map(_worker_process_task, tasks)
+                results = pool.map(_worker_process_task_guarded, tasks)
     except Exception as exc:
         LOGGER.warning(
             "Worker pool failed (%s: %s), falling back to sequential execution.",
@@ -462,6 +493,39 @@ class NoAudioToAssembleError(RuntimeError):
     pass
 
 
+# Length of the silent stem banked for pause-only utterances (empty or
+# directive-only text). The turn still owns its pause in assembly, so we
+# cache a short silence instead of sending empty text to the engine.
+_PAUSE_ONLY_STEM_SECONDS = 0.5
+
+
+def _write_pause_only_stem(stem_path: Path, sample_rate: int) -> None:
+    """Bank a short silent stem for a pause-only utterance.
+
+    Uses the same atomic cache-write discipline as real synthesis so parallel
+    workers never observe a half-written file.
+    """
+    silence = np.zeros(max(1, int(sample_rate * _PAUSE_ONLY_STEM_SECONDS)), dtype=np.float32)
+    atomic_write(stem_path, lambda tmp: save_wav(tmp, silence, sample_rate))
+
+
+def _load_cached_stem(stem_path: Path) -> tuple[np.ndarray, int] | None:
+    """Load a cached stem, deleting it and returning None when corrupt.
+
+    A truncated or otherwise unreadable WAV must never crash the render:
+    the caller treats None as a cache miss and re-synthesizes the stem.
+    """
+    try:
+        return load_audio(stem_path)
+    except Exception as exc:
+        LOGGER.warning("Cached stem %s is unreadable (%s); deleting and re-synthesizing.", stem_path, exc)
+        try:
+            stem_path.unlink()
+        except OSError:
+            pass
+        return None
+
+
 def synthesize_task(
     task: SynthesisTask,
     engine: ChatterboxEngine,
@@ -476,18 +540,33 @@ def synthesize_task(
         engine_params=task.voice_settings.to_dict(),
         engine_version=engine.engine_version,
         reference_audio_hash=task.reference_audio_hash,
+        seed=task.seed,
     )
     stem_path = project_cache.stem_path(chunk_hash)
-    cache_hit = stem_path.exists()
     synthesize_seconds = 0.0
     segment_start = perf_counter()
-    if not cache_hit:
-        synth_start = perf_counter()
-        if on_synth_start:
-            on_synth_start()
-        rendered = engine.synthesize(task.text, conditioning, task.voice_settings)
-        synthesize_seconds = perf_counter() - synth_start
-        save_wav(stem_path, rendered, engine.sample_rate)
+    if not task.text.strip():
+        # Pause-only utterance (empty or directive-only text): the turn still
+        # owns its pause, so bank a silent stem instead of sending empty text
+        # to the engine.
+        cache_hit = stem_path.exists()
+        if not cache_hit:
+            _write_pause_only_stem(stem_path, engine.sample_rate)
+    else:
+        cache_hit = stem_path.exists()
+        if cache_hit and _load_cached_stem(stem_path) is None:
+            # The cached stem was corrupt and has been deleted; fall through
+            # to synthesis instead of crashing on it.
+            cache_hit = False
+        if not cache_hit:
+            synth_start = perf_counter()
+            if on_synth_start:
+                on_synth_start()
+            rendered = engine.synthesize(task.text, conditioning, task.voice_settings)
+            synthesize_seconds = perf_counter() - synth_start
+            # Atomic stem-cache write: parallel workers share the cache, so the
+            # WAV must never be visible half-written to a racing reader.
+            atomic_write(stem_path, lambda tmp: save_wav(tmp, rendered, engine.sample_rate))
     load_start = perf_counter()
     audio, sample_rate = load_audio(stem_path)
     load_audio_seconds = perf_counter() - load_start
@@ -496,7 +575,7 @@ def synthesize_task(
     exported_stem_path = ""
     if task.export_stems:
         exported_stem_path = str(
-            project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{task.speaker}.wav")
+            project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{sanitize_speaker_component(task.speaker)}.wav")
         )
     return SynthesisResult(
         utterance_index=task.utterance_index,
@@ -537,7 +616,7 @@ def _build_stem_result(
     exported_stem_path = ""
     if task.export_stems:
         exported_stem_path = str(
-            project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{task.speaker}.wav")
+            project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{sanitize_speaker_component(task.speaker)}.wav")
         )
     if segment_total_seconds is None:
         segment_total_seconds = synthesize_seconds + load_audio_seconds
@@ -1196,7 +1275,47 @@ class OraclePipeline:
             profile = plan.voice_profiles[utterance.speaker]
             text = utterance.text_for_tts()
             chunks = chunk_utterance(text, utterance.index)
-            
+
+            if not chunks:
+                # Empty or directive-only utterance: nothing to speak, but the
+                # turn still owns its pause. Queue a pause-only task so the
+                # pause survives into assembly instead of being dropped.
+                LOGGER.info(
+                    "Queuing segment %s/%s | utterance=%s | speaker=%s (pause-only, no spoken text)",
+                    utterance_pos,
+                    total_segments,
+                    utterance.index,
+                    utterance.speaker,
+                )
+                task_index += 1
+                task = SynthesisTask(
+                    utterance_index=task_index,
+                    source_index=utterance.index,
+                    speaker=utterance.speaker,
+                    text="",
+                    reference_path=profile.primary_reference,
+                    reference_audio_hash=profile.reference_audio_hash,
+                    voice_settings=profile.engine_params,
+                    model_variant=settings.model_variant,
+                    device_mode=settings.device_mode,
+                    inference_backend=backend,
+                    export_stems=settings.export_stems,
+                    seed=settings.seed,
+                )
+                task.chunk_hash = build_chunk_hash(
+                    speaker=task.speaker,
+                    repaired_text=task.text,
+                    engine_key=_chunk_engine_key(backend, settings.model_variant),
+                    engine_params=task.voice_settings.to_dict(),
+                    engine_version=engine_version,
+                    reference_audio_hash=task.reference_audio_hash,
+                    seed=settings.seed,
+                )
+                raw_tasks.append(task)
+                task_to_utterance_map[task_index] = utterance
+                task_chunk_hashes[task_index] = task.chunk_hash
+                continue
+
             if len(chunks) == 1 and chunks[0].is_single_chunk:
                 # No chunking needed - original behavior
                 LOGGER.info(
@@ -1219,6 +1338,7 @@ class OraclePipeline:
                     device_mode=settings.device_mode,
                     inference_backend=backend,
                     export_stems=settings.export_stems,
+                    seed=settings.seed,
                 )
                 task.chunk_hash = build_chunk_hash(
                     speaker=task.speaker,
@@ -1227,6 +1347,7 @@ class OraclePipeline:
                     engine_params=task.voice_settings.to_dict(),
                     engine_version=engine_version,
                     reference_audio_hash=task.reference_audio_hash,
+                    seed=settings.seed,
                 )
                 raw_tasks.append(task)
                 task_to_utterance_map[task_index] = utterance
@@ -1255,6 +1376,7 @@ class OraclePipeline:
                         device_mode=settings.device_mode,
                         export_stems=settings.export_stems,
                         inference_backend=backend,
+                        seed=settings.seed,
                     )
                     task.chunk_hash = build_chunk_hash(
                         speaker=task.speaker,
@@ -1263,6 +1385,7 @@ class OraclePipeline:
                         engine_params=task.voice_settings.to_dict(),
                         engine_version=engine_version,
                         reference_audio_hash=task.reference_audio_hash,
+                        seed=settings.seed,
                     )
                     raw_tasks.append(task)
                     task_to_utterance_map[task_index] = utterance
@@ -1347,17 +1470,25 @@ class OraclePipeline:
             timeline["dispatch_start_wall"] = time()
 
             cached_results = []
+            fast_path_ok = True
             for task in raw_tasks:
                 chunk_hash = task_chunk_hashes[task.utterance_index]
                 stem_path = project_cache.stem_path(chunk_hash)
+                loaded = _load_cached_stem(stem_path)
+                if loaded is None:
+                    # Corrupt cached stem: it has been deleted above. Abandon
+                    # the fast path so the normal dispatch below re-synthesizes
+                    # the missing stem (and reuses the remaining valid ones).
+                    fast_path_ok = False
+                    break
                 load_start = perf_counter()
-                audio, sample_rate = load_audio(stem_path)
+                audio, sample_rate = loaded
                 load_audio_seconds = round(perf_counter() - load_start, 6)
                 duration_seconds = len(audio) / sample_rate
                 exported_path = ""
                 if task.export_stems:
                     exported_path = str(
-                        project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{task.speaker}.wav")
+                        project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{sanitize_speaker_component(task.speaker)}.wav")
                     )
                 cached_results.append(
                     SynthesisResult(
@@ -1374,8 +1505,15 @@ class OraclePipeline:
                         sample_rate=sample_rate,
                     )
                 )
-            result_iterator = iter(cached_results)
-            mode_metadata = "cached"
+            if fast_path_ok:
+                result_iterator = iter(cached_results)
+                mode_metadata = "cached"
+            else:
+                # A corrupt stem forced us off the fast path: run the normal
+                # dispatch, which re-synthesizes the deleted stem and reuses
+                # every stem that loaded cleanly.
+                all_cached = False
+                cached_results = []
         if not all_cached:
             emit_progress(
                 stage="Loading model",
@@ -1592,6 +1730,7 @@ class OraclePipeline:
         utterance_success_chunks: dict[int, int] = {}  # Count successful chunks per utterance
         utterance_failed_chunks: dict[int, int] = {}  # Count failed chunks per utterance
         failed_row_indices: set[int] = set()  # Track which rows had failures
+        utterance_task_hashes: dict[int, list[str]] = {}  # Stem hashes per utterance (incremental-change diagnostics)
         worker_timing_summary: dict[str, float] | None = None
         completed_tasks = 0
         # Step-count baseline for the results loop's emitted progress. For the
@@ -1623,6 +1762,10 @@ class OraclePipeline:
                 utterance_success_chunks[utterance.index] = 0
                 utterance_failed_chunks[utterance.index] = 0
             utterance_chunk_counts[utterance.index] += 1
+            # Collect the stem hashes behind this utterance so the
+            # incremental-change diagnostics compare real values.
+            if result.chunk_hash:
+                utterance_task_hashes.setdefault(utterance.index, []).append(result.chunk_hash)
 
             # Check if this task failed
             if result.error is not None:
@@ -1761,6 +1904,15 @@ class OraclePipeline:
                     utterance.status = "failed"
             # Rows not in utterance_chunk_counts remain "pending" (never reached)
 
+        # Stamp each utterance with the combined hash of the stems rendered
+        # for it. Incremental-change diagnostics (compute_incremental_changes)
+        # compare these hashes across renders; without this they compared the
+        # never-populated "" default and reported cache reuse vacuously.
+        for utterance in plan.utterances:
+            hashes = utterance_task_hashes.get(utterance.index, [])
+            if hashes:
+                utterance.chunk_hash = hash_payload(sorted(hashes))
+
         # Record failure information in plan metadata for GUI to display
         if failed_row_indices:
             plan.metadata["failed_rows"] = ",".join(str(i) for i in sorted(failed_row_indices))
@@ -1824,7 +1976,9 @@ class OraclePipeline:
         timeline["flac_write_end_wall"] = time()
         render_trace_lines.append(f"output | path={exported} | sample_rate={sample_rate}")
         plan.update_hashes()
-        project_cache.save_json("render_plan.json", plan.to_dict())
+        # Backup-preserving write: a torn or unloadable new plan must never
+        # destroy the last known-good render_plan.json.
+        write_render_plan(plan, project_cache.project_dir / "render_plan.json")
         self._write_correction_log(project_cache, plan)
         if "first_audio_seconds" not in timeline and completed_tasks:
             timeline["first_audio_seconds"] = timeline.get("results_ready_seconds", round(perf_counter() - start_time, 6))
@@ -1961,7 +2115,13 @@ class OraclePipeline:
         # For preview, only synthesize the first chunk to keep it fast
         # This matches what the user will hear for the start of the utterance
         chunk_text = chunks[0].text if chunks else text
-        rendered = engine.synthesize(chunk_text, conditioning, utterance.engine_settings)
+        if not chunk_text.strip():
+            # Pause-only utterance: preview is silence, never empty engine input.
+            rendered = np.zeros(
+                max(1, int(engine.sample_rate * _PAUSE_ONLY_STEM_SECONDS)), dtype=np.float32
+            )
+        else:
+            rendered = engine.synthesize(chunk_text, conditioning, utterance.engine_settings)
 
         # Do NOT set duration_seconds or status on the utterance object.
         # Preview is a probe operation, not a render. Row-level duration and
@@ -2043,11 +2203,17 @@ def compute_incremental_changes(old_plan: RenderPlan | dict[str, Any], new_plan:
         return list(value.get("utterances", []))
 
     previous = {item["index"]: item.get("chunk_hash", "") or item.get("cache_key", "") for item in _rows(old_plan)}
-    return [
-        item["index"]
-        for item in _rows(new_plan)
-        if previous.get(item["index"], "") != (item.get("chunk_hash", "") or item.get("cache_key", ""))
-    ]
+    changed: list[int] = []
+    for item in _rows(new_plan):
+        old_hash = previous.get(item["index"], "")
+        new_hash = item.get("chunk_hash", "") or item.get("cache_key", "")
+        # An unknown hash is never "unchanged": two missing hashes must not
+        # compare equal, or the diagnostics would report cache reuse vacuously
+        # (the old code compared "" != "" as False). When in doubt, flag the
+        # row changed so it re-synthesizes rather than trusting a ghost.
+        if not old_hash or not new_hash or old_hash != new_hash:
+            changed.append(item["index"])
+    return changed
 
 
 diff_render_plan = compute_incremental_changes

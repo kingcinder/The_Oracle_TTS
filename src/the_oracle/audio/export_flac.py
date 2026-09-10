@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+
+LOGGER = logging.getLogger(__name__)
 
 
 def next_available_output_path(path: str | Path) -> Path:
@@ -58,9 +61,17 @@ def write_flac(path: str | Path, audio: np.ndarray, sample_rate: int, metadata: 
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
         sf.write(str(destination), np.asarray(audio, dtype=np.float32), sample_rate, format="FLAC")
-        _tag_with_mutagen(destination, metadata)
     except Exception:
+        # The audio write itself failed: fall back to the ffmpeg pipeline,
+        # which writes and tags in one pass.
         _ffmpeg_write(destination, audio, sample_rate, metadata)
+        return destination
+    # Tagging is best-effort metadata only: a tagging failure must warn, not
+    # fail an export whose audio file was written successfully.
+    try:
+        _tag_with_mutagen(destination, metadata)
+    except Exception as exc:
+        LOGGER.warning("FLAC tagging failed for %s (%s); audio export kept.", destination, exc)
     return destination
 
 

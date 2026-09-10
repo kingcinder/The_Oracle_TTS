@@ -21,6 +21,10 @@ def trim_silence(audio: np.ndarray, threshold: float = 0.001) -> np.ndarray:
 def resample_audio(audio: np.ndarray, source_sr: int, target_sr: int) -> np.ndarray:
     if source_sr == target_sr:
         return audio.astype(np.float32)
+    if audio.size == 0:
+        # Empty input resamples to empty output (same channel layout); the
+        # interpolation below would crash on zero sample points.
+        return np.zeros(audio.shape, dtype=np.float32)
     duration = len(audio) / float(source_sr)
     source_positions = np.linspace(0.0, duration, num=len(audio), endpoint=False)
     target_length = max(1, int(round(duration * target_sr)))
