@@ -66,6 +66,21 @@ _EMOTION_ALIASES: dict[str, str] = {
 }
 
 
+# Directive-shaped text the strict parsers above reject: empty values
+# ("(tone:)"), non-numeric values ("[pause=]"), unknown keys, or a missing
+# closing delimiter. Whatever the typo, it was meant as a directive, so it
+# must never reach the TTS engine to be spoken aloud as literal text.
+_MALFORMED_DIRECTIVE_RES = (
+    re.compile(r"\(\s*(?:tone|emotion)\s*[:=][^()]*\)", re.IGNORECASE),
+    re.compile(r"\(\s*(?:whisper|laughs|laughing|sighs)\b[^()]*\)", re.IGNORECASE),
+    re.compile(r"\[\s*(?:pause|exaggeration|temperature|cfg_weight|rate)\s*[:=][^\[\]]*\]", re.IGNORECASE),
+    # Unclosed at end of the utterance: a missing ) or ] is a classic typo.
+    re.compile(r"\(\s*(?:tone|emotion)\s*[:=][^()]*$", re.IGNORECASE),
+    re.compile(r"\(\s*(?:whisper|laughs|laughing|sighs)\b[^()]*$", re.IGNORECASE),
+    re.compile(r"\[\s*(?:pause|exaggeration|temperature|cfg_weight|rate)\s*[:=][^\[\]]*$", re.IGNORECASE),
+)
+
+
 def _remove_one(cleaned: str, match: re.Match[str]) -> str:
     return re.sub(r"\s{2,}", " ", (cleaned[: match.start()] + " " + cleaned[match.end() :])).strip()
 
@@ -75,6 +90,10 @@ def parse_directives(text: str) -> tuple[str, dict[str, Any]]:
 
     ``overrides`` may contain ``emotion``, ``whisper``, ``rate``, ``pause_ms``,
     ``exaggeration``, ``temperature``, and ``cfg_weight`` keys.
+
+    Malformed directive-like tokens (``(tone:)``, ``[pause=]``, ``(whisper``,
+    ...) are stripped as well: they were meant as directives, so leaving them
+    in would have the TTS engine speak them aloud as literal text.
     """
     cleaned = text.strip()
     overrides: dict[str, Any] = {}
@@ -123,6 +142,12 @@ def parse_directives(text: str) -> tuple[str, dict[str, Any]]:
                 else:
                     overrides[key] = number
         cleaned = _remove_one(cleaned, match)
+
+    # Anything still shaped like a directive at this point failed the strict
+    # parsers above: strip it so malformed author hints are never spoken.
+    for malformed in _MALFORMED_DIRECTIVE_RES:
+        cleaned = malformed.sub(" ", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
 
     return cleaned, overrides
 

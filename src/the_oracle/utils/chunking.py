@@ -22,8 +22,11 @@ MIN_CHUNK_SIZE = 200
 # Sentence boundary regex - splits on .!? followed by whitespace or end
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
-# Clause boundary punctuation - used as fallback splitting points
-_CLAUSE_DELIMS = re.compile(r"([;,:\u2014\u2013-]+)")
+# Clause boundary punctuation - used as fallback splitting points.
+# A bare hyphen only counts as a boundary when it is NOT glued to word
+# characters on both sides, so compound words like "well-known" survive
+# chunking intact instead of gaining an injected space ("well- known").
+_CLAUSE_DELIMS = re.compile(r"([;,:\u2014\u2013]|(?<!\w)-+(?!\w))")
 
 # Dash variants for clause splitting
 _EM_DASH = "\u2014"
@@ -214,32 +217,39 @@ def _group_clauses(clauses: list[str], max_size: int) -> list[str]:
 
 def _split_by_words(text: str, max_size: int) -> list[str]:
     """Split text on word boundaries when clause splitting fails.
-    
+
     This is a fallback for extremely long clauses without natural breaks.
-    If no spaces exist, performs hard character-based splitting.
+    A single word longer than ``max_size`` is hard-split on its own, so no
+    chunk can ever exceed the advertised character limit.
     """
     words = text.split()
     if not words:
         return [text] if text.strip() else []
-    
-    # If there's only one "word" (no spaces), do hard character split
-    if len(words) == 1 and len(words[0]) > max_size:
-        return _hard_split(text, max_size)
-    
-    chunks = []
-    current = words[0]
-    
-    for word in words[1:]:
-        combined = current + " " + word
+
+    chunks: list[str] = []
+    current = ""
+
+    def _flush() -> None:
+        nonlocal current
+        if current:
+            chunks.append(current)
+            current = ""
+
+    for word in words:
+        if len(word) > max_size:
+            # An overlong word can never share a chunk without breaking the
+            # limit: flush what we have and hard-split the word by itself.
+            _flush()
+            chunks.extend(_hard_split(word, max_size))
+            continue
+        combined = f"{current} {word}" if current else word
         if len(combined) <= max_size:
             current = combined
         else:
-            chunks.append(current)
+            _flush()
             current = word
-    
-    if current:
-        chunks.append(current)
-    
+    _flush()
+
     return chunks
 
 

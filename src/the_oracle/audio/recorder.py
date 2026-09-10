@@ -10,6 +10,7 @@ reports availability through :func:`have_capture_backend`.
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 import time
@@ -114,6 +115,32 @@ def next_seashell_name(voice_dir: str | Path) -> str:
                 if match:
                     highest = max(highest, int(match.group(1)))
     return f"Seashell_No_{highest + 1}"
+
+
+def allocate_seashell_path(voice_dir: str | Path, suffix: str = ".wav") -> Path:
+    """Atomically allocate the next Seashell recording path.
+
+    :func:`next_seashell_name` only *suggests* a name: two recorders racing
+    can both be handed the same name, and the second save then silently
+    overwrites the first (a TOCTOU race). This allocator closes the race with
+    ``O_EXCL`` creation — the returned path refers to an actually-created
+    (empty) file, so no other allocator call, in this process or another,
+    can ever hand out the same name. Retries on ``FileExistsError`` (another
+    allocator won the race for that number) until it wins one.
+
+    Callers should write the audio into the returned path (e.g. via
+    :func:`save_recording_wav`, which truncates the placeholder safely).
+    """
+    directory = Path(voice_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    while True:
+        candidate = directory / f"{next_seashell_name(directory)}{suffix}"
+        try:
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            continue
+        os.close(fd)
+        return candidate
 
 
 def save_recording_wav(path: str | Path, audio: np.ndarray, samplerate: int) -> Path:

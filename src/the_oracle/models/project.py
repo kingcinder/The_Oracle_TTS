@@ -68,6 +68,12 @@ class CorrectionRecord:
     def to_dict(self) -> dict[str, str]:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "CorrectionRecord":
+        # Forward-compatible: ignore fields a newer version may have added.
+        known = set(cls.__dataclass_fields__)
+        return cls(**{key: value for key, value in payload.items() if key in known})
+
 
 @dataclass(slots=True)
 class VoiceProfile:
@@ -194,9 +200,16 @@ class Utterance:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "Utterance":
-        corrections = [CorrectionRecord(**item) for item in payload.get("corrections", [])]
+        corrections = [CorrectionRecord.from_dict(item) for item in payload.get("corrections", [])]
         engine_settings = VoiceSettings.from_mapping(payload.get("engine_settings"))
-        return cls(**{**payload, "corrections": corrections, "engine_settings": engine_settings})
+        # Forward-compatible: unknown fields (added by newer versions) are
+        # ignored instead of crashing the load with TypeError. Malformed
+        # *known* fields still surface through the dataclass constructor.
+        known = set(cls.__dataclass_fields__)
+        filtered = {key: value for key, value in payload.items() if key in known}
+        filtered["corrections"] = corrections
+        filtered["engine_settings"] = engine_settings
+        return cls(**filtered)
 
 
 @dataclass(slots=True)

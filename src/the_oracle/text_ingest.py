@@ -68,13 +68,28 @@ class IngestedDocument:
     segments: list[TextSegment]
 
 
+def _read_text_resilient(path: Path) -> str:
+    """Read a text file without crashing on legacy encodings.
+
+    Tries UTF-8 first (with BOM stripped so a leading ``\\ufeff`` cannot
+    break first-line speaker detection), then falls back to CP1252 — the
+    common Windows/Latin-1 encoding for manuscripts authored outside UTF-8
+    workflows. Raises only when neither decoding works.
+    """
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252")
+
+
 class TextIngestor:
     def __init__(self) -> None:
         self._markdown = MarkdownIt("commonmark")
 
     def ingest(self, source_path: str | Path) -> IngestedDocument:
         path = Path(source_path)
-        raw_text = path.read_text(encoding="utf-8")
+        raw_text = _read_text_resilient(path)
         if path.suffix.lower() == ".md":
             readable_text = self._extract_markdown_text(raw_text)
         else:
@@ -84,18 +99,13 @@ class TextIngestor:
         return IngestedDocument(title=title, source_path=str(path), raw_text=readable_text, segments=segments)
 
     def _extract_markdown_text(self, markdown_text: str) -> str:
+        # Blockquote content is spoken like any other text: the '>' markers
+        # are stripped by the parser, and the quoted words are kept so
+        # letters, flashbacks, and quoted dialogue are never silently
+        # dropped from the render.
         tokens = self._markdown.parse(markdown_text)
         lines: list[str] = []
-        blockquote_depth = 0
         for index, token in enumerate(tokens):
-            if token.type == "blockquote_open":
-                blockquote_depth += 1
-                continue
-            if token.type == "blockquote_close":
-                blockquote_depth = max(0, blockquote_depth - 1)
-                continue
-            if blockquote_depth:
-                continue
             if token.type == "inline" and index > 0 and tokens[index - 1].type == "heading_open":
                 continue
             if token.type == "inline":

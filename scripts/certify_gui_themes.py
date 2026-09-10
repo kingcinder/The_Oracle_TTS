@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -86,7 +88,21 @@ def spin_value(spin: QSpinBox) -> int:
 def main() -> int:
     app = QApplication.instance() or QApplication([])
     settings_file = app_settings_path()
-    original_settings = settings_file.read_text(encoding="utf-8") if settings_file.exists() else None
+    # Back the settings file up to disk (not just memory) before the
+    # certification run rewrites it per theme: if this process dies mid-run,
+    # the user's real settings survive in the backup file and are restored
+    # here on the next successful exit; a leftover backup also allows manual
+    # recovery.
+    backup_path: Path | None = None
+    if settings_file.exists():
+        try:
+            fd, backup_name = tempfile.mkstemp(prefix="oracle_settings_backup_", suffix=".json")
+            os.close(fd)
+            backup_path = Path(backup_name)
+            shutil.copy2(settings_file, backup_path)
+        except OSError as exc:
+            print(f"WARNING: could not back up settings file: {exc}", file=sys.stderr)
+            backup_path = None
     original_env_theme = os.environ.get("ORACLE_TEST_THEME")
     os.environ["ORACLE_TEST_THEME"] = "1"  # reserved for future per-test overrides
 
@@ -237,9 +253,14 @@ def main() -> int:
         window.close()
         app.processEvents()
     finally:
-        if original_settings is not None:
-            settings_file.write_text(original_settings, encoding="utf-8")
+        if backup_path is not None and backup_path.exists():
+            try:
+                shutil.copy2(backup_path, settings_file)
+            finally:
+                backup_path.unlink(missing_ok=True)
         elif settings_file.exists():
+            # No settings file existed before the run: remove the one the
+            # certification themes created.
             settings_file.unlink()
         if original_env_theme is None:
             os.environ.pop("ORACLE_TEST_THEME", None)

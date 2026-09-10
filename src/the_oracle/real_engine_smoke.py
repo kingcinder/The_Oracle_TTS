@@ -119,6 +119,19 @@ def real_engine_smoke_prerequisites(output_root: str | Path) -> dict[str, object
     }
 
 
+def _validate_smoke_output(output_path: Path, audio: np.ndarray) -> None:
+    """A smoke test that passes on missing, empty, or silent output proves
+    nothing. Fail loudly instead: the output file must exist and be non-empty,
+    and the rendered audio must contain actual signal."""
+    if audio is None or len(audio) == 0:
+        raise RuntimeError("Real-engine smoke produced no audio output.")
+    peak = float(np.max(np.abs(audio)))
+    if not np.isfinite(peak) or peak <= 0:
+        raise RuntimeError("Real-engine smoke produced silent output.")
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError(f"Real-engine smoke output missing or empty: {output_path}")
+
+
 def run_real_engine_smoke(
     output_root: str | Path = Path("build/real_engine_smoke"),
     model_variant: str = "standard",
@@ -158,6 +171,8 @@ def run_real_engine_smoke(
         )
 
     final_audio, sample_rate = assemble_dialogue(stems, crossfade_ms=20, loudness_preset="off")
+    if final_audio is None or len(final_audio) == 0:
+        raise RuntimeError("Real-engine smoke produced no audio output.")
     output_path = write_flac(
         paths["output"],
         final_audio,
@@ -169,6 +184,7 @@ def run_real_engine_smoke(
             "device": engine.device,
         },
     )
+    _validate_smoke_output(output_path, final_audio)
     runtime_seconds = time.perf_counter() - start
     result = RealEngineSmokeResult(
         runtime_seconds=runtime_seconds,

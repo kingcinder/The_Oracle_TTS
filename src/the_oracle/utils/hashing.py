@@ -40,6 +40,7 @@ def build_chunk_hash(
     engine_params: dict[str, Any],
     engine_version: str,
     reference_audio_hash: str,
+    seed: int | None = None,
 ) -> str:
     return hash_payload(
         {
@@ -49,6 +50,10 @@ def build_chunk_hash(
             "engine_params": engine_params,
             "engine_version": engine_version,
             "reference_audio_hash": reference_audio_hash,
+            # The render seed changes the sampled audio, so it is part of
+            # the stem cache key: a stem rendered with one seed must never
+            # satisfy a render asking for another.
+            "seed": seed,
         }
     )
 
@@ -59,6 +64,7 @@ def render_chunk_hash(
     engine_params: dict[str, Any],
     engine_version: str,
     reference_audio_hash: str,
+    seed: int | None = None,
 ) -> str:
     return build_chunk_hash(
         speaker=speaker,
@@ -67,6 +73,7 @@ def render_chunk_hash(
         engine_params=engine_params,
         engine_version=engine_version,
         reference_audio_hash=reference_audio_hash,
+        seed=seed,
     )
 
 
@@ -78,6 +85,7 @@ def compute_chunk_hash(
     engine_version: str,
     reference_audio_hash: str,
     engine_key: str = "render",
+    seed: int | None = None,
 ) -> str:
     return build_chunk_hash(
         speaker=speaker,
@@ -86,6 +94,7 @@ def compute_chunk_hash(
         engine_params=engine_params,
         engine_version=engine_version,
         reference_audio_hash=reference_audio_hash,
+        seed=seed,
     )
 
 
