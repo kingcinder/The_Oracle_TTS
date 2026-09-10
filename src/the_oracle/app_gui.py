@@ -1186,7 +1186,17 @@ class RecordingStudioDialog(QDialog):
             for path in sorted(self.input_dir.glob("*")):
                 if path.suffix.lower() in (".txt", ".md") and path.is_file():
                     self.script_combo.addItem(path.name, str(path))
+        # The bundled alphabet/phonetic coverage script is the safest first
+        # take: it exercises a broad range of sounds while remaining easy to
+        # follow from the teleprompter. A remembered script is applied later
+        # by MainWindow, so this only governs a genuinely fresh studio.
+        default_script = self.input_dir / "What is, reality.txt"
+        default_index = self.script_combo.findData(str(default_script))
+        if default_index >= 0:
+            self.script_combo.setCurrentIndex(default_index)
         self.script_combo.blockSignals(False)
+        if default_index >= 0:
+            self._load_script(default_index)
 
     def _load_script(self, _index: int) -> None:
         path = self.script_combo.currentData()
@@ -1305,7 +1315,7 @@ class RecordingStudioDialog(QDialog):
             warning.setWindowTitle("Generic Seashell filename")
             warning.setText("This recording will use a generic default filename.")
             warning.setInformativeText("Close this warning and choose a descriptive filename now if you want this take to be easy to identify later.")
-            disable = QCheckBox("Click here to disable this warning; re-enable it in File → Settings")
+            disable = QCheckBox("Click here to disable this warning; re-enable it in the Settings menu")
             warning.setCheckBox(disable)
             warning.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
             warning.setDefaultButton(QMessageBox.StandardButton.Cancel)
@@ -1865,6 +1875,19 @@ class MainWindow(QMainWindow):
         self._gui_shown_wall: float | None = None
         self.repo_root = Path(__file__).resolve().parents[2]
         self.paths: OraclePaths = ensure_repo_default_paths(self.repo_root)
+        # User-selectable workspace defaults are separate from the repository's
+        # bundled folders.  They are restored before the UI is built so a
+        # first-run wizard choice controls both the initial fields and every
+        # subsequent Browse dialog.
+        self._default_input_dir = Path(
+            self._app_settings.get("default_input_dir") or self.paths.input_dir
+        ).expanduser()
+        self._default_output_dir = Path(
+            self._app_settings.get("default_output_dir") or self.paths.output_dir
+        ).expanduser()
+        self.output_filename_warning_enabled = bool(
+            self._app_settings.get("output_filename_warning", True)
+        )
         self.pipeline: OraclePipeline | None = None
         self._prewarmed_pipeline: OraclePipeline | None = None
         self._prewarmed_engine = None
@@ -1986,9 +2009,11 @@ class MainWindow(QMainWindow):
         self.input_path = QLineEdit()
         self.outdir_path = QLineEdit()
         self.output_name = QLineEdit()
-        self.output_name.setPlaceholderText("Auto-derived from the input file when using the default Output folder")
+        self.output_name.setPlaceholderText("Auto-derived from the input file; a caution appears before using the generic name")
+        self._output_name_edited = False
         self.input_path.textChanged.connect(self._handle_outdir_changed)
         self.outdir_path.textChanged.connect(self._handle_outdir_changed)
+        self.output_name.textEdited.connect(self._mark_output_name_edited)
         self._path_row_labels: list[QLabel | None] = [None, None]
         self._path_row_buttons: list[QPushButton | None] = [None, None]
         self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
@@ -2001,7 +2026,10 @@ class MainWindow(QMainWindow):
         # no longer exists): the user's pain-point test file. A remembered
         # input from a previous session wins over this default (see
         # _apply_workspace_layout).
-        self._default_input_path = self.paths.input_dir / "What is, reality.txt"
+        self._default_input_path = self._default_input_dir / "What is, reality.txt"
+        if not self._default_input_path.exists():
+            bundled_default = self.paths.input_dir / "What is, reality.txt"
+            self._default_input_path = bundled_default
         if self._default_input_path.exists():
             self.input_path.setText(str(self._default_input_path))
 
@@ -2110,7 +2138,7 @@ class MainWindow(QMainWindow):
             splitter.splitterMoved.connect(lambda _pos, _index: self._persist_workspace_layout())
 
         self.setCentralWidget(root)
-        self.outdir_path.setText(str(self.paths.output_dir))
+        self.outdir_path.setText(str(self._default_output_dir))
         self._refresh_language_options()
         self._refresh_reference_pickers()
 
@@ -2171,6 +2199,15 @@ class MainWindow(QMainWindow):
         self.recording_wizard_action = QAction("Replay Recording Studio Setup & Guide", self)
         self.recording_wizard_action.triggered.connect(lambda: self._start_recording_wizard(force=True))
         settings_menu.addAction(self.recording_wizard_action)
+        self.output_filename_warning_action = QAction("Warn before generic output filenames", self)
+        self.output_filename_warning_action.setCheckable(True)
+        self.output_filename_warning_action.setChecked(self.output_filename_warning_enabled)
+        self.output_filename_warning_action.setToolTip(
+            "Show a caution before a render uses the automatically derived input-based "
+            "filename. Re-enable this setting here after disabling it in the warning."
+        )
+        self.output_filename_warning_action.toggled.connect(self._on_output_filename_warning_toggled)
+        settings_menu.addAction(self.output_filename_warning_action)
 
         self.templates_menu = settings_menu.addMenu("Load Template")
         self.templates_menu.aboutToShow.connect(self._rebuild_templates_menu)
@@ -2240,8 +2277,12 @@ class MainWindow(QMainWindow):
             self._theme_actions[key] = action
 
         # Workspace persistence: the input file joins backend choice, theme,
-        # splitters, and section states in the app settings file.
-        self.input_path.textEdited.connect(lambda: self._persist_workspace_layout())
+        # splitters, section states, and the configured default folders in the
+        # app settings file.  textEdited deliberately excludes programmatic
+        # restore/default changes during startup.
+        self.input_path.textEdited.connect(self._remember_input_file_edit)
+        self.outdir_path.textEdited.connect(lambda: self._persist_workspace_layout())
+        self.output_name.textEdited.connect(lambda: self._persist_workspace_layout())
 
     # --------------------
     # Themes
@@ -2476,6 +2517,7 @@ class MainWindow(QMainWindow):
             (self.replay_discovery_wizard_action, "Replay only the hardware and inference availability discovery step."),
             (self.replay_main_wizard_action, "Replay only the main-page GUI feature tour, starting after hardware discovery."),
             (self.recording_wizard_action, "Replay the Recording Studio setup guide, including microphone, folder, naming, and speaking technique."),
+            (self.output_filename_warning_action, "Show or hide the caution before a render uses its automatically derived generic output filename."),
         ])
         # The row labels and Browse buttons share their field's description,
         # so hovering the *name* of a control works too (the user asked for
@@ -2728,13 +2770,41 @@ class MainWindow(QMainWindow):
         else:
             button.setProperty("buttonRole", "action")
 
+    def _mark_output_name_edited(self) -> None:
+        self._output_name_edited = True
+        self._persist_workspace_layout()
+
+    def _on_output_filename_warning_toggled(self, checked: bool) -> None:
+        self.output_filename_warning_enabled = bool(checked)
+        self._app_settings["output_filename_warning"] = bool(checked)
+        if self._app_settings_ready:
+            self._persist_workspace_layout()
+        else:
+            try:
+                save_app_settings(self._app_settings)
+            except Exception as exc:
+                self.error_panel.append(f"Could not persist output filename warning preference: {exc}")
+
+    def _remember_input_file_edit(self) -> None:
+        value = self.input_path.text().strip()
+        if value:
+            self._app_settings["last_input_file"] = value
+        if self._app_settings_ready:
+            self._persist_workspace_layout()
+        else:
+            try:
+                save_app_settings(self._app_settings)
+            except Exception as exc:
+                self.error_panel.append(f"Could not persist last input file: {exc}")
+
     def _pick_input(self) -> None:
         current_text = self.input_path.text().strip()
+
         if not current_text:
-            start_dir = self.paths.input_dir
+            start_dir = self._default_input_dir
         else:
             current_input = Path(current_text).expanduser()
-            start_dir = current_input.parent if current_input.exists() else self.paths.input_dir
+            start_dir = current_input.parent if current_input.exists() else self._default_input_dir
         path, _ = QFileDialog.getOpenFileName(self, "Choose Input", str(start_dir), "Text Files (*.txt *.md)")
         if path:
             self.input_path.setText(path)
@@ -2745,19 +2815,21 @@ class MainWindow(QMainWindow):
                 self._persist_workspace_layout()
 
     def _handle_outdir_changed(self) -> None:
-        folder = Path(self.outdir_path.text() or self.paths.output_dir).expanduser()
-        default_folder = Path(self.paths.output_dir)
+        folder = Path(self.outdir_path.text() or self._default_output_dir).expanduser()
+        default_folder = Path(self._default_output_dir).expanduser()
         if folder == default_folder:
+            if not self.output_name.text().strip() and self.input_path.text().strip():
+                self.output_name.setText(default_output_filename(self.input_path.text()))
             return
         if not folder.exists():
             folder.mkdir(parents=True, exist_ok=True)
-        if not self.output_name.text().strip():
-            default_name = default_output_filename(self.input_path.text() or "")
+        default_name = default_output_filename(self.input_path.text() or "")
+        if not self._output_name_edited:
             self.output_name.setText(default_name)
 
     def _pick_outdir(self) -> None:
         current_outdir = Path(self.outdir_path.text()).expanduser()
-        start_dir = current_outdir if current_outdir.exists() else self.paths.output_dir
+        start_dir = current_outdir if current_outdir.exists() else self._default_output_dir
         path = QFileDialog.getExistingDirectory(self, "Choose Output Directory", str(start_dir))
         if path:
             self.outdir_path.setText(path)
@@ -3291,6 +3363,10 @@ class MainWindow(QMainWindow):
         # player object) is destroyed, so the QtMultimedia backend isn't torn
         # down mid-playback during app exit.
         self._stop_preview_player()
+        # Capture every current option and slider position at the final normal
+        # close, including controls without a per-widget persistence signal.
+        # This is the last checkpoint before the process exits.
+        self._persist_workspace_layout()
         super().closeEvent(event)
 
     def _audio_cpp_device_value(self) -> int | None:
@@ -3461,6 +3537,56 @@ class MainWindow(QMainWindow):
     # --------------------
     # Inference setup and replayable GUI tutorial
     # --------------------
+    def _apply_inference_wizard_preferences(self, payload: dict) -> None:
+        """Apply the wizard's default-folder choices immediately and persist them.
+
+        Folder preferences are intentionally independent of the repository's
+        built-in ``Input``/``Output`` directories.  Unchecking a preference
+        restores that built-in location while preserving the last-used file
+        separately, so a later file choice still wins on the next launch.
+        """
+        input_dir = str(payload.get("default_input_dir") or "").strip()
+        output_dir = str(payload.get("default_output_dir") or "").strip()
+        previous_input_dir = self._default_input_dir
+        previous_output_dir = self._default_output_dir
+        if payload.get("remember_input_folder") and input_dir:
+            self._default_input_dir = Path(input_dir).expanduser()
+            self._default_input_dir.mkdir(parents=True, exist_ok=True)
+            self._app_settings["default_input_dir"] = str(self._default_input_dir)
+        else:
+            self._default_input_dir = self.paths.input_dir
+            self._app_settings.pop("default_input_dir", None)
+        if payload.get("remember_output_folder") and output_dir:
+            self._default_output_dir = Path(output_dir).expanduser()
+            self._default_output_dir.mkdir(parents=True, exist_ok=True)
+            self._app_settings["default_output_dir"] = str(self._default_output_dir)
+        else:
+            self._default_output_dir = self.paths.output_dir
+            self._app_settings.pop("default_output_dir", None)
+        current_output_text = self.outdir_path.text().strip()
+        if not current_output_text or current_output_text in {
+            str(self.paths.output_dir),
+            str(previous_output_dir),
+        }:
+            self.outdir_path.setText(str(self._default_output_dir))
+        current_input_text = self.input_path.text().strip()
+        previous_default_script = previous_input_dir / "What is, reality.txt"
+        if current_input_text in {"", str(previous_default_script), str(self.paths.input_dir / "What is, reality.txt")}:
+            new_default_script = self._default_input_dir / "What is, reality.txt"
+            if new_default_script.exists():
+                self.input_path.setText(str(new_default_script))
+        if self._app_settings_ready:
+            self._persist_workspace_layout()
+        else:
+            # The wizard may be exercised immediately after construction (and
+            # before the queued show callback flips the startup gate). Persist
+            # the explicit folder choice without snapshotting half-built GUI
+            # state.
+            try:
+                save_app_settings(self._app_settings)
+            except Exception as exc:
+                self.error_panel.append(f"Could not persist folder preferences: {exc}")
+
     def _apply_inference_wizard_selection(self, device_mode: str, cuda_device: int | None) -> None:
         """Apply the wizard's chosen inference path to the real GUI pickers."""
         if device_mode == "vulkan":
@@ -3543,6 +3669,7 @@ class MainWindow(QMainWindow):
             devices=self._cuda_devices,
             mode=mode,
             on_selection=self._apply_inference_wizard_selection,
+            on_preferences=self._apply_inference_wizard_preferences,
         )
         wizard.completed.connect(self._handle_inference_wizard_completed)
         wizard.finished.connect(wizard.deleteLater)
@@ -3557,7 +3684,7 @@ class MainWindow(QMainWindow):
         dialog = RecordingStudioDialog(
             repo_root=self.repo_root,
             voice_dir=self.paths.voice_dir,
-            input_dir=self.paths.input_dir,
+            input_dir=self._default_input_dir,
             parent=self,
             on_assign=self._assign_recording_to_speaker,
         )
@@ -3605,6 +3732,34 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.error_panel.append(f"Could not persist Recording Studio settings: {exc}")
 
+    def _persist_recording_dialog_state(self, studio: RecordingStudioDialog) -> None:
+        """Remember the last Recording Studio choices when its window closes.
+
+        The wizard supplies the initial defaults, but normal use continues after
+        the guide is complete. Capturing the live dialog state here means the
+        next open returns to the last script, microphone, rate, folder, and
+        naming preference without requiring the wizard to be replayed.
+        """
+        payload = {
+            "microphone_index": studio.mic_combo.currentData(),
+            "samplerate": studio.rate_combo.currentData(),
+            "input_file": studio.script_combo.currentData() or "",
+            "output_dir": studio.outdir_combo.currentText().strip(),
+            "output_filename": studio.name_edit.text().strip(),
+            "generic_name_warning": bool(studio.generic_name_warning_enabled),
+            "remember_input_default": bool(studio.remember_input_default),
+            "remember_output_default": bool(studio.remember_output_default),
+        }
+        if not payload["remember_input_default"]:
+            payload.pop("input_file", None)
+        if not payload["remember_output_default"]:
+            payload.pop("output_dir", None)
+        self._app_settings["recording_settings"] = {
+            **(self._app_settings.get("recording_settings") or {}),
+            **payload,
+        }
+        self._persist_recording_settings()
+
     def _start_recording_wizard(self, *, force: bool = False) -> None:
         """Show the first-open/replayable Recording Studio guide."""
         studio = getattr(self, "_recording_studio", None)
@@ -3651,8 +3806,10 @@ class MainWindow(QMainWindow):
         )
 
     def _on_recording_studio_closed(self, _result: int) -> None:
-        self._refresh_reference_pickers()
         studio = getattr(self, "_recording_studio", None)
+        if studio is not None:
+            self._persist_recording_dialog_state(studio)
+        self._refresh_reference_pickers()
         if studio is not None and studio._last_saved_path is not None:
             self.error_panel.append(
                 f"Recorded new Seashell: {studio._last_saved_path.name} - "
@@ -3797,7 +3954,11 @@ class MainWindow(QMainWindow):
             }
         self._app_settings.update({
             "theme": self._current_theme,
-            "last_input_file": self.input_path.text().strip(),
+            # Keep the last successful/typed file when New Project temporarily
+            # clears the field; a fresh launch should still return to the last
+            # used input rather than losing the user's working context.
+            "last_input_file": self.input_path.text().strip()
+            or self._app_settings.get("last_input_file", ""),
             # Every current option and slider position (shared + speakers),
             # so the whole GUI returns exactly as left.
             "gui": self._current_gui_settings_payload(),
@@ -3865,8 +4026,8 @@ class MainWindow(QMainWindow):
         remembered_input = str(self._app_settings.get("last_input_file") or "")
         if remembered_input and Path(remembered_input).expanduser().exists():
             self.input_path.setText(remembered_input)
-        elif not self.input_path.text().strip():
-            self.input_path.setText("")
+        elif not self.input_path.text().strip() and self._default_input_path.exists():
+            self.input_path.setText(str(self._default_input_path))
 
     def _all_speaker_groups(self) -> dict[str, SpeakerGroup]:
         """Every speaker group: A, B, and any extra character voices (C..X)."""
@@ -4004,7 +4165,7 @@ class MainWindow(QMainWindow):
                 "audio_cpp_threads": default_render.audio_cpp_threads,
                 "audio_cpp_timeout": default_render.audio_cpp_timeout,
                 "audio_cpp_max_batch": default_render.audio_cpp_max_batch,
-                "output_dir": str(self.paths.output_dir),
+                "output_dir": str(self._default_output_dir),
                 "output_filename": "",
                 "export_srt": False,
                 "monologue": False,
@@ -4109,6 +4270,7 @@ class MainWindow(QMainWindow):
                 "export_srt": self.export_srt_check.isChecked(),
                 "monologue": self.monologue_check.isChecked(),
                 "delete_confirm_enabled": self.delete_confirm_enabled,
+                "output_filename_warning": self.output_filename_warning_enabled,
             },
             "speakers": {
                 speaker: {
@@ -4136,10 +4298,18 @@ class MainWindow(QMainWindow):
         device_index = self.pytorch_device_combo.findData(target_device)
         self.pytorch_device_combo.setCurrentIndex(device_index if device_index >= 0 else 0)
         self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
+        self._output_name_edited = bool(project.get("output_filename", ""))
         self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
         self.export_srt_check.setChecked(bool(project.get("export_srt", False)))
         self.monologue_check.setChecked(bool(project.get("monologue", False)))
         self.delete_confirm_enabled = bool(project.get("delete_confirm_enabled", True))
+        self.output_filename_warning_enabled = bool(
+            project.get("output_filename_warning", self.output_filename_warning_enabled)
+        )
+        if hasattr(self, "output_filename_warning_action"):
+            self.output_filename_warning_action.blockSignals(True)
+            self.output_filename_warning_action.setChecked(self.output_filename_warning_enabled)
+            self.output_filename_warning_action.blockSignals(False)
         backend_index = self.inference_backend_combo.findData(project.get("inference_backend", "pytorch"))
         if backend_index >= 0:
             self.inference_backend_combo.setCurrentIndex(backend_index)
@@ -4257,7 +4427,11 @@ class MainWindow(QMainWindow):
         session without having to re-enter reference paths every time."""
         self.current_project_path = None
         self.plan = None
+        preserved_output_name = self.output_name.text()
+        preserved_output_edited = self._output_name_edited
         self.input_path.clear()
+        self.output_name.setText(preserved_output_name)
+        self._output_name_edited = preserved_output_edited or bool(preserved_output_name)
         self.error_panel.clear()
         self.table.setRowCount(0)
         self._refresh_reference_pickers()
@@ -4569,18 +4743,52 @@ class MainWindow(QMainWindow):
             output_filename = resolve_output_filename(
                 self.input_path.text(),
                 self.outdir_path.text(),
-                self.paths.output_dir,
+                self._default_output_dir,
                 self.output_name.text(),
             )
             if not output_filename:
                 raise ValueError("Choose an output filename before rendering outside the default Output folder.")
-            self.plan.output_dir = self.outdir_path.text() or str(self.paths.output_dir)
+            self.plan.output_dir = self.outdir_path.text() or str(self._default_output_dir)
         except Exception as exc:
             self.error_panel.append(f"Render failed: {exc}")
             QMessageBox.critical(self, "Render Failed", str(exc))
             return
 
         render_settings = self._render_settings()
+        resolved_default_name = resolve_output_filename(
+            self.input_path.text(), self.outdir_path.text(), self._default_output_dir, ""
+        )
+        auto_name = default_output_filename(self.input_path.text())
+        current_output_name = normalize_output_filename(self.output_name.text())
+        if (
+            self.output_filename_warning_enabled
+            and not self._output_name_edited
+            and resolved_default_name
+            and resolved_default_name == auto_name
+            and current_output_name in {"", auto_name}
+        ):
+            warning = QMessageBox(self)
+            warning.setIcon(QMessageBox.Icon.Warning)
+            warning.setWindowTitle("Generic output filename")
+            warning.setText("This render will use an automatically derived filename.")
+            warning.setInformativeText(
+                "The output will be named from the input file. Close this warning "
+                "and enter a descriptive filename now if you want a clearer name."
+            )
+            disable = QCheckBox(
+                "Click here to disable this warning; re-enable it in the Settings menu"
+            )
+            warning.setCheckBox(disable)
+            warning.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+            warning.setDefaultButton(QMessageBox.StandardButton.Cancel)
+            result = warning.exec()
+            if disable.isChecked():
+                self.output_filename_warning_enabled = False
+                self._app_settings["output_filename_warning"] = False
+                self._persist_workspace_layout()
+            if result == QMessageBox.StandardButton.Cancel:
+                return
+
         if render_settings.inference_backend == "vulkan":
             missing = _vulkan_prerequisite_missing()
             if missing:

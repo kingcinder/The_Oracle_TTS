@@ -97,6 +97,19 @@ def test_wizard_continue_applies_live_preferences_and_reaches_speaking_step(tmp_
         dialog.close()
 
 
+def test_guide_mode_replays_the_recording_instructions_without_setup(tmp_path, monkeypatch, qt_app):
+    dialog, _voice, _script = _dialog(tmp_path, monkeypatch)
+    wizard = RecordingStudioSetupWizard(dialog, mode="guide")
+    try:
+        assert wizard.mode == "guide"
+        assert [stage.key for stage in wizard._stages] == ["technique", "finish"]
+        assert wizard.setup_box.isVisible() is False
+        assert "microphone" in wizard.explanation.toPlainText().lower()
+    finally:
+        wizard.close()
+        dialog.close()
+
+
 def test_no_microphone_is_explicitly_explained(tmp_path, monkeypatch, qt_app):
     import the_oracle.audio.recorder as recorder
 

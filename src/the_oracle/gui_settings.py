@@ -125,6 +125,11 @@ def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
         normalized["theme"] = data["theme"]
     if isinstance(data.get("last_input_file"), str):
         normalized["last_input_file"] = data["last_input_file"]
+    for key in ("default_input_dir", "default_output_dir"):
+        if isinstance(data.get(key), str):
+            normalized[key] = data[key].strip()
+    if isinstance(data.get("output_filename_warning"), bool):
+        normalized["output_filename_warning"] = data["output_filename_warning"]
     for key in ("gui", "splitters", "sections", "window_geometry"):
         if isinstance(data.get(key), (dict, list)):
             normalized[key] = data[key]
@@ -137,7 +142,24 @@ def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(data.get("recording_wizard_dismissed"), bool):
         normalized["recording_wizard_dismissed"] = data["recording_wizard_dismissed"]
     if isinstance(data.get("recording_settings"), dict):
-        normalized["recording_settings"] = data["recording_settings"]
+        recording = dict(data["recording_settings"])
+        for key in ("input_file", "output_dir", "output_filename"):
+            if key in recording and not isinstance(recording[key], str):
+                recording.pop(key, None)
+        for key in ("microphone_index", "samplerate"):
+            if key not in recording:
+                continue
+            if recording[key] is None:
+                recording.pop(key, None)
+                continue
+            try:
+                recording[key] = int(recording[key])
+            except (TypeError, ValueError):
+                recording.pop(key, None)
+        for key in ("generic_name_warning", "remember_input_default", "remember_output_default"):
+            if key in recording and not isinstance(recording[key], bool):
+                recording.pop(key, None)
+        normalized["recording_settings"] = recording
     return normalized
 
 
