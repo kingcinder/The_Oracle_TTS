@@ -9,12 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from the_oracle.correction_modes import normalize_correction_mode
+from the_oracle.gui_utils import MAX_CAST_SPEAKERS, normalize_cast_keys
 from the_oracle.platform_support import app_config_dir
 
 
 GUI_SETTINGS_VERSION = 1
 _SUPPORTED_DEVICE_MODES = {"cpu"}
 _SUPPORTED_INFERENCE_BACKENDS = {"pytorch", "vulkan"}
+_SUPPORTED_BLEND_MODES = {"mix", "alternate", "layer"}
 _LOG = logging.getLogger(__name__)
 
 
@@ -154,10 +156,23 @@ def save_app_settings(payload: dict[str, Any]) -> Path:
 
 
 def load_recent_reference_paths(limit: int = 10) -> list[str]:
+    """Return the remembered reference-clip paths, newest first.
+
+    A corrupt ``recent_reference_clips.json`` (bad JSON, wrong shape,
+    unreadable file) must never crash GUI startup: fall back to an empty
+    list so the app simply starts with no recent references.
+    """
     path = recent_references_path()
     if not path.exists():
         return []
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        _LOG.warning("Ignoring corrupt recent-references file: %s", path)
+        return []
+    if not isinstance(payload, list):
+        _LOG.warning("Ignoring malformed recent-references file (not a list): %s", path)
+        return []
     entries = [str(item) for item in payload if isinstance(item, str)]
     return entries[:limit]
 
@@ -267,6 +282,28 @@ def _normalize_inference_backend(value: str) -> str:
     return candidate
 
 
+def _normalize_blend_references(value: Any) -> list[str]:
+    """Coerce the hybrid second-voice reference list to a list of strings."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item) for item in value if isinstance(item, (str, Path)) and str(item)]
+
+
+def _normalize_blend_weight(value: Any) -> float:
+    """Coerce the hybrid voice-dominance weight to a 0..1 float."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    return min(1.0, max(0.0, parsed))
+
+
+def _normalize_blend_mode(value: Any) -> str:
+    """Coerce the hybrid combine mode to a supported value (default "mix")."""
+    candidate = str(value or "").strip().lower()
+    return candidate if candidate in _SUPPORTED_BLEND_MODES else "mix"
+
+
 def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     required = {"version", "project", "speakers"}
     missing = sorted(required - set(payload))
@@ -309,14 +346,33 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         # Always normalise device_mode so stale values in old settings files
         # do not leave the app in an unverified execution state.
         "device_mode": _normalize_device_mode(payload.get("device_mode", "cpu")),
+        # The ordered speaker cast (["A", "B", ...]). Older profiles predate
+        # the cast manager and only carry the speakers dict, so fall back to
+        # its keys in sorted order.
+        "cast": normalize_cast_keys(
+            payload.get("cast") if payload.get("cast") is not None else sorted(speakers)
+        ),
         "speakers": {},
     }
     for speaker, config in speakers.items():
+        config = config if isinstance(config, dict) else {}
         normalized["speakers"][speaker] = {
             "reference_path": str(config.get("reference_path", "")),
             "voice_settings": dict(config.get("voice_settings", {})),
             "emotion_reference_paths": dict(config.get("emotion_reference_paths", {})),
+            # Optional character name shown in the cast bar / cast dialog.
+            "name": str(config.get("name", "") or ""),
+            # Hybrid (blend) voice settings: previously dropped on save/load,
+            # which silently reset every speaker's second voice, dominance
+            # weight, and combine mode to defaults.
+            "blend_references": _normalize_blend_references(config.get("blend_references")),
+            "blend_weight": _normalize_blend_weight(config.get("blend_weight", 0.5)),
+            "blend_mode": _normalize_blend_mode(config.get("blend_mode", "mix")),
         }
+    # The cast may reference keys absent from (or pruned out of) the speakers
+    # dict; keep the two consistent and within the engine's voice capacity.
+    cast_keys = [key for key in normalized["cast"] if key in normalized["speakers"]]
+    normalized["cast"] = normalize_cast_keys(cast_keys or sorted(normalized["speakers"]))
     return normalized
 
 
