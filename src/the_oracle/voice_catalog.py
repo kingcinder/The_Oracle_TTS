@@ -197,7 +197,9 @@ def blend_voice_choices(profiles_dir: str | Path) -> list[VoiceChoice]:
     """The saved named blend voices, as picker entries (derived wavs resolved).
 
     Entries whose source clips no longer exist are skipped, never fatal: a
-    saved voice stays selectable only while its inputs are on disk.
+    saved voice stays selectable only while its inputs are on disk. Malformed
+    entries (missing paths, non-numeric weights, bad modes) are skipped the
+    same way: a corrupt catalog must never crash the voice picker.
     """
     from the_oracle.audio.blend import blend_references
 
@@ -206,23 +208,37 @@ def blend_voice_choices(profiles_dir: str | Path) -> list[VoiceChoice]:
     choices: list[VoiceChoice] = []
     seen: set[str] = set()
     for voice in payload.get("voices", []):
-        if not isinstance(voice, dict) or not voice.get("name"):
+        if not isinstance(voice, dict):
+            continue
+        name = voice.get("name")
+        path_a = voice.get("path_a")
+        path_b = voice.get("path_b")
+        if not name or not isinstance(name, str) or not path_a or not path_b:
             continue
         try:
+            weight = float(voice.get("weight", 0.5))
+        except (TypeError, ValueError):
+            weight = 0.5
+        mode = voice.get("mode", "mix")
+        if not isinstance(mode, str):
+            mode = "mix"
+        try:
             derived = blend_references(
-                voice["path_a"],
-                voice["path_b"],
-                weight_a=float(voice.get("weight", 0.5)),
-                mode=voice.get("mode", "mix"),
+                path_a,
+                path_b,
+                weight_a=weight,
+                mode=mode,
                 out_dir=blend_clips_dir(profiles_dir),
             )
-        except (FileNotFoundError, ValueError, OSError):
+        except Exception:
+            # Missing clips, unreadable audio, unknown blend mode, missing
+            # optional audio deps: skip the entry, never crash the picker.
             continue
         resolved = str(derived)
         if resolved in seen:
             continue
         seen.add(resolved)
-        choices.append(VoiceChoice(label=voice["name"], path=resolved, kind="blend"))
+        choices.append(VoiceChoice(label=name, path=resolved, kind="blend"))
     return choices
 
 

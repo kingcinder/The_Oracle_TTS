@@ -79,8 +79,12 @@ class GoEmotionsClassifier:
             predictions = self._pipeline(list(texts), truncation=True, batch_size=64)
         except Exception:
             return [self._classify_lexical(text) for text in texts]
+        if len(predictions) != len(texts):
+            # A misbehaving pipeline backend returned a misaligned batch;
+            # never let a count mismatch escape -- fall back per item.
+            return [self._classify_lexical(text) for text in texts]
         results: list[EmotionResult] = []
-        for text, item in zip(texts, predictions, strict=True):
+        for text, item in zip(texts, predictions):
             try:
                 prediction = item[0]
                 results.append(EmotionResult(prediction["label"], float(prediction["score"])))
@@ -101,7 +105,14 @@ class GoEmotionsClassifier:
             return EmotionResult("curiosity", 0.58)
         return EmotionResult("neutral", 0.55)
 
-    def controls_for_emotion(self, label: str) -> dict[str, float | int]:
+    @staticmethod
+    def controls_for_emotion(label: str) -> dict[str, float | int]:
+        """Static voice-control mapping for an emotion label.
+
+        Deliberately a static method: callers read this mapping without
+        instantiating the classifier, so no transformer pipeline (and no
+        model download) is ever triggered just to look up control values.
+        """
         mapping = {
             "anger": {"cfg_weight": 0.35, "exaggeration": 0.78, "temperature": 0.86, "pause_ms": 130},
             "curiosity": {"cfg_weight": 0.45, "exaggeration": 0.55, "temperature": 0.8, "pause_ms": 180},

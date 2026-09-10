@@ -306,9 +306,14 @@ class DualSpeakerAttributor:
         utterances = list(texts)
         explicit = list(explicit_speakers or [None] * len(utterances))
 
+        if not utterances:
+            # Zero utterances in -> zero decisions out. Returning a phantom
+            # decision here breaks the strict zip in the caller wrappers.
+            return []
         if monologue:
             return [SpeakerDecision("A", 1.0, "monologue") for _ in utterances]
-        if anchors and anchors.speaker_a_indices and anchors.speaker_b_indices:
+        anchors = self._sanitize_anchors(anchors, len(utterances))
+        if anchors is not None:
             return self._assign_from_anchors(utterances, anchors)
 
         labeled = self._assign_from_labels(explicit)
@@ -326,6 +331,35 @@ class DualSpeakerAttributor:
     # ------------------------------------------------------------------
     # Label-aware paths
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sanitize_anchors(anchors: AnchorAssignments | None, utterance_count: int) -> AnchorAssignments | None:
+        """Validate anchor indices, dropping anything out of range.
+
+        Anchor indices come from GUI settings and are easy to fat-finger;
+        an out-of-range (or negative) index must not crash attribution with
+        a numpy IndexError. Returns None when either side has no usable
+        anchor left, so attribution falls back to the label heuristics.
+        """
+        if anchors is None:
+            return None
+
+        def _valid(indices: list[int]) -> list[int]:
+            seen: set[int] = set()
+            valid: list[int] = []
+            for index in indices:
+                if isinstance(index, bool) or not isinstance(index, int):
+                    continue
+                if 0 <= index < utterance_count and index not in seen:
+                    seen.add(index)
+                    valid.append(index)
+            return valid
+
+        speaker_a = _valid(anchors.speaker_a_indices)
+        speaker_b = _valid(anchors.speaker_b_indices)
+        if not speaker_a or not speaker_b:
+            return None
+        return AnchorAssignments(speaker_a_indices=speaker_a, speaker_b_indices=speaker_b)
 
     def _assign_from_labels(self, explicit_speakers: list[str | None]) -> list[SpeakerDecision] | None:
         """Assign voices when at least one usable label is present.
@@ -402,7 +436,16 @@ class DualSpeakerAttributor:
         mapping: dict[str, str],
         distinct: list[str],
     ) -> dict[str, str]:
-        """Fold unassigned speakers into the voice they converse with most."""
+        """Fold unassigned speakers into the voice they converse with most.
+
+        Turn adjacency is measured against every already-mapped voice
+        (A..X), not just A/B: the extra speaker joins whichever existing
+        voice it has the most neighbouring turns with, so the render always
+        fits the available cast. Ties join the least-loaded voice among the
+        tied candidates (deterministic: voice key breaks remaining ties);
+        with no adjacency signal at all the extra joins the least-loaded
+        voice overall.
+        """
         unassigned = [label for label in distinct if label not in mapping]
         if not unassigned:
             return mapping
@@ -416,14 +459,22 @@ class DualSpeakerAttributor:
                         other = canonical[neighbour]
                         if other is not None and other in mapping:
                             adjacency[mapping[other]] += 1
-            if adjacency["A"] != adjacency["B"]:
-                mapping[label] = "A" if adjacency["A"] > adjacency["B"] else "B"
+            if adjacency:
+                top = max(adjacency.values())
+                candidates = [voice for voice, count in adjacency.items() if count == top]
+                if len(candidates) == 1:
+                    mapping[label] = candidates[0]
+                else:
+                    mapping[label] = min(
+                        candidates,
+                        key=lambda voice: (
+                            sum(1 for value in mapping.values() if value == voice),
+                            voice,
+                        ),
+                    )
             else:
-                # No adjacency signal: join the less-loaded voice to balance
-                # the cast, falling back to A.
-                load_a = sum(1 for value in mapping.values() if value == "A")
-                load_b = sum(1 for value in mapping.values() if value == "B")
-                mapping[label] = "B" if load_a > load_b else "A"
+                loads: Counter[str] = Counter(mapping.values())
+                mapping[label] = min(loads, key=lambda voice: (loads[voice], voice))
         return mapping
 
     @staticmethod
@@ -532,7 +583,9 @@ class DualSpeakerAttributor:
 
     def _assign_from_binary_clustering(self, utterances: list[str]) -> list[SpeakerDecision]:
         vectors = np.array([_embed_text(text) for text in utterances], dtype=np.float32)
-        if len(vectors) <= 1:
+        if len(vectors) == 0:
+            return []
+        if len(vectors) == 1:
             return [SpeakerDecision("A", 1.0, "single_utterance")]
 
         # One matmul builds the whole NxN cosine matrix (previously an O(N^2)
