@@ -517,6 +517,20 @@ def test_custom_reference_picker_custom_option_works_on_first_click(qt_app, monk
         window.close()
 
 
+def test_default_input_file_is_used_on_fresh_window(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        bundled = paths.input_dir / "What is, reality.txt"
+        bundled.write_text("~marker test", encoding="utf-8")
+        # The fake paths are created before MainWindow construction; rebuild
+        # explicitly so the fresh-install default is exercised.
+        window.close()
+        window, _ = _build_window(monkeypatch, tmp_path)
+        assert window.input_path.text() == str(bundled)
+    finally:
+        window.close()
+
+
 def test_inference_wizard_first_launch_is_scheduled_and_replay_actions_exist(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     window, _paths = _build_window(monkeypatch, tmp_path)
     try:
@@ -551,6 +565,52 @@ def test_inference_wizard_selection_applies_to_real_pickers(qt_app, monkeypatch:
         wizard._continue()
         assert window.inference_backend_combo.currentData() == "pytorch"
         assert window.pytorch_device_combo.currentData() == "cuda:0"
+    finally:
+        window.close()
+
+
+def test_inference_wizard_applies_folder_preferences(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        input_dir = tmp_path / "my-input"
+        output_dir = tmp_path / "my-output"
+        window._apply_inference_wizard_preferences({
+            "default_input_dir": str(input_dir),
+            "default_output_dir": str(output_dir),
+            "remember_input_folder": True,
+            "remember_output_folder": True,
+        })
+        assert window._default_input_dir == input_dir
+        assert window._default_output_dir == output_dir
+        assert window.outdir_path.text() == str(output_dir)
+        assert load_app_settings()["default_input_dir"] == str(input_dir)
+        assert load_app_settings()["default_output_dir"] == str(output_dir)
+    finally:
+        window.close()
+
+
+def test_last_used_input_is_persisted_when_typed(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        chosen = tmp_path / "chosen.txt"
+        chosen.write_text("chosen", encoding="utf-8")
+        window.input_path.setText(str(chosen))
+        window._remember_input_file_edit()
+        assert load_app_settings()["last_input_file"] == str(chosen)
+    finally:
+        window.close()
+
+
+def test_generic_output_warning_setting_round_trips(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import the_oracle.app_gui as app_gui
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        window.output_filename_warning_action.setChecked(False)
+        assert window.output_filename_warning_enabled is False
+        assert load_app_settings()["output_filename_warning"] is False
+        window.output_filename_warning_action.setChecked(True)
+        assert window.output_filename_warning_enabled is True
+        assert load_app_settings()["output_filename_warning"] is True
     finally:
         window.close()
 

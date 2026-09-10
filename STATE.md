@@ -1,6 +1,6 @@
 # The Oracle — State (completeness manifest)
 
-**Current release: V1.10 (CUDA inference + guided onboarding)**
+**Current release: V1.11 (CUDA inference + complete guided onboarding persistence)**
 
 This file is the repo's self-designated completeness record. It is the
 authoritative context for the Omega meta-skill loop (searched, never
@@ -34,14 +34,16 @@ rewritten by the loop).
     splitters (main/sections/lower) are resizable by handle or slider.
   - Workspace persistence in `app_settings.json`: theme, last input file
     (defaults to `Input/What is, reality.txt` on fresh installs when no
-    remembered file exists), ALL options + slider positions (shared and
-    per-speaker), splitter sizes, section shares, collapses, window size.
+    remembered file exists), configurable default Input/Output folders,
+    generic output filename warning preference, ALL options + slider positions
+    (shared and per-speaker), splitter sizes, section shares, collapses, and
+    window size.
   - File → Save Profile… / Load Profile… (same payload as Settings →
     Save/Load Settings).
   - One-stop manager wrappers `./oracle` (Linux/macOS) and `oracle.ps1`
     (Windows) with Install / Start / Update / Uninstall actions
     delegating to `scripts/manage_install.py` (new `update` action keeps
-    user data); version bumped to 1.0.1.
+    user data); release version now 1.1.1.
   - First-run inference onboarding (`src/the_oracle/inference_wizard.py`):
     hardware-aware CUDA/CPU/Vulkan discovery, unsuitable-GPU explanations,
     a dependency-ordered Continue-driven GUI tutorial, live control
@@ -51,8 +53,9 @@ rewritten by the loop).
     or dismissal is persisted.
   - First-open Recording Studio onboarding (`src/the_oracle/recording_wizard.py`):
     microphone and supported sample-rate selection, shared Input/ teleprompter
-    script selection, configurable Seashells/ destination, generic-name caution
-    with disable checkbox, persisted recording preferences, and a staged
+    script selection (bundled What is, reality.txt first), configurable
+    Seashells/ destination, generic-name caution with disable checkbox,
+    persisted last-used recording choices, and a staged
     dependency-ordered guide with detailed mic placement, room, plosive,
     breath, enunciation, emotional delivery, audition, and speaker-assignment
     instructions. Settings can replay the guide at any time.
@@ -60,7 +63,7 @@ rewritten by the loop).
     under all six themes offscreen and asserts no truncation (geometry
     sweep with a populated table), WCAG legibility, working section
     sliders, collapse behavior, and a full persistence round-trip; full
-    suite at 492 passing tests, deterministic smoke render green.
+    suite at 499 passing tests, deterministic smoke render green.
 
 - Chatterbox-only render pipeline: `standard`, `multilingual`, and `turbo`
   variants on PyTorch, with CPU/system-DRAM as the guaranteed fallback, an
@@ -93,7 +96,7 @@ rewritten by the loop).
 - Fidelity fixes (commit `d77c278`): assembly no longer drops chunks of
   chunked utterances (parallel loader keyed by position, regression-tested);
   monologue renders no longer require/construct an unused speaker profile.
-- Test suite: 492 passing tests after CUDA and guided-onboarding coverage.
+- Test suite: 499 passing tests after CUDA, workspace-persistence, and guided-onboarding coverage.
 - Test suite: 454 passing tests on the `feature/voice-craft-and-
 
   recording-studio` tree (416 on `main`) including the new assembly/

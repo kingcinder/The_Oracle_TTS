@@ -72,6 +72,20 @@ def test_discovery_wizard_offers_cpu_and_disables_unsuitable_cuda(qt_app):
         main_window.deleteLater()
 
 
+def test_discovery_wizard_exposes_default_folder_preferences(qt_app):
+    main_window = QWidget()
+    main_window.paths = type("Paths", (), {"input_dir": "/repo/Input", "output_dir": "/repo/Output"})()
+    wizard = InferenceSetupWizard(main_window, devices=[], mode="discovery")
+    try:
+        assert wizard.input_folder_edit.text() == "/repo/Input"
+        assert wizard.output_folder_edit.text() == "/repo/Output"
+        assert wizard.remember_input_folder.isChecked() is True
+        assert wizard.remember_output_folder.isChecked() is True
+    finally:
+        wizard.close()
+        main_window.deleteLater()
+
+
 def test_continue_reports_selected_cuda_device(qt_app):
     main_window = QWidget()
     main_window.pytorch_device_combo = QComboBox(main_window)
