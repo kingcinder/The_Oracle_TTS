@@ -163,6 +163,42 @@ COMMON_FIXES = {
     " id ": " I'd ",
 }
 
+# Placeholder that shields ellipses while aggressive mode collapses stray
+# double dots. A private-use codepoint keeps it out of real text.
+_ELLIPSIS_TOKEN = "\ue000"
+
+
+def _collapse_double_dots(text: str) -> str:
+    """Collapse ``..`` to ``.`` without mangling ellipses.
+
+    Runs of 4+ dots normalise to a single ellipsis first; the ellipsis is
+    then shielded while stray double dots collapse, so ``...`` survives and
+    ``..`` becomes ``.``.
+    """
+    text = re.sub(r"\.{4,}", "...", text)
+    text = text.replace("...", _ELLIPSIS_TOKEN)
+    text = text.replace("..", ".")
+    return text.replace(_ELLIPSIS_TOKEN, "...")
+
+
+def _correct_local_line(line: str, aggressive: bool) -> str:
+    corrected = f" {line.strip()} "
+    for source, target in COMMON_FIXES.items():
+        corrected = corrected.replace(source, target)
+    corrected = corrected.strip()
+    corrected = re.sub(r"[^\S\n]+([,.!?;:])", r"\1", corrected)
+    corrected = re.sub(r"[^\S\n]+", " ", corrected)
+    if aggressive:
+        corrected = _collapse_double_dots(corrected)
+    return corrected
+
+
+def _capitalize_first(text: str) -> str:
+    for index, character in enumerate(text):
+        if character.isalpha():
+            return text[:index] + character.upper() + text[index + 1 :]
+    return text
+
 
 class GrammarCorrector:
     def __init__(self, *, use_language_tool: bool = True) -> None:
@@ -212,7 +248,16 @@ class GrammarCorrector:
             return None
         return result.get("tool")
 
-    def correct(self, text: str, aggressive: bool = False) -> str:
+    def correct(self, text: str, aggressive: bool = False, *, preserve_newlines: bool = False) -> str:
+        """Correct grammar, falling back to local fixes without LanguageTool.
+
+        ``preserve_newlines`` keeps paragraph structure: newlines (and blank
+        lines between paragraphs) survive instead of being collapsed to
+        spaces. Defaults to False, preserving the historical single-line
+        output for existing callers. Note: when the LanguageTool path
+        succeeds its own output is returned as-is, which may normalise
+        whitespace; the flag governs the local fallback path.
+        """
         if not text.strip():
             return text
         if self._tool is not None:
@@ -223,6 +268,17 @@ class GrammarCorrector:
             except Exception:
                 pass
 
+        if preserve_newlines:
+            lines = [_correct_local_line(line, aggressive) for line in text.split("\n")]
+            # Mirror the old .strip() on the ends without collapsing
+            # interior paragraph breaks. Each line is corrected (and
+            # capitalised) independently, like its own utterance.
+            while lines and not lines[0]:
+                lines.pop(0)
+            while lines and not lines[-1]:
+                lines.pop()
+            return "\n".join(_capitalize_first(line) for line in lines)
+
         corrected = f" {text.strip()} "
         for source, target in COMMON_FIXES.items():
             corrected = corrected.replace(source, target)
@@ -232,5 +288,5 @@ class GrammarCorrector:
         if corrected:
             corrected = corrected[0].upper() + corrected[1:]
         if aggressive:
-            corrected = corrected.replace("..", ".")
+            corrected = _collapse_double_dots(corrected)
         return corrected
