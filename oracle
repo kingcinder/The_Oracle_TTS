@@ -64,7 +64,7 @@ main() {
       ;;
   esac
 
-  if [ "$action" = "start" ]; then
+  if [ "$action" = "start" ] || [ "$action" = "gui" ]; then
     action="run"
   fi
 

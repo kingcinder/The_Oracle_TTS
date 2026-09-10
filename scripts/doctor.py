@@ -459,6 +459,15 @@ def _deterministic_smoke_status(repo_root: Path) -> dict[str, Any]:
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
+    # The render call can return without raising yet produce no usable audio
+    # (deleted/moved output, empty file). Do not report success unless the
+    # smoke output file exists and is non-empty.
+    output_path = Path(result.output_path)
+    if not output_path.is_file():
+        return {"ok": False, "error": f"Smoke render produced no output file at {output_path}"}
+    if output_path.stat().st_size == 0:
+        return {"ok": False, "error": f"Smoke render output is empty at {output_path}"}
+
     return {
         "ok": True,
         "runtime_seconds": round(time.perf_counter() - started, 3),
