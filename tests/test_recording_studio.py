@@ -152,7 +152,7 @@ def test_successful_take_auto_auditions_and_enables_actions(tmp_path, monkeypatc
     dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
     assert dialog.audition_check.isChecked() is True
     assert dialog.play_button.isEnabled() is False
-    assert dialog.assign_a_button.isEnabled() is False
+    assert dialog.assign_speaker_button.isEnabled() is False
 
     audio = np.full(4800, 0.2, dtype=np.float32)
     dialog._on_captured(audio)  # simulate a finished take arriving from the worker
@@ -161,8 +161,8 @@ def test_successful_take_auto_auditions_and_enables_actions(tmp_path, monkeypatc
     assert saved.exists()
     assert dialog._last_saved_path == saved
     assert dialog.play_button.isEnabled() is True
-    assert dialog.assign_a_button.isEnabled() is True
-    assert dialog.assign_b_button.isEnabled() is True
+    assert dialog.assign_speaker_button.isEnabled() is True
+    assert dialog.assign_speaker_combo.isEnabled() is True
     player = _FakeMediaPlayer.last
     assert player is not None and player.played is True
     assert player.source.toLocalFile().endswith("Seashell_No_1.wav")
@@ -357,11 +357,13 @@ def test_assign_to_speaker_invokes_callback_with_path(tmp_path, monkeypatch, qt_
     saved = voice / "Seashell_No_1.wav"
     saved.write_bytes(b"\x00" * 44)
     dialog = RecordingStudioDialog(repo, voice, inputs, on_assign=lambda speaker, path: assigned.append((speaker, path)))
+    dialog.set_assign_speakers([("A", ""), ("B", "")])
     dialog._last_saved_path = saved
     dialog._refresh_take_actions()
-    assert dialog.assign_a_button.isEnabled() is True
-    assert dialog.assign_b_button.isEnabled() is True
-    dialog._use_for_speaker("A")
+    assert dialog.assign_speaker_button.isEnabled() is True
+    assert dialog.assign_speaker_combo.count() == 2
+    dialog.assign_speaker_combo.setCurrentIndex(0)
+    dialog._assign_to_selected_speaker()
     assert assigned == [("A", saved)]
 
 
@@ -524,7 +526,7 @@ def test_main_window_recording_studio_action_and_close_refresh(monkeypatch, tmp_
     window._refresh_reference_pickers = lambda: refresh_calls.append(1)
 
     window.open_recording_studio()
-    dialog = window._recording_studio
+    (dialog,) = window._recording_studios
     assert dialog is not None
     # Closing with no successful recording must still refresh the pickers.
     dialog.close()
@@ -537,7 +539,7 @@ def test_main_window_reports_saved_seashell_and_refreshes(monkeypatch, tmp_path,
     window._refresh_reference_pickers = lambda: refresh_calls.append(1)
 
     window.open_recording_studio()
-    dialog = window._recording_studio
+    (dialog,) = window._recording_studios
     recorded = paths.voice_dir / "Seashell_No_1.wav"
     recorded.write_bytes(b"\x00" * 44)  # only the path matters for this test
     dialog._last_saved_path = recorded
