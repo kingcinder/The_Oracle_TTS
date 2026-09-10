@@ -58,6 +58,21 @@ def load_audio(path: str | Path) -> tuple[np.ndarray, int]:
     return array, sample_rate
 
 
+def _crossfade_overlap(prev_len: int, cur_len: int, crossfade_samples: int) -> int:
+    """Single source of truth for the per-join crossfade overlap.
+
+    Both the buffer-size precomputation and the buffer fill use this, so the
+    allocated buffer always matches what the fill writes: no overruns when a
+    stem is shorter than the requested crossfade, and no silent tail when the
+    fill applies less overlap than allocation assumed. The overlap is clamped
+    to the real content lengths on both sides, so a crossfade only ever mixes
+    actual audio — never the previous segment's trailing pause zeros.
+    """
+    if crossfade_samples <= 0:
+        return 0
+    return max(0, min(crossfade_samples, prev_len, cur_len))
+
+
 def save_wav(path: str | Path, audio: np.ndarray, sample_rate: int) -> None:
     sf.write(str(path), np.asarray(audio, dtype=np.float32), sample_rate, format="WAV")
 
@@ -101,20 +116,26 @@ def assemble_dialogue(
         )
 
     # --- Phase 2: pre-compute total buffer size (avoids repeated concatenate copies) ---
+    # The per-join overlap comes from _crossfade_overlap — the same function
+    # the fill phase uses — so allocation and fill can never disagree.
     total_samples = 0
     for i, seg in enumerate(segments):
         audio = loaded[i]
-        pause_samples = int(final_rate * seg.pause_after_ms / 1000)
+        pause_samples = max(0, int(final_rate * seg.pause_after_ms / 1000))
         if i == 0:
             total_samples += len(audio) + pause_samples
         else:
-            prev_audio = loaded[i - 1]
-            overlap = min(crossfade_samples, len(prev_audio), len(audio))
+            overlap = _crossfade_overlap(len(loaded[i - 1]), len(audio), crossfade_samples)
             total_samples += len(audio) - overlap + pause_samples
     buf = np.zeros(total_samples, dtype=np.float32)
 
     # --- Phase 3: fill the buffer (crossfade + pauses, zero-copy) ---
+    # prev_content_end / prev_content_len track the previous segment's AUDIO
+    # (excluding its trailing pause): the crossfade mixes the tail of that
+    # audio with the head of the next, never the pause zeros in between.
     write_pos = 0
+    prev_content_end = 0
+    prev_content_len = 0
     segment_diagnostics: list[dict[str, Any]] = []
     join_diagnostics: list[dict[str, Any]] = []
     previous_segment: AudioSegment | None = None
@@ -128,27 +149,28 @@ def assemble_dialogue(
             buf[: len(audio)] = audio
             write_pos = len(audio)
         else:
-            if crossfade_samples > 0 and write_pos >= crossfade_samples and len(audio) > crossfade_samples:
-                applied_crossfade_samples = crossfade_samples
-                overlap_start = write_pos - crossfade_samples
-                # In-place crossfade mix
-                ramp_out = np.linspace(1.0, 0.0, crossfade_samples, dtype=np.float32)
-                ramp_in = np.linspace(0.0, 1.0, crossfade_samples, dtype=np.float32)
-                buf[overlap_start:write_pos] *= ramp_out
-                buf[overlap_start:write_pos] += audio[:crossfade_samples] * ramp_in
-                remaining = len(audio) - crossfade_samples
-                buf[write_pos:write_pos + remaining] = audio[crossfade_samples:]
-                write_pos += remaining
-            else:
-                buf[write_pos:write_pos + len(audio)] = audio
-                write_pos += len(audio)
+            overlap = _crossfade_overlap(prev_content_len, len(audio), crossfade_samples)
+            applied_crossfade_samples = overlap
+            content_start_sample = prev_content_end - overlap
+            if overlap > 0:
+                # In-place crossfade mix over the previous content's tail
+                ramp_out = np.linspace(1.0, 0.0, overlap, dtype=np.float32)
+                ramp_in = np.linspace(0.0, 1.0, overlap, dtype=np.float32)
+                region = buf[content_start_sample:prev_content_end]
+                region *= ramp_out
+                region += audio[:overlap] * ramp_in
+            remaining = len(audio) - overlap
+            buf[write_pos : write_pos + remaining] = audio[overlap:]
+            write_pos += remaining
 
         content_end_sample = write_pos
-        pause_samples = int(final_rate * segment.pause_after_ms / 1000)
+        pause_samples = max(0, int(final_rate * segment.pause_after_ms / 1000))
         if pause_samples > 0:
             # zeros already in buffer; just advance
             write_pos += pause_samples
         final_end_sample = write_pos
+        prev_content_end = content_end_sample
+        prev_content_len = len(audio)
 
         segment_diagnostics.append(
             {
@@ -170,6 +192,9 @@ def assemble_dialogue(
             }
         )
         if previous_segment is not None:
+            # The reported join window is the region that was actually mixed:
+            # [content_start_sample, content_start_sample + applied_overlap].
+            # (content_start_sample is the mix region's start by construction.)
             join_diagnostics.append(
                 {
                     "join_number": len(join_diagnostics) + 1,

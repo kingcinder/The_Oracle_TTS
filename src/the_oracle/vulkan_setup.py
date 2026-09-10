@@ -147,17 +147,27 @@ def _run_script_streaming(
                 _terminate_group(proc)
                 raise VulkanSetupCancelled()
     finally:
-        # Bounded reap: a script that ignores SIGTERM must not hang the GUI
-        # thread forever, so escalate to a group SIGKILL after a short grace
-        # period (killpg so grandchildren that ignored SIGTERM die too).
+        # Reap the child on every path. Every wait/kill here is guarded so
+        # cleanup can never raise and mask an in-flight exception — notably
+        # VulkanSetupCancelled, which must propagate as cancellation rather
+        # than surfacing as a cleanup error. (Previously the second
+        # proc.wait(timeout=5) could raise TimeoutExpired, which both hid the
+        # cancellation and left the child unreaped.)
         try:
             proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
+        except Exception:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except Exception:
                 pass
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
     return proc.returncode, "\n".join(lines)
 
 

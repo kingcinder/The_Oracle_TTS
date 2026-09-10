@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from the_oracle.models.cache import atomic_write
 from the_oracle.models.project import RenderPlan
 from the_oracle.pipeline import RenderSettings, SpeakerSettings
 
@@ -111,8 +113,12 @@ def build_saved_project(plan: RenderPlan, render_settings: RenderSettings, speak
 def save_project_manifest(path: str | Path, project: SavedProject) -> Path:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(project.to_dict(), indent=2, ensure_ascii=True), encoding="utf-8")
-    return destination
+    if destination.exists():
+        # Keep the previous good manifest: an interrupted or unloadable new
+        # write must never destroy the last loadable state.
+        shutil.copy2(destination, destination.with_name(destination.name + ".bak"))
+    text = json.dumps(project.to_dict(), indent=2, ensure_ascii=True)
+    return atomic_write(destination, lambda tmp: tmp.write_text(text, encoding="utf-8"))
 
 
 def load_project_manifest(path: str | Path) -> SavedProject:
@@ -156,7 +162,16 @@ def saved_project_from_dict(payload: dict[str, Any]) -> SavedProject:
     if len(speakers_payload) > 24:
         raise ProjectManifestError("Project manifest can carry at most 24 speaker voices.")
 
-    render_settings = RenderSettings(**payload["render_settings"])
+    # Forward-compatible: unknown render-settings fields (added by newer
+    # versions) are ignored instead of crashing the load. Malformed *known*
+    # fields still raise via RenderSettings.__post_init__ validation.
+    render_settings_fields = set(RenderSettings.__dataclass_fields__)
+    render_settings_payload = payload["render_settings"]
+    if not isinstance(render_settings_payload, dict):
+        raise ProjectManifestError("Project manifest render_settings must be an object.")
+    render_settings = RenderSettings(
+        **{key: value for key, value in render_settings_payload.items() if key in render_settings_fields}
+    )
     speaker_settings = {
         speaker: SpeakerSettings(
             reference_path=value["reference_path"],
