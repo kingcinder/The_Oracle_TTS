@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from time import perf_counter, time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -129,6 +130,12 @@ class ChatterboxEngine:
         self._loaded_conditioning: dict[str, Any] = {}
         self._load_seconds: float | None = None
         self._load_wall: float | None = None
+        # Guards the shared model object in synthesize(): assigning
+        # ``model.conds`` mutates engine-global state, so concurrent
+        # synthesize calls on one engine would cross-contaminate voices
+        # (utterance B rendered with utterance A's conditioning). The lock
+        # serializes the conds-swap + generate pair.
+        self._synthesize_lock = threading.Lock()
 
     @property
     def engine_version(self) -> str:
@@ -200,6 +207,12 @@ class ChatterboxEngine:
                 "reference_hash": cached_reference.original_hash,
                 "variant": self.variant,
                 "conditioning_exaggeration": settings.exaggeration,
+                # norm_loudness changes the turbo conditioning payload, so it
+                # must be part of the key: without it a cached entry prepared
+                # with the opposite value would be silently reused. Scoped to
+                # turbo so the standard/multilingual cache keys (and existing
+                # caches) stay byte-identical.
+                "norm_loudness": settings.norm_loudness if self.variant == "turbo" else None,
             }
         )
         condition_path = project_cache.conditioning_path(cache_id)
@@ -234,36 +247,43 @@ class ChatterboxEngine:
                 conds = self._condition_cls.load(conditioning.path)
             conds = conds.to(self.device)
             self._loaded_conditioning[cache_key] = conds
-        self.model.conds = conds
 
-        kwargs: dict[str, Any] = {
-            "text": text,
-            "audio_prompt_path": None,
-            "cfg_weight": settings.cfg_weight,
-            "exaggeration": settings.exaggeration,
-            "temperature": settings.temperature,
-            "repetition_penalty": settings.repetition_penalty,
-            "min_p": settings.min_p,
-            "top_p": settings.top_p,
-        }
-        if self.variant == "multilingual":
-            kwargs["language_id"] = settings.language
-        if self.variant == "turbo":
-            kwargs["top_k"] = settings.top_k
-            kwargs["norm_loudness"] = settings.norm_loudness
-        if self.seed is not None:
-            # Chatterbox samples via torch.multinomial, which draws from
-            # torch's global RNG. Seeding right before generate() makes every
-            # utterance bit-reproducible across runs (same inputs -> same
-            # audio), independent of how many tokens a previous utterance
-            # consumed from the stream.
-            try:
-                import torch
+        # The conds assignment below mutates the SHARED model object: the
+        # conditioning stays installed for the whole generate() call, so the
+        # swap and the inference must be serialized as one critical section.
+        # Otherwise two threads synthesizing different voices race and each
+        # can render with the other's conditioning.
+        with self._synthesize_lock:
+            self.model.conds = conds
 
-                torch.manual_seed(self.seed)
-            except Exception:
-                pass
-        audio = self.model.generate(**kwargs)
+            kwargs: dict[str, Any] = {
+                "text": text,
+                "audio_prompt_path": None,
+                "cfg_weight": settings.cfg_weight,
+                "exaggeration": settings.exaggeration,
+                "temperature": settings.temperature,
+                "repetition_penalty": settings.repetition_penalty,
+                "min_p": settings.min_p,
+                "top_p": settings.top_p,
+            }
+            if self.variant == "multilingual":
+                kwargs["language_id"] = settings.language
+            if self.variant == "turbo":
+                kwargs["top_k"] = settings.top_k
+                kwargs["norm_loudness"] = settings.norm_loudness
+            if self.seed is not None:
+                # Chatterbox samples via torch.multinomial, which draws from
+                # torch's global RNG. Seeding right before generate() makes every
+                # utterance bit-reproducible across runs (same inputs -> same
+                # audio), independent of how many tokens a previous utterance
+                # consumed from the stream.
+                try:
+                    import torch
+
+                    torch.manual_seed(self.seed)
+                except Exception:
+                    pass
+            audio = self.model.generate(**kwargs)
         if hasattr(audio, "detach"):
             audio = audio.detach().cpu().numpy()
         audio_array = np.asarray(audio, dtype=np.float32).squeeze()

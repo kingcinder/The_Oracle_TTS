@@ -10,7 +10,9 @@
 
 param(
     [Parameter(Position = 0)]
-    [string]$Action = "help"
+    [string]$Action = "help",
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArgs = @()
 )
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -30,9 +32,17 @@ The Oracle - manager
 }
 
 function Select-Python {
-    foreach ($candidate in @("py -3.12", "py -3.11", "python")) {
+    # Each candidate is a token list so the chosen interpreter can be invoked
+    # with the call operator (&) instead of Invoke-Expression: nothing the
+    # user controls (including the checkout path) is ever re-parsed as code.
+    $candidates = @(
+        ,@("py", "-3.12"),
+        ,@("py", "-3.11"),
+        ,@("python")
+    )
+    foreach ($candidate in $candidates) {
         try {
-            $null = Invoke-Expression "$candidate -c `"import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[: 3] < (3, 13) else 1)`"" 2>$null
+            & $candidate[0] @($candidate | Select-Object -Skip 1) -c "import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[: 3] < (3, 13) else 1)" 2>$null
             if ($LASTEXITCODE -eq 0) { return $candidate }
         }
         catch { continue }
@@ -58,11 +68,14 @@ switch ($Action.ToLower()) {
     }
 }
 
-$python = Select-Python
-if (-not $python) {
+$pythonTokens = @(Select-Python)
+if ($pythonTokens.Count -eq 0) {
     Write-Host "FAIL: Need Python 3.11 or 3.12 (try: py -3.12)." -ForegroundColor Red
     exit 1
 }
 
-Invoke-Expression "$python `"$RepoRoot\scripts\manage_install.py`" $managed"
+# Safe invocation: the interpreter tokens come from the fixed candidate list
+# above, and every extra argument the user passed is forwarded verbatim.
+$invokeArgs = @($pythonTokens | Select-Object -Skip 1) + @("$RepoRoot\scripts\manage_install.py", $managed) + @($RemainingArgs)
+& $pythonTokens[0] @invokeArgs
 exit $LASTEXITCODE

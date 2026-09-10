@@ -67,6 +67,15 @@ from the_oracle.gui_settings import (
     save_gui_settings,
     save_template,
 )
+from the_oracle.gui_utils import (
+    MAX_CAST_SPEAKERS,
+    CastModel,
+    kill_process_tree,
+    next_speaker_key,
+    normalize_cast_keys,
+    recording_target_path,
+    sanitize_recording_filename,
+)
 from the_oracle.audio import recorder
 from the_oracle.gui_themes import DEFAULT_THEME, THEMES, apply_theme
 from the_oracle.gui_tooltips import install_ctrl_hover_help
@@ -711,8 +720,29 @@ class ModelDownloadThread(QThread):
             try:
                 stdout, stderr = proc.communicate(timeout=_MODEL_DOWNLOAD_TIMEOUT)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                stdout, stderr = proc.communicate()
+                # Kill the whole process group, not just the bash wrapper:
+                # the script spawns a python child that inherits our pipes, so
+                # killing only the direct child would leave communicate()
+                # blocked forever on the inherited descriptors.
+                kill_process_tree(proc)
+                try:
+                    stdout, stderr = proc.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    # A dying grandchild still holds the pipes open. Abandon
+                    # the output rather than block this worker thread forever;
+                    # the direct child is already dead, so reap it to avoid a
+                    # zombie and close our pipe copies.
+                    stdout, stderr = "", ""
+                    for stream in (proc.stdout, proc.stderr):
+                        try:
+                            if stream is not None:
+                                stream.close()
+                        except Exception:
+                            pass
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
                 self.failed.emit("Model download timed out (the download process was stopped).")
                 return
         except Exception as exc:
@@ -1061,16 +1091,17 @@ class RecordingStudioDialog(QDialog):
         self.play_button.setEnabled(False)
         self.play_button.setToolTip("Play the last saved take again.")
         self.play_button.clicked.connect(self._play_take)
-        self.assign_a_button = QPushButton("Use for Speaker A")
-        self.assign_b_button = QPushButton("Use for Speaker B")
-        for button in (self.assign_a_button, self.assign_b_button):
-            button.setEnabled(False)
-            button.setToolTip(
-                "Point that speaker's voice at the Seashell you just recorded "
-                "(the voice pickers refresh automatically)."
-            )
-        self.assign_a_button.clicked.connect(lambda: self._use_for_speaker("A"))
-        self.assign_b_button.clicked.connect(lambda: self._use_for_speaker("B"))
+        self.assign_speaker_combo = QComboBox()
+        self.assign_speaker_combo.setToolTip(
+            "Which speaker's voice to point at the Seashell you just recorded "
+            "(the voice pickers refresh automatically)."
+        )
+        self.assign_speaker_button = QPushButton("Use for Speaker")
+        self.assign_speaker_button.setEnabled(False)
+        self.assign_speaker_button.setToolTip(
+            "Point the selected speaker's voice at the Seashell you just recorded."
+        )
+        self.assign_speaker_button.clicked.connect(self._assign_to_selected_speaker)
 
         self._elapsed_seconds = 0
         self._elapsed_timer = QTimer(self)
@@ -1118,8 +1149,8 @@ class RecordingStudioDialog(QDialog):
         take_row = QHBoxLayout()
         take_row.addWidget(self.audition_check)
         take_row.addWidget(self.play_button)
-        take_row.addWidget(self.assign_a_button)
-        take_row.addWidget(self.assign_b_button)
+        take_row.addWidget(self.assign_speaker_combo)
+        take_row.addWidget(self.assign_speaker_button)
         take_row.addStretch(1)
         capture_layout.addLayout(take_row)
         capture_layout.addWidget(self.status)
@@ -1203,17 +1234,25 @@ class RecordingStudioDialog(QDialog):
 
     def _refresh_target(self) -> None:
         folder = self.outdir_combo.currentText().strip() or str(self.voice_dir)
-        stem = Path(self.name_edit.text().strip()).stem
-        if not stem:
-            stem = recorder.next_seashell_name(folder)
+        if not self.name_edit.text().strip():
+            # Empty name: fall back to the next free auto-name.
             self._name_edited = False
-            self.name_edit.setText(stem)
-        suffix = Path(self.name_edit.text().strip()).suffix.lower()
-        if suffix not in (".wav", ""):
-            self.name_edit.setText(f"{stem}{suffix}")
-        if not self.name_edit.text().lower().endswith(".wav"):
-            self.name_edit.setText(f"{self.name_edit.text()}.wav")
-        self._target_path = Path(folder) / self.name_edit.text().strip()
+            self.name_edit.blockSignals(True)
+            try:
+                self.name_edit.setText(f"{recorder.next_seashell_name(folder)}.wav")
+            finally:
+                self.name_edit.blockSignals(False)
+        # Sanitize the typed name so path separators / '..' can never escape
+        # the chosen output folder (the name is confined to its final path
+        # segment and forced to a .wav extension).
+        safe = sanitize_recording_filename(self.name_edit.text())
+        if safe != self.name_edit.text():
+            self.name_edit.blockSignals(True)
+            try:
+                self.name_edit.setText(safe)
+            finally:
+                self.name_edit.blockSignals(False)
+        self._target_path = Path(folder) / safe
         self._warn_if_overwrite()
 
     def _warn_if_overwrite(self) -> None:
@@ -1249,7 +1288,9 @@ class RecordingStudioDialog(QDialog):
             return
         # Never overwrite: if the typed name collides and the user declines the
         # overwrite prompt, fall back to the next free Seashell_No_x name.
-        target = Path(self._out_folder()) / self.name_edit.text().strip()
+        # The name is sanitized (no separators / '..') so the target can never
+        # escape the chosen output folder.
+        target = recording_target_path(self._out_folder(), self.name_edit.text().strip())
         if target.exists():
             answer = QMessageBox.question(
                 self,
@@ -1263,7 +1304,7 @@ class RecordingStudioDialog(QDialog):
                 self.name_edit.setText(fresh)
                 self._name_edited = True
                 self._refresh_target()
-        self._target_path = Path(self._out_folder()) / self.name_edit.text().strip()
+        self._target_path = recording_target_path(self._out_folder(), self.name_edit.text().strip())
         self._stop_requested = False
         self._elapsed_seconds = 0
         self._elapsed_label_text()
@@ -1359,10 +1400,30 @@ class RecordingStudioDialog(QDialog):
 
     # -- audition + assign --------------------------------------------------
 
+    def set_assign_speakers(self, items: list[tuple[str, str]]) -> None:
+        """Populate the 'Use for Speaker' picker from the current cast.
+
+        ``items`` is ``[(key, name), ...]``; the combo shows "A (Alice)" style
+        labels and carries the speaker key as item data.
+        """
+        self.assign_speaker_combo.blockSignals(True)
+        try:
+            self.assign_speaker_combo.clear()
+            for key, name in items:
+                label = f"{key} ({name})" if name else key
+                self.assign_speaker_combo.addItem(label, key)
+        finally:
+            self.assign_speaker_combo.blockSignals(False)
+
+    def _assign_to_selected_speaker(self) -> None:
+        key = self.assign_speaker_combo.currentData()
+        if key:
+            self._use_for_speaker(str(key))
+
     def _set_take_actions_enabled(self, enabled: bool) -> None:
         self.play_button.setEnabled(enabled and self._last_saved_path is not None)
-        self.assign_a_button.setEnabled(enabled and self._last_saved_path is not None)
-        self.assign_b_button.setEnabled(enabled and self._last_saved_path is not None)
+        self.assign_speaker_combo.setEnabled(enabled and self._last_saved_path is not None)
+        self.assign_speaker_button.setEnabled(enabled and self._last_saved_path is not None)
 
     def _refresh_take_actions(self) -> None:
         self._set_take_actions_enabled(True)
@@ -1773,6 +1834,308 @@ class SpeakerGroup(QHSectionGroup):
             self.on_save_blend(self)
 
 
+def _speaker_settings_from_group(
+    group: SpeakerGroup,
+    variant: str,
+    crossfade_ms: int,
+) -> SpeakerSettings:
+    """Read one speaker panel's widgets into engine :class:`SpeakerSettings`.
+
+    Module-level so both the main window and the cast-management dialog (which
+    owns its own panels) build settings identically.
+    """
+    blend_target = group.blend_target_path()
+    return SpeakerSettings(
+        reference_path=group.reference_path.text(),
+        voice_settings=VoiceSettings(
+            variant=variant,
+            language=group.language_combo.currentData() or "en",
+            cfg_weight=group.cfg_weight.value(),
+            exaggeration=group.exaggeration.value(),
+            temperature=group.temperature.value(),
+            emotion_intensity=group.emotion_intensity.value(),
+            naturalness=group.naturalness.value(),
+            pause_ms=group.pause_spin.value(),
+            crossfade_ms=crossfade_ms,
+        ),
+        blend_references=[group.reference_path.text(), blend_target] if blend_target else [],
+        blend_weight=group.blend_weight_spin.value() / 100.0,
+        blend_mode=group.blend_mode_combo.currentData() or "mix",
+    )
+
+
+def _apply_speaker_settings_to_group(group: SpeakerGroup, settings: SpeakerSettings) -> None:
+    """Write engine :class:`SpeakerSettings` back into one speaker panel's widgets.
+
+    Covers the hybrid (blend) controls too, so a saved blend target, dominance
+    weight, and combine mode survive a settings round-trip instead of being
+    silently reset.
+    """
+    voice = VoiceSettings.from_mapping(settings.voice_settings)
+    group.reference_path.setText(settings.reference_path)
+    language_index = group.language_combo.findData(voice.language)
+    if language_index >= 0:
+        group.language_combo.setCurrentIndex(language_index)
+    group.cfg_weight.setValue(voice.cfg_weight)
+    group.exaggeration.setValue(voice.exaggeration)
+    group.temperature.setValue(voice.temperature)
+    group.emotion_intensity.setValue(voice.emotion_intensity)
+    group.naturalness.setValue(voice.naturalness)
+    group.pause_spin.setValue(voice.pause_ms)
+    group.blend_weight_spin.setValue(int(round(settings.blend_weight * 100)))
+    mode_index = group.blend_mode_combo.findData(settings.blend_mode)
+    if mode_index >= 0:
+        group.blend_mode_combo.setCurrentIndex(mode_index)
+    group.select_blend_path(settings.blend_references[1] if len(settings.blend_references) >= 2 else "")
+
+
+class _CastRow:
+    """One editable speaker row inside the cast-management dialog."""
+
+    def __init__(self, key: str, group: SpeakerGroup) -> None:
+        self.key = key
+        self.group = group
+        self.container = QWidget()
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        header = QHBoxLayout()
+        self.key_label = QLabel(f"Speaker {key}")
+        self.key_label.setStyleSheet("font-weight: 700;")
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Character name (optional)")
+        self.name_edit.setToolTip(
+            "Optional display name for this speaker, shown in the main window's cast summary."
+        )
+        self.remove_button = QPushButton("Remove")
+        self.remove_button.setToolTip(
+            "Remove this speaker from the cast. Removing every speaker but one "
+            "returns the main window to monologue mode."
+        )
+        header.addWidget(self.key_label)
+        header.addWidget(self.name_edit, 1)
+        header.addWidget(self.remove_button)
+        layout.addLayout(header)
+        layout.addWidget(group)
+
+    def set_name(self, name: str) -> None:
+        self.name_edit.blockSignals(True)
+        try:
+            self.name_edit.setText(name)
+        finally:
+            self.name_edit.blockSignals(False)
+        self._retitle(name)
+
+    def _retitle(self, name: str) -> None:
+        name = (name or "").strip()
+        self.group.setTitle(f"Speaker {self.key} — {name}" if name else f"Speaker {self.key}")
+
+
+class CastManagementDialog(QDialog):
+    """Modal window for managing the speaker cast.
+
+    The main window keeps a single narrator-oriented layout; when the user
+    wants more than one speaker, this dialog opens and every cast member gets
+    a full :class:`SpeakerGroup` panel (voice reference picker, hybrid second
+    voice, dominance weight, combine mode, and all voice sliders) plus an
+    optional character name. Speakers can be added freely up to the engine's
+    voice capacity (:data:`MAX_CAST_SPEAKERS`); the narrator (A) can never be
+    removed — deleting every other speaker is the graceful path back to
+    monologue.
+
+    Changes apply when the window closes (Done or the window's close button);
+    the main window then rebuilds its panels from the dialog's cast.
+    """
+
+    def __init__(self, main_window: "MainWindow") -> None:
+        super().__init__(main_window)
+        self._main = main_window
+        self.setWindowTitle("Manage cast")
+        self.setModal(True)
+        self.resize(760, 680)
+
+        # Snapshot the cast; the dialog edits the snapshot and hands it back
+        # on close, so the main window's live panels are never half-edited.
+        self._model = CastModel.from_parts(
+            main_window.cast_keys(),
+            main_window.speaker_names(),
+            {key: self._settings_to_dict(settings) for key, settings in main_window.speaker_settings().items()},
+        )
+        self._variant = main_window.variant_combo.currentText()
+
+        layout = QVBoxLayout(self)
+        info = QLabel(
+            "Each speaker gets a full voice panel: reference voice, hybrid second voice, "
+            "and voice sliders. Changes apply when this window closes. "
+            f"The engine voices up to {MAX_CAST_SPEAKERS} speakers distinctly."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        self._rows_host = QWidget()
+        self._rows_layout = QVBoxLayout(self._rows_host)
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.addStretch(1)
+        scroll.setWidget(self._rows_host)
+        layout.addWidget(scroll, 1)
+
+        buttons = QHBoxLayout()
+        self.add_button = QPushButton("+ Add speaker")
+        self.add_button.setToolTip("Add another speaker to the cast.")
+        self.add_button.clicked.connect(self._add_speaker)
+        self.done_button = QPushButton("Done")
+        self.done_button.setDefault(True)
+        self.done_button.clicked.connect(self._apply_and_close)
+        buttons.addWidget(self.add_button)
+        buttons.addStretch(1)
+        buttons.addWidget(self.done_button)
+        layout.addLayout(buttons)
+
+        self._rows: dict[str, _CastRow] = {}
+        for key in self._model.keys():
+            self._add_row(key)
+        self._refresh_pickers()
+        self._refresh_add_button()
+
+    # -- row management ---------------------------------------------------
+
+    def _add_row(self, key: str) -> None:
+        member = next((m for m in self._model.members if m.key == key), None)
+        group = SpeakerGroup(key, self._main.paths.voice_dir, on_save_blend=self._on_save_blend)
+        if member is not None:
+            _apply_speaker_settings_to_group(group, self._dict_to_settings(member.settings))
+        row = _CastRow(key, group)
+        if member is not None:
+            row.set_name(member.name)
+        # The narrator anchors the cast (and monologue mode); it can never be
+        # removed, so its Remove button is disabled with an explanation.
+        if key == "A":
+            row.remove_button.setEnabled(False)
+            row.remove_button.setToolTip("The narrator (Speaker A) can't be removed.")
+        else:
+            row.remove_button.clicked.connect(lambda _checked=False, k=key: self._remove_speaker(k))
+        row.name_edit.textChanged.connect(lambda _text, k=key: self._rename_speaker(k))
+        self._rows[key] = row
+        # Insert above the bottom stretch item.
+        self._rows_layout.insertWidget(self._rows_layout.count() - 1, row.container)
+
+    def _add_speaker(self) -> None:
+        member = self._model.add()
+        if member is None:
+            QMessageBox.information(
+                self,
+                "Cast Full",
+                f"The engine voices up to {MAX_CAST_SPEAKERS} speakers distinctly, "
+                "so the cast can't grow further.",
+            )
+            return
+        member.settings = self._settings_to_dict(
+            SpeakerSettings(voice_settings=VoiceSettings(variant=self._variant))
+        )
+        self._add_row(member.key)
+        self._refresh_pickers()
+        self._refresh_add_button()
+
+    def _remove_speaker(self, key: str) -> None:
+        if not self._model.remove(key):
+            return
+        row = self._rows.pop(key, None)
+        if row is not None:
+            self._rows_layout.removeWidget(row.container)
+            row.container.deleteLater()
+        self._refresh_add_button()
+
+    def _rename_speaker(self, key: str) -> None:
+        row = self._rows.get(key)
+        if row is None:
+            return
+        name = row.name_edit.text().strip()
+        self._model.rename(key, name)
+        row._retitle(name)
+
+    def _refresh_add_button(self) -> None:
+        full = next_speaker_key(self._model.keys()) is None
+        self.add_button.setEnabled(not full)
+        if full:
+            self.add_button.setToolTip(
+                f"The engine voices up to {MAX_CAST_SPEAKERS} speakers distinctly."
+            )
+
+    # -- blends / pickers ---------------------------------------------------
+
+    def _on_save_blend(self, group: SpeakerGroup) -> None:
+        self._main._save_blend_as_voice(group)
+        self._refresh_pickers()
+
+    def _refresh_pickers(self) -> None:
+        defaults = default_voice_choices(self._main.repo_root, limit=40)
+        blends = blend_voice_choices(self._main.paths.profile_dir)
+        recents = [path for path in load_recent_reference_paths() if Path(path).exists()]
+        for row in self._rows.values():
+            group = row.group
+            group.set_reference_choices(defaults, recents, group.reference_path.text(), blends=blends)
+            group.set_blend_choices(defaults, recents, group.blend_target_path(), blends=blends)
+
+    # -- apply / close ------------------------------------------------------
+
+    @staticmethod
+    def _settings_to_dict(settings: SpeakerSettings) -> dict:
+        voice = settings.voice_settings
+        voice_dict = voice.to_dict() if hasattr(voice, "to_dict") else dict(voice)
+        return {
+            "reference_path": settings.reference_path,
+            "voice_settings": voice_dict,
+            "emotion_reference_paths": dict(settings.emotion_reference_paths),
+            "blend_references": list(settings.blend_references),
+            "blend_weight": settings.blend_weight,
+            "blend_mode": settings.blend_mode,
+        }
+
+    @staticmethod
+    def _dict_to_settings(data: dict) -> SpeakerSettings:
+        data = data if isinstance(data, dict) else {}
+        return SpeakerSettings(
+            reference_path=str(data.get("reference_path", "")),
+            voice_settings=dict(data.get("voice_settings", {})),
+            emotion_reference_paths=dict(data.get("emotion_reference_paths", {})),
+            blend_references=list(data.get("blend_references", []) or []),
+            blend_weight=float(data.get("blend_weight", 0.5)),
+            blend_mode=str(data.get("blend_mode", "mix")),
+        )
+
+    def _collect(self) -> tuple[list[str], dict[str, str], dict[str, SpeakerSettings]]:
+        """Read every row's widgets back into (keys, names, settings)."""
+        keys: list[str] = []
+        names: dict[str, str] = {}
+        settings: dict[str, SpeakerSettings] = {}
+        variant = self._main.variant_combo.currentText()
+        crossfade_ms = self._main.crossfade_spin.value()
+        for key in self._model.keys():
+            row = self._rows.get(key)
+            if row is None:
+                continue
+            keys.append(key)
+            names[key] = row.name_edit.text().strip()
+            settings[key] = _speaker_settings_from_group(row.group, variant, crossfade_ms)
+        return keys, names, settings
+
+    def _apply_and_close(self) -> None:
+        keys, names, settings = self._collect()
+        self._main.apply_cast(keys, names, settings)
+        self.accept()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt casing)
+        # The window close button applies pending edits, just like Done:
+        # closing with one speaker left gracefully returns the main window to
+        # monologue mode. No worker threads live here, so close is immediate.
+        try:
+            keys, names, settings = self._collect()
+            self._main.apply_cast(keys, names, settings)
+        finally:
+            super().closeEvent(event)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -1806,6 +2169,15 @@ class MainWindow(QMainWindow):
         self.current_project_path: Path | None = None
         self.render_worker: RenderWorker | None = None
         self.preview_worker: PreviewWorker | None = None
+        # Speaker cast: ordered voice keys (["A", "B"] by default) plus
+        # optional character names. The cast-management dialog edits these;
+        # the main window's panels always mirror them.
+        self._cast: list[str] = ["A", "B"]
+        self._speaker_names: dict[str, str] = {}
+        # Open child windows, tracked per-instance so no worker or completion
+        # event is ever orphaned when several are open at once.
+        self._recording_studios: set[RecordingStudioDialog] = set()
+        self._cast_dialogs: set[CastManagementDialog] = set()
         self._vulkan_probe_thread: VulkanDeviceProbeThread | None = None
         self._vulkan_devices_probed = False
         self._vulkan_preflight_thread: VulkanPreflightThread | None = None
@@ -1958,6 +2330,24 @@ class MainWindow(QMainWindow):
         self._register_section("speaker_a", self.speaker_a, self._sections_splitter, 1)
         self._register_section("speaker_b", self.speaker_b, self._sections_splitter, 2)
         self._sections_splitter.setSizes([460, 360, 360, 160])
+        # Cast summary bar: the full cast lives here (count + names); the
+        # dialog owns add/remove/configure, the main window mirrors it.
+        cast_bar = QHBoxLayout()
+        cast_bar.addWidget(QLabel("Cast:"))
+        self.cast_summary_label = QLabel()
+        self.cast_summary_label.setToolTip(
+            "The current speaker cast. Speakers beyond A/B are managed in the cast dialog."
+        )
+        cast_bar.addWidget(self.cast_summary_label, 1)
+        self.manage_cast_button = QPushButton("Manage cast...")
+        self.manage_cast_button.setToolTip(
+            "Open the cast manager: add/remove speakers, name characters, and "
+            "configure each voice. One speaker left returns to monologue mode."
+        )
+        self.manage_cast_button.clicked.connect(self.open_cast_manager)
+        cast_bar.addWidget(self.manage_cast_button)
+        layout.addLayout(cast_bar)
+        self._refresh_cast_bar()
         layout.addWidget(self._sections_splitter)
 
         actions = QHBoxLayout()
@@ -2622,15 +3012,27 @@ class MainWindow(QMainWindow):
                 self._persist_workspace_layout()
 
     def _handle_outdir_changed(self) -> None:
-        folder = Path(self.outdir_path.text() or self.paths.output_dir).expanduser()
-        default_folder = Path(self.paths.output_dir)
-        if folder == default_folder:
-            return
-        if not folder.exists():
-            folder.mkdir(parents=True, exist_ok=True)
+        # Typing in the output-folder field must not touch the filesystem:
+        # no directory is created here. The folder is created lazily (with
+        # errors surfaced) when a render or analysis actually needs it.
         if not self.output_name.text().strip():
             default_name = default_output_filename(self.input_path.text() or "")
             self.output_name.setText(default_name)
+
+    def _ensure_outdir_exists(self, path: str | Path) -> Path:
+        """Create the output folder lazily, right before it is needed.
+
+        Failures are logged and raised so the caller (render/analysis) can
+        report them, instead of silently leaving the write to fail later.
+        """
+        folder = Path(path or self.paths.output_dir).expanduser()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            message = f"Could not create output folder {folder}: {exc}"
+            self.error_panel.append(message)
+            raise OSError(message) from exc
+        return folder
 
     def _pick_outdir(self) -> None:
         current_outdir = Path(self.outdir_path.text()).expanduser()
@@ -3091,18 +3493,24 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
 
-        studio = getattr(self, "_recording_studio", None)
-        if studio is not None and studio._worker is not None:
-            # The studio dialog is parented to this window: closing the main
-            # window mid-take would destroy the dialog (and its QThread) while
-            # the capture thread still runs — a hard Qt abort. Join it here
-            # with the same bounded-wait discipline as the render workers.
+        for studio in list(self._recording_studios):
+            if studio._worker is None:
+                continue
+            # The studio dialogs are parented to this window: closing the main
+            # window mid-take would destroy a dialog (and its QThread) while
+            # its capture thread still runs — a hard Qt abort. Join every
+            # studio's worker here with the same bounded-wait discipline as
+            # the render workers.
             studio._stop_recording()
             if not wait_for_thread(studio._worker, "Recording take", 2000):
                 event.ignore()
                 return
             studio._worker.deleteLater()
             studio._worker = None
+        for studio in list(self._recording_studios):
+            # Workers are stopped above; closing the dialog itself runs its
+            # per-instance finished handler (picker refresh + take report).
+            studio.close()
 
         probe = self._vulkan_probe_thread
         if probe is not None:
@@ -3160,6 +3568,11 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self._vulkan_setup_thread = None
+        # Cast dialogs are modal, so the main window can't be closing while one
+        # is open - but close any stragglers defensively so their pending edits
+        # apply (or discard) before the window is destroyed.
+        for dialog in list(self._cast_dialogs):
+            dialog.close()
         # Stop the persistent preview player before the window (and its child
         # player object) is destroyed, so the QtMultimedia backend isn't torn
         # down mid-playback during app exit.
@@ -3327,7 +3740,12 @@ class MainWindow(QMainWindow):
     # Custom Voice Recording Studio
     # --------------------
     def open_recording_studio(self) -> None:
-        """Open the Recording Studio (non-modal, its own window)."""
+        """Open the Recording Studio (non-modal, its own window).
+
+        Every dialog is tracked in ``_recording_studios`` with its own
+        completion handler, so opening several keeps each one's worker and
+        saved take instead of orphaning the earlier ones.
+        """
         dialog = RecordingStudioDialog(
             repo_root=self.repo_root,
             voice_dir=self.paths.voice_dir,
@@ -3335,10 +3753,14 @@ class MainWindow(QMainWindow):
             parent=self,
             on_assign=self._assign_recording_to_speaker,
         )
-        self._recording_studio = dialog
-        # Refresh the Speaker A/B (and any cast) voice pickers whenever the
-        # studio closes - whether or not a recording was saved.
-        dialog.finished.connect(self._on_recording_studio_closed)
+        self._recording_studios.add(dialog)
+        dialog.set_assign_speakers(
+            [(key, (self._speaker_names.get(key) or "").strip()) for key in self._cast]
+        )
+        # Refresh the voice pickers whenever a studio closes - whether or not
+        # a recording was saved. Each dialog carries its own handler, so
+        # several open studios never orphan each other's close events.
+        dialog.finished.connect(lambda result, dlg=dialog: self._on_recording_studio_closed(dlg, result))
         dialog.finished.connect(dialog.deleteLater)
         dialog.show()
         dialog.raise_()
@@ -3363,12 +3785,14 @@ class MainWindow(QMainWindow):
             "be used on the next render."
         )
 
-    def _on_recording_studio_closed(self, _result: int) -> None:
+    def _on_recording_studio_closed(self, dialog: RecordingStudioDialog, _result: int) -> None:
+        # Per-instance completion: each studio reports its own saved take, so
+        # a second dialog never steals or drops the first one's recording.
+        self._recording_studios.discard(dialog)
         self._refresh_reference_pickers()
-        studio = getattr(self, "_recording_studio", None)
-        if studio is not None and studio._last_saved_path is not None:
+        if dialog._last_saved_path is not None:
             self.error_panel.append(
-                f"Recorded new Seashell: {studio._last_saved_path.name} - "
+                f"Recorded new Seashell: {dialog._last_saved_path.name} - "
                 "pick it under Custom Voice Reference Audio for any speaker."
             )
 
@@ -3581,53 +4005,146 @@ class MainWindow(QMainWindow):
         elif not self.input_path.text().strip():
             self.input_path.setText("")
 
+    def cast_keys(self) -> list[str]:
+        """Ordered speaker keys of the current cast (["A", "B"] by default)."""
+        return list(self._cast)
+
+    def speaker_names(self) -> dict[str, str]:
+        """Optional character names per speaker key."""
+        return dict(self._speaker_names)
+
     def _all_speaker_groups(self) -> dict[str, SpeakerGroup]:
-        """Every speaker group: A, B, and any extra character voices (C..X)."""
-        return {"A": self.speaker_a, "B": self.speaker_b, **self.extra_speaker_groups}
+        """Every speaker group in the current cast, in cast order."""
+        groups = {"A": self.speaker_a, "B": self.speaker_b, **self.extra_speaker_groups}
+        return {key: groups[key] for key in self._cast if key in groups}
+
+    def apply_cast(
+        self,
+        keys: list[str],
+        names: dict[str, str] | None,
+        settings: dict[str, SpeakerSettings] | None,
+    ) -> None:
+        """Replace the speaker cast and rebuild the panels to match.
+
+        Called by the cast-management dialog and by settings/profile load, so
+        a cast of any size always leaves exactly the right panels behind (no
+        stale speaker panels contaminating later renders).
+        """
+        cast = normalize_cast_keys(keys)
+        self._cast = cast
+        names = names if isinstance(names, dict) else {}
+        self._speaker_names = {key: str(names.get(key, "") or "").strip() for key in cast}
+        settings = settings if isinstance(settings, dict) else {}
+        self._sync_extra_speaker_groups([key for key in cast if key not in ("A", "B")])
+        # Speakers beyond A/B are configured in the cast dialog; the main
+        # window keeps their widgets alive (the render path reads them) but
+        # does not show them inline.
+        self.extra_speaker_scroll.hide()
+        groups = {"A": self.speaker_a, "B": self.speaker_b, **self.extra_speaker_groups}
+        for key in cast:
+            group = groups.get(key)
+            if group is None:
+                continue
+            panel_settings = settings.get(key)
+            if panel_settings is not None:
+                _apply_speaker_settings_to_group(group, panel_settings)
+            self._update_speaker_group_title(key, group)
+        # Monologue layout: with a single speaker only the narrator's panel
+        # shows; a cast of one is monologue, more than one is dialogue.
+        self.speaker_b.setVisible(len(cast) > 1)
+        self.monologue_check.setChecked(len(cast) == 1)
+        self._refresh_cast_bar()
+        self._refresh_reference_pickers()
+        self._refresh_language_options()
+
+    def _update_speaker_group_title(self, key: str, group: SpeakerGroup) -> None:
+        name = (self._speaker_names.get(key) or "").strip()
+        group.setTitle(f"Speaker {key} — {name}" if name else f"Speaker {key}")
+
+    def _refresh_cast_bar(self) -> None:
+        parts = []
+        for key in self._cast:
+            name = (self._speaker_names.get(key) or "").strip()
+            parts.append(f"{key} ({name})" if name else key)
+        count = len(self._cast)
+        noun = "speaker" if count == 1 else "speakers"
+        text = f"{', '.join(parts)} — {count} {noun}"
+        if count == 1 and self.monologue_check.isChecked():
+            text += " (monologue)"
+        self.cast_summary_label.setText(text)
+
+    def open_cast_manager(self) -> None:
+        """Open the cast-management dialog (modal).
+
+        Tracked per-instance like the recording-studio dialogs so a second
+        open can never orphan the first one's completion handling.
+        """
+        for dialog in list(self._cast_dialogs):
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+        dialog = CastManagementDialog(self)
+        self._cast_dialogs.add(dialog)
+        dialog.finished.connect(lambda _result, dlg=dialog: self._cast_dialogs.discard(dlg))
+        try:
+            dialog.exec()
+        finally:
+            self._cast_dialogs.discard(dialog)
 
     def _sync_extra_speaker_groups(self, speakers: list[str]) -> None:
         """Create/refresh SpeakerGroup widgets for characters beyond A and B
-        (up to 24 total) so an audiobook cast gets one voice panel each."""
+        (up to the engine's voice capacity) so an audiobook cast gets one
+        voice panel each. Panels beyond A/B are configured in the cast dialog;
+        this only keeps the widgets in sync, it never shows them inline."""
         extras = sorted(speaker for speaker in speakers if speaker not in ("A", "B"))
         for key in extras:
             if key not in self.extra_speaker_groups:
                 group = SpeakerGroup(key, self.paths.voice_dir, on_save_blend=self._save_blend_as_voice)
                 self.extra_speaker_groups[key] = group
                 self.extra_speaker_layout.addWidget(group)
+                self._update_speaker_group_title(key, group)
         stale = [key for key in self.extra_speaker_groups if key not in extras]
         for key in stale:
             group = self.extra_speaker_groups.pop(key)
             self.extra_speaker_layout.removeWidget(group)
             group.deleteLater()
-        self.extra_speaker_scroll.setVisible(bool(extras))
-        if extras:
-            self.extra_speaker_scroll.setWindowTitle("Character Voices")
         self._refresh_reference_pickers()
         self._refresh_language_options()
 
     def _speaker_settings(self) -> dict[str, SpeakerSettings]:
         variant = self.variant_combo.currentText()
-        result: dict[str, SpeakerSettings] = {}
-        for key, group in self._all_speaker_groups().items():
-            blend_target = group.blend_target_path()
-            result[key] = SpeakerSettings(
-                reference_path=group.reference_path.text(),
-                voice_settings=VoiceSettings(
-                    variant=variant,
-                    language=group.language_combo.currentData() or "en",
-                    cfg_weight=group.cfg_weight.value(),
-                    exaggeration=group.exaggeration.value(),
-                    temperature=group.temperature.value(),
-                    emotion_intensity=group.emotion_intensity.value(),
-                    naturalness=group.naturalness.value(),
-                    pause_ms=group.pause_spin.value(),
-                    crossfade_ms=self.crossfade_spin.value(),
-                ),
-                blend_references=[group.reference_path.text(), blend_target] if blend_target else [],
-                blend_weight=group.blend_weight_spin.value() / 100.0,
-                blend_mode=group.blend_mode_combo.currentData() or "mix",
-            )
-        return result
+        crossfade_ms = self.crossfade_spin.value()
+        return {
+            key: _speaker_settings_from_group(group, variant, crossfade_ms)
+            for key, group in self._all_speaker_groups().items()
+        }
+
+    @staticmethod
+    def _speaker_config_from_payload(key: str, data: dict) -> SpeakerSettings:
+        """Build engine :class:`SpeakerSettings` from one merged profile entry.
+
+        Restores the hybrid (blend) configuration too, so a saved blend target,
+        dominance weight, and combine mode come back instead of resetting.
+        """
+        voice = VoiceSettings.from_mapping(data.get("voice_settings") or {})
+        blend_refs = [str(ref) for ref in (data.get("blend_references") or []) if str(ref).strip()]
+        try:
+            blend_weight = float(data.get("blend_weight", 0.5))
+        except (TypeError, ValueError):
+            blend_weight = 0.5
+        blend_weight = min(1.0, max(0.0, blend_weight))
+        blend_mode = str(data.get("blend_mode", "mix")).strip().lower()
+        if blend_mode not in ("mix", "alternate", "layer"):
+            blend_mode = "mix"
+        emotions = data.get("emotion_reference_paths")
+        return SpeakerSettings(
+            reference_path=str(data.get("reference_path", "")),
+            voice_settings=voice,
+            emotion_reference_paths=dict(emotions) if isinstance(emotions, dict) else {},
+            blend_references=blend_refs,
+            blend_weight=blend_weight,
+            blend_mode=blend_mode,
+        )
 
     def _render_settings(self) -> RenderSettings:
         variant = self.variant_combo.currentText()
@@ -3693,6 +4210,9 @@ class MainWindow(QMainWindow):
             "version": 1,
             "name": "",
             "device_mode": default_render.device_mode,
+            # The ordered cast; the loader rebuilds the panels from it.
+            "cast": ["A", "B"],
+            "speaker_names": {},
             "project": {
                 "model_variant": default_render.model_variant,
                 "correction_mode": default_render.correction_mode,
@@ -3719,23 +4239,8 @@ class MainWindow(QMainWindow):
         }
 
     def _apply_speaker_group(self, group: SpeakerGroup, settings: SpeakerSettings) -> None:
-        voice = VoiceSettings.from_mapping(settings.voice_settings)
-        group.reference_path.setText(settings.reference_path)
-        language_index = group.language_combo.findData(voice.language)
-        if language_index >= 0:
-            group.language_combo.setCurrentIndex(language_index)
-        group.cfg_weight.setValue(voice.cfg_weight)
-        group.exaggeration.setValue(voice.exaggeration)
-        group.temperature.setValue(voice.temperature)
-        group.emotion_intensity.setValue(voice.emotion_intensity)
-        group.naturalness.setValue(voice.naturalness)
-        group.pause_spin.setValue(voice.pause_ms)
-        group.blend_weight_spin.setValue(int(round(settings.blend_weight * 100)))
-        mode_index = group.blend_mode_combo.findData(settings.blend_mode)
-        if mode_index >= 0:
-            group.blend_mode_combo.setCurrentIndex(mode_index)
+        _apply_speaker_settings_to_group(group, settings)
         self._refresh_reference_pickers()
-        group.select_blend_path(settings.blend_references[1] if len(settings.blend_references) >= 2 else "")
 
     def _load_project_into_ui(self, saved_project) -> None:
         self.current_project_path = None
@@ -3758,9 +4263,17 @@ class MainWindow(QMainWindow):
         self._set_audio_cpp_timeout_value(saved_project.render_settings.audio_cpp_timeout)
         self._set_audio_cpp_max_batch_value(saved_project.render_settings.audio_cpp_max_batch)
         self._refresh_inference_backend_options()
-        self._sync_extra_speaker_groups(list(saved_project.speaker_settings))
-        for speaker, settings in saved_project.speaker_settings.items():
-            self._apply_speaker_group(self._all_speaker_groups()[speaker], settings)
+        # Rebuild the full cast from the manifest: settings are applied into
+        # the matching panels, and a smaller manifest deletes stale panels
+        # rather than leaving orphaned voices behind.
+        requested = normalize_cast_keys(saved_project.speaker_settings.keys()) or ["A", "B"]
+        self.apply_cast(
+            requested,
+            {},
+            {key: saved_project.speaker_settings[key] for key in requested if key in saved_project.speaker_settings},
+        )
+        # apply_cast defaults monologue from cast size; the manifest's flag wins.
+        self.monologue_check.setChecked(saved_project.render_settings.monologue)
         self._populate_table(self.plan)
 
     def _current_saved_project(self):
@@ -3777,10 +4290,15 @@ class MainWindow(QMainWindow):
         # a disabled widget left over from an earlier selection must not be
         # saved alongside inference_backend: pytorch.
         is_vulkan = inference_backend == "vulkan"
+        speaker_settings = self._speaker_settings()
         return {
             "version": 1,
             "name": "",
             "device_mode": _DEVICE_MODE,
+            # The ordered cast; the loader rebuilds the panels from it so a
+            # saved multi-speaker cast restores exactly, and a smaller saved
+            # cast leaves no stale panels behind.
+            "cast": self.cast_keys(),
             "project": {
                 "model_variant": self.variant_combo.currentText(),
                 "correction_mode": normalize_correction_mode(self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText()),
@@ -3802,8 +4320,15 @@ class MainWindow(QMainWindow):
                     "reference_path": settings.reference_path,
                     "voice_settings": VoiceSettings.from_mapping(settings.voice_settings).to_dict(),
                     "emotion_reference_paths": dict(settings.emotion_reference_paths),
+                    # Optional character name shown in the cast bar / dialog.
+                    "name": self._speaker_names.get(speaker, ""),
+                    # Hybrid (blend) configuration: second reference voice,
+                    # its dominance weight, and how the two are combined.
+                    "blend_references": list(settings.blend_references),
+                    "blend_weight": settings.blend_weight,
+                    "blend_mode": settings.blend_mode,
                 }
-                for speaker, settings in self._speaker_settings().items()
+                for speaker, settings in speaker_settings.items()
             },
         }
 
@@ -3818,7 +4343,6 @@ class MainWindow(QMainWindow):
         self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
         self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
         self.export_srt_check.setChecked(bool(project.get("export_srt", False)))
-        self.monologue_check.setChecked(bool(project.get("monologue", False)))
         self.delete_confirm_enabled = bool(project.get("delete_confirm_enabled", True))
         backend_index = self.inference_backend_combo.findData(project.get("inference_backend", "pytorch"))
         if backend_index >= 0:
@@ -3832,24 +4356,30 @@ class MainWindow(QMainWindow):
         # selected (RenderSettings would otherwise pass it through to a
         # confusing engine error at render time).
         self._refresh_inference_backend_options()
-        for speaker, config in payload["speakers"].items():
-            default_config = defaults["speakers"].get(speaker, defaults["speakers"]["A"])
-            merged = {**default_config, **config}
-            group = self._all_speaker_groups().get(speaker)
-            if group is None:
-                self._sync_extra_speaker_groups(list(payload["speakers"]))
-                group = self._all_speaker_groups()[speaker]
-            voice = VoiceSettings.from_mapping(merged.get("voice_settings"))
-            group.reference_path.setText(merged.get("reference_path", ""))
-            language_index = group.language_combo.findData(voice.language)
-            if language_index >= 0:
-                group.language_combo.setCurrentIndex(language_index)
-            group.cfg_weight.setValue(voice.cfg_weight)
-            group.exaggeration.setValue(voice.exaggeration)
-            group.temperature.setValue(voice.temperature)
-            group.emotion_intensity.setValue(voice.emotion_intensity)
-            group.naturalness.setValue(voice.naturalness)
-            group.pause_spin.setValue(voice.pause_ms)
+        # Rebuild the whole cast from the payload's ordered "cast" list
+        # (falling back to the saved speaker keys, then A/B). Loading fewer
+        # speakers than are currently shown deletes the stale panels outright
+        # instead of leaving orphaned voices behind; blend (hybrid) fields
+        # restore through _speaker_config_from_payload.
+        speakers = payload.get("speakers", {})
+        if not isinstance(speakers, dict):
+            speakers = {}
+        requested = normalize_cast_keys(payload.get("cast")) or sorted(
+            key for key in speakers if isinstance(key, str)
+        ) or ["A", "B"]
+        cast_settings: dict[str, SpeakerSettings] = {}
+        names: dict[str, str] = {}
+        for key in requested:
+            data = speakers.get(key)
+            if isinstance(data, dict) and data:
+                default_config = defaults["speakers"].get(key, defaults["speakers"]["A"])
+                merged = {**default_config, **data}
+                cast_settings[key] = self._speaker_config_from_payload(key, merged)
+                names[key] = str(merged.get("name", "") or "")
+        self.apply_cast(requested, names, cast_settings)
+        # apply_cast defaults monologue from cast size; an explicit saved flag
+        # (e.g. monologue with two configured voices) wins.
+        self.monologue_check.setChecked(bool(project.get("monologue", False)))
         self._refresh_reference_pickers()
 
     def reset_settings_to_defaults(self) -> None:
@@ -3992,9 +4522,12 @@ class MainWindow(QMainWindow):
         analyze_click_wall = time()
         self._log_action_timing("analyze_click", analyze_click_wall)
         try:
+            # Lazily create the output folder now that analysis actually needs
+            # it; typing in the field alone never creates directories.
+            output_dir = str(self._ensure_outdir_exists(self.outdir_path.text()))
             self.plan = self._pipeline().prepare_plan(
                 self.input_path.text(),
-                self.outdir_path.text(),
+                output_dir,
                 self._speaker_settings(),
                 self._render_settings(),
             )
@@ -4003,8 +4536,14 @@ class MainWindow(QMainWindow):
             for speaker in self._speaker_settings().values():
                 if speaker.reference_path:
                     remember_recent_reference_path(speaker.reference_path)
-            self._sync_extra_speaker_groups([item.speaker for item in self.plan.utterances])
-            self._refresh_reference_pickers()
+            # The text may mention more speakers than the current cast holds:
+            # extend the cast so every plan speaker is configurable (and
+            # rendered with its intended voice) instead of silently falling
+            # back to defaults.
+            detected = sorted({item.speaker for item in self.plan.utterances})
+            extended = normalize_cast_keys([*self._cast, *detected])
+            if extended != self._cast:
+                self.apply_cast(extended, dict(self._speaker_names), self._speaker_settings())
             self._populate_table(self.plan)
             self.error_panel.append("Analysis complete.")
         except Exception as exc:
@@ -4016,8 +4555,8 @@ class MainWindow(QMainWindow):
         for row, utterance in enumerate(plan.utterances):
             self.table.setItem(row, 0, QTableWidgetItem(str(utterance.index)))
             speaker_combo = QComboBox()
-            detected = sorted({item.speaker for item in plan.utterances})
-            speaker_combo.addItems(detected or ["A", "B"])
+            speakers = sorted(set(self._cast) | {item.speaker for item in plan.utterances})
+            speaker_combo.addItems(speakers or ["A", "B"])
             speaker_combo.setCurrentText(utterance.speaker)
             self.table.setCellWidget(row, 1, speaker_combo)
             self.table.setItem(row, 2, QTableWidgetItem(utterance.original_text))
@@ -4169,6 +4708,18 @@ class MainWindow(QMainWindow):
             self.error_panel.append(f"Preview failed: {exc}")
             QMessageBox.critical(self, "Preview Failed", str(exc))
             return
+        # Resolve the voice profile BEFORE the UI goes busy: a speaker with no
+        # profile (stale row, edited cast) must report gracefully instead of
+        # raising KeyError mid-startup and leaving the UI stuck busy.
+        profile = self.plan.voice_profiles.get(utterance.speaker)
+        if profile is None:
+            message = (
+                f"Preview failed: no voice profile for Speaker {utterance.speaker}. "
+                "Re-run Analyze so every row's speaker has a voice assigned."
+            )
+            self.error_panel.append(message)
+            QMessageBox.warning(self, "Preview Failed", message)
+            return
 
         self.preview_dialog = RenderProgressDialog(self, title="Generating Preview")
         self.preview_dialog.show()
@@ -4203,7 +4754,7 @@ class MainWindow(QMainWindow):
         is_vulkan = inference_backend == "vulkan"
         self.preview_worker = PreviewWorker(
             utterance,
-            self.plan.voice_profiles[utterance.speaker],
+            profile,
             self.variant_combo.currentText(),
             _DEVICE_MODE,
             # Preview must use the same GUI-safe pipeline as Analyze/render.
@@ -4227,7 +4778,21 @@ class MainWindow(QMainWindow):
         self.preview_worker.completed.connect(lambda path: self._finish_preview(row, path))
         self.preview_worker.failed.connect(self._fail_preview)
         self.preview_worker.finished.connect(self._cleanup_preview_worker)
-        self.preview_worker.start()
+        try:
+            self.preview_worker.start()
+        except Exception as exc:
+            # Worker startup must never leave the UI stuck busy with a
+            # dangling progress dialog: tear both down and report.
+            worker = self.preview_worker
+            self.preview_worker = None
+            if worker is not None:
+                worker.deleteLater()
+            self._set_preview_busy(False)
+            if self.preview_dialog is not None:
+                self.preview_dialog.close()
+                self.preview_dialog = None
+            self.error_panel.append(f"Preview failed: {exc}")
+            QMessageBox.critical(self, "Preview Failed", str(exc))
 
     def render_project(self) -> None:
         with self._prewarm_lock:
@@ -4256,7 +4821,9 @@ class MainWindow(QMainWindow):
             )
             if not output_filename:
                 raise ValueError("Choose an output filename before rendering outside the default Output folder.")
-            self.plan.output_dir = self.outdir_path.text() or str(self.paths.output_dir)
+            # Lazily create the output folder now that a render actually needs
+            # it; typing in the field alone never creates directories.
+            self.plan.output_dir = str(self._ensure_outdir_exists(self.outdir_path.text()))
         except Exception as exc:
             self.error_panel.append(f"Render failed: {exc}")
             QMessageBox.critical(self, "Render Failed", str(exc))

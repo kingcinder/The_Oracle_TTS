@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -136,12 +137,15 @@ def managed_wrapper_contents() -> str:
             ")\r\n"
             "\"%VENV_ENTRYPOINT%\" %*\r\n"
         )
+    # Paths are shell-quoted with shlex.quote (single-quote form), not bare
+    # double quotes, so repo/entrypoint paths containing spaces, $, backticks,
+    # or double quotes cannot break or inject into the generated script.
     return (
         "#!/usr/bin/env bash\n"
         f"# {MANAGED_WRAPPER_MARKER}\n"
         "set -Eeuo pipefail\n\n"
-        f'REPO_ROOT="{REPO_ROOT}"\n'
-        f'VENV_ENTRYPOINT="{entrypoint}"\n\n'
+        f"REPO_ROOT={shlex.quote(str(REPO_ROOT))}\n"
+        f"VENV_ENTRYPOINT={shlex.quote(str(entrypoint))}\n\n"
         'if [[ ! -x "$VENV_ENTRYPOINT" ]]; then\n'
         '  printf \'the-oracle is not installed in %s\\n\' "$REPO_ROOT/.venv" >&2\n'
         f'  printf \'Run {repo_bootstrap_display()} first.\\n\' >&2\n'
