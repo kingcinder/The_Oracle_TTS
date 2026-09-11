@@ -23,7 +23,7 @@ except Exception:  # pragma: no cover - fallback for older huggingface_hub versi
     LocalTokenNotFoundError = tuple()  # type: ignore[assignment]
 
 from the_oracle.models.cache import CachedReference, ProjectCache
-from the_oracle.models.project import VoiceSettings
+from the_oracle.models.project import VoiceSettings, strip_pain_point_markers
 from the_oracle.platform_support import repo_python_display
 from the_oracle.utils.hashing import hash_payload
 
@@ -225,6 +225,10 @@ class ChatterboxEngine:
         )
 
     def synthesize(self, text: str, conditioning: ChatterboxConditioning, settings: VoiceSettings) -> np.ndarray:
+        # Final engine-boundary guard: author pain-point tildes are review
+        # annotations, not prosody. Chatterbox's own punc_norm preserves '~'
+        # and can turn it into the exact hitch this marker is meant to flag.
+        text = strip_pain_point_markers(text)
         cache_key = str(conditioning.path)
         conds = self._loaded_conditioning.get(cache_key)
         if conds is None:

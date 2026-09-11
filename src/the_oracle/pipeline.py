@@ -18,7 +18,7 @@ from the_oracle.audio.export_flac import next_available_output_path, write_flac
 from the_oracle.device_support import cuda_devices, resolve_chatterbox_device
 from the_oracle.emotion.goemotions import EmotionResult, GoEmotionsClassifier, SUPPORTED_EMOTIONS
 from the_oracle.models.cache import CachedReference, ProjectCache
-from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings
+from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings, strip_pain_point_markers
 from the_oracle.speaker_attribution.heuristics import AnchorAssignments, DualSpeakerAttributor
 from the_oracle.text_ingest import TextIngestor
 from the_oracle.text_repair.directives import apply_directives, parse_directives
@@ -882,8 +882,17 @@ class OraclePipeline:
         # them. The cleaned text is what gets repaired, and directives are
         # re-applied after emotion detection below.
         parsed_segments = [parse_directives(segment.text) for segment in document.segments]
+        # Remove author-only pain-point annotations before *any* repair,
+        # punctuation, spelling, emotion, chunking, or backend hand-off.  The
+        # original segment remains annotated for the review table, while the
+        # repaired/TTS text is guaranteed to contain an ordinary word boundary.
+        # Doing this before repair matters because a corrector or punctuation
+        # model can otherwise preserve the tilde into a saved plan, and a
+        # future backend may receive that plan without passing through the
+        # final defense-in-depth Utterance.text_for_tts() call.
         repaired_segments = [
-            self.repair.repair(cleaned, mode=settings.correction_mode) for cleaned, _directives in parsed_segments
+            self.repair.repair(strip_pain_point_markers(cleaned), mode=settings.correction_mode)
+            for cleaned, _directives in parsed_segments
         ]
         decisions = self.attributor.assign(
             [segment.text for segment in document.segments],
