@@ -50,7 +50,7 @@ import numpy as np
 import soundfile as sf
 
 from the_oracle.models.cache import CachedReference, ProjectCache
-from the_oracle.models.project import VoiceSettings
+from the_oracle.models.project import VoiceSettings, strip_pain_point_markers
 from the_oracle.utils.audio import ensure_mono
 from the_oracle.utils.hashing import hash_file, hash_payload
 
@@ -432,6 +432,9 @@ class AudioCppVulkanEngine:
         conditioning: VulkanConditioning,
         settings: VoiceSettings,
     ) -> np.ndarray:
+        # Keep the annotation out of audio.cpp as well as PyTorch. Its text
+        # normalizer preserves '~', which can cause a token boundary hitch.
+        text = strip_pain_point_markers(text)
         self.ensure_model_ready()
         reference_path = conditioning.reference_path
         if not reference_path.exists():
@@ -612,6 +615,9 @@ class AudioCppVulkanEngine:
             temp = Path(temp_dir)
             requests: list[dict[str, Any]] = []
             for index, (text, conditioning, settings) in enumerate(entries):
+                # Batch callers can bypass the pipeline's Utterance guard.
+                # Normalize the author-only marker before serializing requests.
+                text = strip_pain_point_markers(text)
                 reference_path = conditioning.reference_path
                 if not reference_path.exists():
                     raise FileNotFoundError(
