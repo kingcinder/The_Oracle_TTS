@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install The Oracle TTS
+GenericName=Text-to-speech engine installer
+Comment=Install The Oracle TTS (double-click, follow the prompts)
+Icon=oracle-tts-install
+Exec=sh -c 'exec "$(dirname "%k")/_launcher.sh" install'
+Terminal=true
+Categories=AudioVideo;Audio;
+Keywords=tts;text to speech;oracle;voice;install;setup;
+StartupNotify=false

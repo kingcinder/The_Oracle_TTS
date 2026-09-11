@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Uninstall The Oracle TTS
+GenericName=Text-to-speech engine uninstaller
+Comment=Remove The Oracle TTS service, files and user
+Icon=oracle-tts-uninstall
+Exec=sh -c 'exec "$(dirname "%k")/_launcher.sh" uninstall'
+Terminal=true
+Categories=AudioVideo;Audio;
+Keywords=tts;text to speech;oracle;voice;uninstall;remove;
+StartupNotify=false
