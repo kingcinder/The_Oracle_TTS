@@ -126,6 +126,21 @@ def test_install_desktop_launcher_is_windows_only_start_menu(manage, tmp_path, m
     assert not (tmp_path / "Desktop").exists()  # no desktop shortcut on Windows
 
 
+def test_pytorch_runtime_policy_selects_cpu_or_cuda(manage, monkeypatch) -> None:
+    monkeypatch.setattr(manage, "_suitable_nvidia_hardware_present", lambda: False)
+    assert manage.resolve_pytorch_runtime("cpu") == ("CPU", manage.PYTORCH_CPU_INDEX_URL)
+    assert manage.resolve_pytorch_runtime("auto") == ("CPU", manage.PYTORCH_CPU_INDEX_URL)
+
+    monkeypatch.setattr(manage, "_suitable_nvidia_hardware_present", lambda: True)
+    assert manage.resolve_pytorch_runtime("auto") == (manage.CUDA_WHEEL_PYTHON, manage.PYTORCH_CUDA_INDEX_URL)
+    assert manage.resolve_pytorch_runtime("cuda") == (manage.CUDA_WHEEL_PYTHON, manage.PYTORCH_CUDA_INDEX_URL)
+
+
+def test_pytorch_runtime_policy_rejects_unknown_value(manage) -> None:
+    with pytest.raises(ValueError, match="auto, cpu, cuda"):
+        manage.resolve_pytorch_runtime("rocm")
+
+
 def test_uninstall_removes_managed_desktop_files(manage, tmp_path, monkeypatch) -> None:
     """Uninstall removes both the app-list entry and the desktop shortcut
     (and only files carrying The Oracle's marker)."""

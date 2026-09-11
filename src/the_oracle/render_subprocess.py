@@ -47,6 +47,7 @@ def run_preview_job(job_path: Path, result_path: Path) -> int:
         profile = VoiceProfile.from_dict(payload["profile"])
         model_variant = str(payload["model_variant"])
         device_mode = str(payload.get("device_mode") or "cpu")
+        cuda_device = payload.get("cuda_device")
         inference_backend = str(payload.get("inference_backend") or "pytorch")
         configure_logging()
         pipeline = OraclePipeline(
@@ -60,6 +61,7 @@ def run_preview_job(job_path: Path, result_path: Path) -> int:
             model_variant,
             device_mode=device_mode,
             inference_backend=inference_backend,
+            cuda_device=cuda_device,
             audio_cpp_device=payload.get("audio_cpp_device"),
             audio_cpp_threads=payload.get("audio_cpp_threads"),
             audio_cpp_timeout=payload.get("audio_cpp_timeout"),

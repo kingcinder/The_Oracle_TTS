@@ -26,7 +26,10 @@ from the_oracle.platform_support import (  # noqa: E402
 )
 
 
-PYTORCH_INDEX_URL = "https://download.pytorch.org/whl/cpu"
+PYTORCH_CPU_INDEX_URL = "https://download.pytorch.org/whl/cpu"
+PYTORCH_CUDA_INDEX_URL = "https://download.pytorch.org/whl/cu124"
+PYTORCH_INDEX_URL = PYTORCH_CPU_INDEX_URL  # backwards-compatible public constant
+CUDA_WHEEL_PYTHON = "CUDA 12.4"
 MANAGED_WRAPPER_MARKER = "ORACLE_TTS_WRAPPER"
 LINUX_DESKTOP_MARKER = "ORACLE_TTS_DESKTOP"
 WINDOWS_START_MENU_MARKER = "ORACLE_TTS_START_MENU"
@@ -80,9 +83,44 @@ def ensure_venv() -> Path:
     return python_path
 
 
-def install_dependencies(venv_python: Path, *, include_dev: bool = False) -> None:
+def _suitable_nvidia_hardware_present() -> bool:
+    """Return whether nvidia-smi reports a GPU large enough for Chatterbox.
+
+    This probe intentionally does not import torch: it runs before the venv's
+    PyTorch wheel is installed, and it lets ``auto`` choose CPU on legacy
+    1-GiB cards instead of installing a CUDA wheel that cannot be useful.
+    """
+    try:
+        from the_oracle.device_support import _nvidia_smi_devices
+
+        return any(device.suitable for device in _nvidia_smi_devices())
+    except Exception:
+        return False
+
+
+def resolve_pytorch_runtime(runtime: str) -> tuple[str, str]:
+    """Resolve installer runtime policy to ``(label, PyTorch index URL)``."""
+    normalized = str(runtime).strip().lower()
+    if normalized not in {"auto", "cpu", "cuda"}:
+        raise ValueError("PyTorch runtime must be one of: auto, cpu, cuda")
+    if normalized == "auto":
+        normalized = "cuda" if _suitable_nvidia_hardware_present() else "cpu"
+    if normalized == "cuda":
+        return CUDA_WHEEL_PYTHON, PYTORCH_CUDA_INDEX_URL
+    return "CPU", PYTORCH_CPU_INDEX_URL
+
+
+def install_dependencies(
+    venv_python: Path,
+    *,
+    include_dev: bool = False,
+    pytorch_runtime: str = "auto",
+) -> None:
+    runtime_label, pytorch_index_url = resolve_pytorch_runtime(pytorch_runtime)
+    info(f"Installing PyTorch runtime: {runtime_label}")
     env = build_env()
     run_command([str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools<81", "wheel"], env=env)
+
     run_command(
         [
             str(venv_python),
@@ -90,7 +128,7 @@ def install_dependencies(venv_python: Path, *, include_dev: bool = False) -> Non
             "pip",
             "install",
             "--index-url",
-            PYTORCH_INDEX_URL,
+            pytorch_index_url,
             "torch==2.6.0",
             "torchaudio==2.6.0",
             "torchvision==0.21.0",
@@ -350,11 +388,11 @@ def run_gui() -> int:
     return completed.returncode
 
 
-def bootstrap(skip_doctor: bool = False, *, include_dev: bool = False) -> int:
+def bootstrap(skip_doctor: bool = False, *, include_dev: bool = False, pytorch_runtime: str = "auto") -> int:
     ensure_supported_python()
     passed(f"Using Python {sys.version.split()[0]} from {sys.executable}")
     venv_python = ensure_venv()
-    install_dependencies(venv_python, include_dev=include_dev)
+    install_dependencies(venv_python, include_dev=include_dev, pytorch_runtime=pytorch_runtime)
     install_managed_wrapper()
     if str(managed_launcher_dir()) not in os.environ.get("PATH", "").split(os.pathsep):
         info(f"Note: {managed_launcher_dir()} is not on this shell PATH.")
@@ -368,8 +406,8 @@ def bootstrap(skip_doctor: bool = False, *, include_dev: bool = False) -> int:
     return 0
 
 
-def install() -> int:
-    status = bootstrap()
+def install(*, pytorch_runtime: str = "auto") -> int:
+    status = bootstrap(pytorch_runtime=pytorch_runtime)
     if status != 0:
         return status
     install_desktop_launcher()
@@ -380,17 +418,18 @@ def install() -> int:
     return 0
 
 
-def update(skip_doctor: bool = False) -> int:
+def update(skip_doctor: bool = False, *, pytorch_runtime: str = "auto") -> int:
     """Refresh an existing install in place: reinstall dependencies (picking up
     pyproject changes) and rebuild the managed launchers. User data (Input/,
     Seashells/, Profiles/, Output/, and the app settings file) is untouched."""
     if not (REPO_ROOT / ".venv").exists():
         print("No existing install found; running a full install instead.")
-        return install()
+        return install(pytorch_runtime=pytorch_runtime)
+
     ensure_supported_python()
     passed(f"Using Python {sys.version.split()[0]} from {sys.executable}")
     venv_python = ensure_venv()
-    install_dependencies(venv_python)
+    install_dependencies(venv_python, pytorch_runtime=pytorch_runtime)
     install_managed_wrapper()
     if not skip_doctor:
         doctor_status = run_doctor()
@@ -422,9 +461,17 @@ def main(argv: list[str] | None = None) -> int:
     bootstrap_parser = subparsers.add_parser("bootstrap", help="Create the venv and install runtime dependencies.")
     bootstrap_parser.add_argument("--skip-doctor", action="store_true")
     bootstrap_parser.add_argument("--include-dev", action="store_true")
-    subparsers.add_parser("install", help="Bootstrap and register desktop/start-menu launchers.")
+    bootstrap_parser.add_argument(
+        "--pytorch-runtime",
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="PyTorch wheel family: auto selects CUDA only when nvidia-smi reports a suitable NVIDIA GPU; cpu is the safe fallback; cuda forces the CUDA 12.4 wheel.",
+    )
+    install_parser = subparsers.add_parser("install", help="Bootstrap and register desktop/start-menu launchers.")
+    install_parser.add_argument("--pytorch-runtime", choices=["auto", "cpu", "cuda"], default="auto")
     update_parser = subparsers.add_parser("update", help="Refresh dependencies and launchers in an existing install; user data is kept.")
     update_parser.add_argument("--skip-doctor", action="store_true", help="Skip the post-update diagnostics run.")
+    update_parser.add_argument("--pytorch-runtime", choices=["auto", "cpu", "cuda"], default="auto")
     doctor_parser = subparsers.add_parser("doctor", help="Run install diagnostics.")
     doctor_parser.add_argument("--skip-model-init", action="store_true")
     doctor_parser.add_argument("--ci", action="store_true")
@@ -433,11 +480,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "bootstrap":
-        return bootstrap(skip_doctor=args.skip_doctor, include_dev=args.include_dev)
+        return bootstrap(skip_doctor=args.skip_doctor, include_dev=args.include_dev, pytorch_runtime=args.pytorch_runtime)
     if args.command == "install":
-        return install()
+        return install(pytorch_runtime=args.pytorch_runtime)
     if args.command == "update":
-        return update(skip_doctor=args.skip_doctor)
+        return update(skip_doctor=args.skip_doctor, pytorch_runtime=args.pytorch_runtime)
     if args.command == "doctor":
         return run_doctor(skip_model_init=args.skip_model_init, ci_mode=args.ci)
     if args.command == "run":

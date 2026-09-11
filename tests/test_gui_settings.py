@@ -127,8 +127,13 @@ def test_app_settings_defaults_when_missing(tmp_path: Path, monkeypatch: pytest.
     settings = load_app_settings()
 
     assert settings["remember_backend"] is True
+    assert "default_input_dir" not in settings
+    assert "default_output_dir" not in settings
+    assert "output_filename_warning" not in settings
     assert settings["inference_backend"] == "pytorch"
     assert settings["audio_cpp_device"] is None
+    assert settings["device_mode"] == "cpu"
+    assert settings["cuda_device"] is None
     assert settings["audio_cpp_cli"] == ""
     assert settings["audio_cpp_model"] == ""
 
@@ -137,7 +142,9 @@ def test_app_settings_round_trip_persists_backend_and_paths(tmp_path: Path, monk
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     payload = {
         "remember_backend": True,
-        "inference_backend": "vulkan",
+        "inference_backend": "pytorch",
+        "device_mode": "cuda",
+        "cuda_device": 1,
         "audio_cpp_device": 0,
         "audio_cpp_threads": 6,
         "audio_cpp_timeout": 120,
@@ -150,13 +157,123 @@ def test_app_settings_round_trip_persists_backend_and_paths(tmp_path: Path, monk
     loaded = load_app_settings()
 
     assert loaded["remember_backend"] is True
-    assert loaded["inference_backend"] == "vulkan"
+    assert loaded["inference_backend"] == "pytorch"
+    assert loaded["device_mode"] == "cuda"
+    assert loaded["cuda_device"] == 1
     assert loaded["audio_cpp_device"] == 0
     assert loaded["audio_cpp_threads"] == 6
     assert loaded["audio_cpp_timeout"] == 120
     assert loaded["audio_cpp_max_batch"] == 16
     assert loaded["audio_cpp_cli"] == "/opt/audiocpp/bin/audiocpp_cli"
     assert loaded["audio_cpp_model"] == "/models/chatterbox_q8_0.gguf"
+
+
+def test_app_settings_round_trip_persists_workspace_defaults_and_output_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    save_app_settings({
+        "default_input_dir": " /custom/Input ",
+        "default_output_dir": "/custom/Output",
+        "output_filename_warning": False,
+    })
+
+    loaded = load_app_settings()
+
+    assert loaded["default_input_dir"] == "/custom/Input"
+    assert loaded["default_output_dir"] == "/custom/Output"
+    assert loaded["output_filename_warning"] is False
+
+
+def test_app_settings_drops_malformed_workspace_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    save_app_settings({
+        "default_input_dir": 123,
+        "default_output_dir": None,
+        "output_filename_warning": "no",
+    })
+
+    loaded = load_app_settings()
+
+    assert "default_input_dir" not in loaded
+    assert "default_output_dir" not in loaded
+    assert "output_filename_warning" not in loaded
+
+
+def test_app_settings_round_trip_persists_recording_preferences(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    save_app_settings({
+        "recording_wizard_completed": True,
+        "recording_wizard_dismissed": False,
+        "recording_settings": {
+            "microphone_index": "2",
+            "samplerate": "48000",
+            "input_file": "/custom/Input/script.txt",
+            "output_dir": "/custom/Seashells",
+            "output_filename": "Cody_warm.wav",
+            "generic_name_warning": False,
+            "remember_input_default": True,
+            "remember_output_default": False,
+        },
+    })
+
+    loaded = load_app_settings()
+
+    assert loaded["recording_wizard_completed"] is True
+    assert loaded["recording_settings"] == {
+        "microphone_index": 2,
+        "samplerate": 48000,
+        "input_file": "/custom/Input/script.txt",
+        "output_dir": "/custom/Seashells",
+        "output_filename": "Cody_warm.wav",
+        "generic_name_warning": False,
+        "remember_input_default": True,
+        "remember_output_default": False,
+    }
+
+
+def test_app_settings_drops_malformed_recording_preferences(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    save_app_settings({
+        "recording_settings": {
+            "microphone_index": "not-an-index",
+            "samplerate": None,
+            "input_file": 123,
+            "output_dir": None,
+            "output_filename": 456,
+            "generic_name_warning": "no",
+        },
+    })
+
+    loaded = load_app_settings()
+
+    assert loaded["recording_settings"] == {}
+
+
+def test_app_settings_round_trip_persists_inference_wizard_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    save_app_settings({
+        "inference_wizard_completed": True,
+        "inference_wizard_dismissed": False,
+    })
+
+    loaded = load_app_settings()
+
+    assert loaded["inference_wizard_completed"] is True
+    assert loaded["inference_wizard_dismissed"] is False
+
+
+def test_app_settings_drops_malformed_inference_wizard_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    save_app_settings({
+        "inference_wizard_completed": "yes",
+        "inference_wizard_dismissed": 1,
+    })
+
+    loaded = load_app_settings()
+
+    assert "inference_wizard_completed" not in loaded
+    assert "inference_wizard_dismissed" not in loaded
 
 
 def test_app_settings_robust_to_corrupt_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,6 +293,8 @@ def test_app_settings_normalizes_invalid_values(tmp_path: Path, monkeypatch: pyt
     save_app_settings({
         "remember_backend": False,
         "inference_backend": "cuda",  # unsupported -> pytorch
+        "device_mode": "cuda",
+        "cuda_device": -3,  # negative -> None
         "audio_cpp_device": -3,  # negative -> None
         "audio_cpp_threads": 0,  # non-positive -> None
         "audio_cpp_timeout": "abc",  # non-numeric -> None
@@ -187,6 +306,8 @@ def test_app_settings_normalizes_invalid_values(tmp_path: Path, monkeypatch: pyt
 
     assert loaded["remember_backend"] is False
     assert loaded["inference_backend"] == "pytorch"
+    assert loaded["device_mode"] == "cuda"
+    assert loaded["cuda_device"] is None
     assert loaded["audio_cpp_device"] is None
     assert loaded["audio_cpp_threads"] is None
     assert loaded["audio_cpp_timeout"] is None
