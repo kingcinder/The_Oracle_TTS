@@ -6,7 +6,186 @@ This file is the repo's self-designated completeness record. It is the
 authoritative context for the Omega meta-skill loop (searched, never
 rewritten by the loop).
 
-## Done  - **V1.01 GUI release** (2026-09-08, this campaign):
+## Done
+
+- **Ingestion transformer (2026-09-11, this campaign)**: new
+  `src/the_oracle/ingest_transformer.py` analyzes an input script before use
+  and automatically corrects non-canonical speaker-turn formats. Detected and
+  fixed in place (canonical `Label: dialogue` output the existing ingester
+  attributes correctly): dash/pipe separators (`A - text`, `Alice | text`),
+  bracketed labels (`[A]: text`, `[Speaker A] text`), bulleted/quote-marked
+  turns (`- A: text`, `> A: text`), period separators (`A. text`), orphan
+  label lines (dialogue on the next line), chat-export timestamp prefixes,
+  and non-UTF-8 encodings (UTF-16/CP1252 transcoded to UTF-8). Prose is
+  protected: `Note:`/`See:` labels and parenthetical em-dash sentences are
+  never rewritten (spaced-dash-inside-text guard + document-level label
+  evidence). The GUI's Analyze path (`prepare_project`) now runs the
+  transformer check first: a warning popup explains every issue and offers a
+  one-click in-place fix with a timestamped backup; unfixable issues are
+  explained with a continue/cancel choice. Accepting the fix opens a
+  **Preview Fixed Text** dialog first: a unified diff (original vs fixed,
+  `-`/`+` marked lines) via `preview_fixed_text()`, and nothing is written
+  until the user accepts; cancelling in the preview leaves the file
+  untouched. Accepting the fix re-runs Analyze automatically: the same
+  click's `prepare_plan` reads the corrected file from disk and populates
+  the review table in one step (no second click needed), and the status
+  panel records the correction (count, file, backup path) so the automatic
+  re-analysis is visible rather than silent. Transforms are idempotent and verified end-to-end against the
+  real `TextIngestor` attribution. The CLI render path runs the same check:
+  issues are always reported on stderr, and `--fix-input` corrects the
+  fixable ones in place (timestamped backup) before the pipeline loads;
+  without the flag the file is never modified and the output includes a
+  re-run hint. 27 module tests (`tests/test_ingest_transformer.py`), 5
+  GUI-flow tests (`tests/test_ingest_transformer_gui.py`), and 6 CLI tests
+  (`tests/test_cli.py`); full suite 727 passing.
+
+- **Batch folder fix (2026-09-11, this campaign)**: File → Batch Fix Input
+  Folder... scans every `.txt`/`.md` file in a chosen folder (non-recursive;
+  `*.bak-*` fix backups and non-text extensions skipped) via
+  `analyze_folder()`, computes all rewrites up front via
+  `preview_folder_fixes()` (nothing written), and shows **one combined
+  Preview Batch Fix dialog**: each file's unified diff grouped under a
+  `=== filename ===` header, unfixable warnings listed at the bottom.
+  Accepting applies every fix in one pass (`apply_folder_fixes()`), each
+  original backed up, and the status panel reports the total plus per-file
+  fix counts and backup paths; cancelling leaves the whole folder
+  untouched. A folder with no problems gets an informational popup and no
+  preview; a warnings-only folder gets an explanatory popup with no fix
+  offered. The batch is idempotent (re-running finds nothing) and verified
+  end-to-end through the real `TextIngestor`. 8 module tests
+  (`tests/test_ingest_transformer_batch.py`) + 3 GUI tests; full suite 740
+  passing.
+
+- **check-input CLI subcommand (2026-09-11, this campaign)**:
+  `the-oracle check-input FILE [--fix]` lints a dialogue file's formatting
+  without loading the render pipeline (no LanguageTool download, no model).
+  Exit codes: 0 = no issues (or all fixed with `--fix`), 1 = issues found
+  (fixable ones listed with their exact rewrites, warnings marked `!`),
+  2 = file missing/unreadable. Report-only by default; `--fix` corrects
+  fixable issues in place (timestamped backup), then re-analyzes so the
+  exit code reflects what remains. Warnings are never rewritten, and the
+  re-run hint is suppressed when nothing is fixable. 6 tests in
+  `tests/test_cli.py`; full suite 746 passing.
+
+- **--check-input-json (2026-09-11, this campaign)**: `the-oracle render
+  --check-input-json` emits the input-formatting report as exactly one JSON
+  document on stdout instead of human-readable stderr text — `file`,
+  `fixable_count`, `warning_count`, and an `issues` list (`line`,
+  `snippet`, `fixable`, `description`); with `--fix-input` the same
+  document gains `fixed_count` and `backup` (pre-fix issue list plus what
+  was applied, in one object so consumers can always parse stdout as a
+  single document). Missing/unreadable files report an `error` key rather
+  than emitting nothing. 6 tests in `tests/test_cli.py`; full suite 752
+  passing.
+
+- **--speaker-ref suggestions (2026-09-11, this campaign)**: when the
+  transformer reports a file, the report now suggests the exact voice flags
+  for the script's cast. `suggest_speaker_refs(text)` reads the cast from
+  the **post-fix** text (so a speaker only visible after a transform is
+  included) and computes the mapping via the pipeline's own
+  `DualSpeakerAttributor._map_labels_to_voices` — first-appearance order
+  onto keys A..X, so a suggestion can never drift from what a render does.
+  A/B use `--speakerA-ref`/`--speakerB-ref`; keys C+ are marked `new` (the
+  flags a user must ADD). `rejected_labels(text)` lists labels that fail
+  speaker validation entirely ("Chapter:", "Note:") — no reference audio
+  can attribute those; the user must edit the label. Surfaced in:
+  `check-input` (stderr hints, `use`/`add` markers), the render path's
+  human report (stderr), and `--check-input-json` (stable `speaker_refs` +
+  `rejected_labels` keys, always present). 6 tests in `tests/test_cli.py`;
+  full suite 758 passing.
+
+- **SRT auto-detection (2026-09-11, this campaign)**: the CLI render path
+  converts `.srt` subtitle inputs into dialogue scripts before analysis
+  (`src/the_oracle/srt_ingest.py` + `cli._maybe_convert_srt`). Detection is
+  strict: only files with the `.srt` extension whose content parses as
+  complete SubRip cues convert; a `.srt` file without valid cues (and any
+  other file) passes through untouched, and missing/unreadable files are
+  reported by the ordinary error paths. Conversion strips timestamps, cue
+  indexes, HTML markup (`<i>`, `<font>`), and ASS overrides (`{\\an8}`);
+  a `Name:` prefix on a cue line names the speaker (validated by the
+  ingester's own `canonical_speaker_label`, so `Note:`-style prose prefixes
+  stay spoken); cues without names continue the previous speaker, falling
+  back to `Narrator`; dashed cue lines split into separate turns with
+  alternation to the other voice of the pair (and never re-merge within a
+  cue); consecutive same-speaker cues merge into one turn. The converted
+  script is written as a sibling `<name>.srt.txt` (subsequent runs reuse it;
+  the subtitle file itself is never modified) and replaces the input for
+  the transformer check and pipeline; the cast round-trips through the real
+  `TextIngestor`. 12 module tests (`tests/test_srt_ingest.py`) + 3 CLI-path
+  tests; full suite 773 passing.
+
+- **--fix-input-interactive (2026-09-11, this campaign)**: the render path's
+  terminal equivalent of the GUI popup + preview. Shows the issue summary
+  and the rule-labeled diff of the exact rewrite on stderr, then prompts
+  `Apply these fixes before rendering? [y/N]` before writing (backup kept).
+  Any non-yes answer — or EOF/ctrl-D — leaves the file untouched and aborts
+  the render with exit code 2 *before OraclePipeline() loads*. In
+  non-interactive runs (piped stdin, CI) the flag degrades to a report-only
+  check with a stderr notice, so automation never blocks on a prompt.
+  Prompt function is injectable for tests. 7 tests in `tests/test_cli.py`;
+  full suite 785 passing.
+
+- **Rule-labeled preview diffs (2026-09-11, this campaign)**:
+  `transform_text_detailed(text)` returns per-fix provenance (`LineFix`:
+  output line number, rule name, original text) alongside the fixed text;
+  `transform_text` is a thin wrapper preserving the old API. Rules: dash,
+  period, bracket, timestamp, orphan, bullet, encoding (`RULE_LABELS` maps
+  them to display names). `labeled_fixed_diff(original, fixed, line_fixes)`
+  builds the unified diff with each rewritten `+` line prefixed by its rule
+  label — e.g. `+ [dash/pipe separator] A: Hello there.` — attributing by
+  *position* (hunk headers are walked, not text-matched), so identical
+  source lines fixed by different rules label correctly. The GUI's
+  single-file preview uses this via `preview_fixed_text` (now 5-tuple with
+  `line_fixes`) and `FolderFix.line_fixes`. 5 module tests + updated
+  batch-GUI assertions.
+
+- **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
+  own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`
+  pre-flight. `analyze_input_file` flags a structurally-valid SubRip file
+  (detection is by content, not extension) as one fixable issue — "ingested
+  directly, every cue would be read as narration" — and offers the
+  conversion; `transform_text_detailed` handles SRT as a single whole-file
+  `srt` rule (rule label "SRT subtitle"); `fix_input_file` is the one
+  non-in-place case: it writes the converted script to a sibling
+  `<name>.srt.txt` (subtitle file backed up, never modified) and returns
+  the *written path* as its new first element (was the fixed text; all
+  callers updated — the CLI render path re-points `--input` at the
+  converted script after `--fix-input`/`--fix-input-interactive`, and the
+  GUI flow renders the script too); `analyze_folder` includes `.srt` in
+  batch scans. The GUI popup/preview/trusted-file flow, `check-input
+  --fix`, and the JSON report all handle SRT inputs through the same APIs.
+  5 module tests; full suite 796 passing.
+
+- **Remember-my-choice / trusted files (2026-09-11, this campaign)**: the
+  single-file fix preview dialog offers a checkbox, "Remember this choice
+  and fix this file automatically in the future". Ticking it + accepting
+  adds the file's resolved path to `trusted_format_files` in the app
+  settings (`gui_settings.py` schema pass-through with string hygiene); a
+  later Analyze/Render on the same file auto-corrects it silently (backup
+  still kept, status-panel line says "trusted file"), no popup or preview.
+  Trust is per-file: other files keep the full popup + preview flow.
+  Settings > **Forget remembered auto-fix approvals** clears the list.
+  SECURITY-RELEVANT FIX found by the new tests: the popup's Cancel branch
+  compared `clickedButton() is StandardButton.Cancel`, which can never be
+  true (widget vs. enum) — clicking Cancel silently proceeded to Analyze.
+  Now uses `box.standardButton(clicked)`. 5 GUI tests; full suite 791
+  passing.
+
+- **Side-by-side preview dialog (2026-09-11, this campaign)**: the
+  single-file **Preview Fixed Text** dialog is now a two-pane layout —
+  original on the left (with `-` markers on rewritten rows), corrected text
+  on the right (with `+` markers and the rule label as a suffix, e.g.
+  `+ A: Hello there. [dash/pipe separator]`), headers `Original` /
+  `Corrected (with fix rule)`, and synchronized scrolling (either pane's
+  scrollbar drives the other). Alignment comes from
+  `side_by_side_diff_rows(original, fixed, line_fixes)` in the transformer:
+  a `SequenceMatcher` opcode walk producing `DiffRow(kind=same/changed/
+  removed/added, rule)` rows — rewrites pair line-for-line as `changed`,
+  exact regardless of script length. The batch dialog keeps the unified
+  labeled diff. 2 GUI tests (pane contents + behavioral scroll coupling);
+  full suite 786 passing.
+
+- **V1.01 GUI release** (2026-09-08, this campaign):
   - Pain-point `~` markers (`word~word`) in input scripts are replaced by a
     normal spoken word boundary at the single synthesis chokepoint
     (`Utterance.text_for_tts`) in every correction mode — including Verbatim —
@@ -174,7 +353,17 @@ rewritten by the loop).
   for worker, MainWindow preview-player deferral and close-stop, prewarm
   teardown via finished for both ready and failed paths). The pre-voice-craft Render-click crash report remains
   separate and still blocked-on-repro; repro launcher: `bash
-  /tmp/gui_crash_catcher.sh`. Findings: `.serpent-circle/04-debug/root-causes.md`.
+  /tmp/gui_crash_catcher.sh` (recreated 2026-09-11 after a machine restart
+  wiped /tmp). Findings: `.serpent-circle/04-debug/root-causes.md`.
+  **Update 2026-09-11: the crash is CONFIRMED LIVE** — journalctl shows four
+  more null-pointer segfaults (Sep 09 x3, Sep 10 x1), one in libQt6Widgets,
+  and the Sep 10 one lands ~5 s after a logged `render_click`
+  (`gui_action_timing.json` entry 182). The Sep 10 session's re-render
+  succeeded after relaunch, so the trigger is state-dependent
+  (render-after-render / preview-playback-active are candidate conditions;
+  see root-causes.md). Static re-review of the current render flow found
+  all worker teardowns correct; a real repro under the catcher is still the
+  designated next step.
 - **audio.cpp punctuation normalization is NOT patched**: its replacement
   table (`:`→`,`, `;`→`, `, dashes, quotes) exactly mirrors the installed
   Chatterbox Python reference `punc_norm`, so diverging would reduce
