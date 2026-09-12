@@ -359,6 +359,26 @@ rewritten by the loop).
   per-file backups are not (yet) recorded here, logged for later. 5 GUI
   tests; full suite 860 passing.
 
+- **GUI bug audit (2026-09-12)**: a targeted sweep of signal wiring, modal
+  flows, thread lifecycles, and table state found and fixed three bugs:
+  (1) the reference picker connected BOTH `currentIndexChanged` and
+  `activated` to `_handle_reference_selection`, so picking "Custom Voice
+  Reference Audio..." ran `_pick_audio()` twice — two stacked modal file
+  dialogs; now `activated` alone (which also keeps the first-click behavior
+  the second connection was added for). (2) `_handle_row_action` (the table's
+  +/- control) repopulated the table from the plan WITHOUT
+  `_sync_plan_from_table()` first, silently discarding unsaved edits in
+  other rows' Repaired/Speaker/Emotion cells on every add/remove; now syncs
+  before mutating. (3) the review table's Index, Original Text, and Duration
+  columns were created with default editable flags (only Status was
+  protected), so users could type into computed columns; now read-only
+  (Repaired Text stays editable). Verified-correct during the sweep:
+  thread close-path coverage (all 7 thread types joined/disconnected),
+  enum-vs-enum dialog comparisons, `_output_name_edited` preservation,
+  blockSignals discipline on repopulations, and lambda late-binding (all
+  captures use default-arg binding). 4 regression tests; full suite 864
+  passing.
+
 - **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
   own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`
   pre-flight. `analyze_input_file` flags a structurally-valid SubRip file
