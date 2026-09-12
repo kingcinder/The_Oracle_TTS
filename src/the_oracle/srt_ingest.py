@@ -1,0 +1,232 @@
+"""SRT subtitle ingestion: detect, parse, and convert to dialogue scripts.
+
+Subtitle files are a common source of "dialogue" material, but their format
+(numbered cue blocks with clock timestamps) is nothing like the ``Label:
+dialogue`` scripts the ingester understands — ingested directly, every cue
+degrades into narration. This module converts a valid SubRip (``.srt``)
+file into a canonical dialogue script before analysis/rendering:
+
+* Timestamps, cue indexes, HTML markup (``<i>``, ``<font>``), and ASS-style
+  overrides (``{\\an8}``) are stripped.
+* A ``Name:`` prefix on a cue's first line (validated by the same
+  :func:`canonical_speaker_label` the ingester uses) becomes the speaker;
+  cues without one inherit the previous cue's speaker, and a script with no
+  names at all becomes a single ``Narrator``.
+* Dashed lines inside a cue (``- Hello`` / ``- Hi``) are split into separate
+  turns, matching the two-speaker subtitle convention.
+* Consecutive cues by the same speaker are merged into one turn — subtitle
+  cues are line fragments, and one turn per 2-second cue would render
+  terribly.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from the_oracle.speaker_attribution.heuristics import canonical_speaker_label
+
+# A cue clock line: "00:00:01,000 --> 00:00:04,000" (comma or dot millis).
+_SRT_TIME_RE = re.compile(
+    r"^\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*"
+    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*$"
+)
+
+# A numbered cue index line.
+_SRT_INDEX_RE = re.compile(r"^\s*\d+\s*$")
+
+# HTML/font markup and ASS override blocks inside cue text.
+_SRT_MARKUP_RE = re.compile(r"<[^>]+>|\{\\[^}]*\}")
+
+# A dashed subtitle line: "- Hello there." (two-speaker convention).
+_SRT_DASH_RE = re.compile(r"^\s*[-\u2013\u2014]\s+")
+
+# Fallback speaker when a subtitle names nobody.
+_NARRATOR = "Narrator"
+
+# Speaker-label prefix on a cue's first text line: "Winston: The plans...".
+_SPEAKER_PREFIX_RE = re.compile(r"^(?P<label>[A-Za-z][\w .'\-]{0,48}?)\s*:\s*(?P<rest>\S.*)$")
+
+
+@dataclass(slots=True)
+class SrtCue:
+    """One subtitle cue with its text lines cleaned of markup."""
+
+    index: int
+    start_seconds: float
+    end_seconds: float
+    lines: list[str]
+
+
+def looks_like_srt(text: str) -> bool:
+    """True when *text* parses as SubRip subtitles.
+
+    Requires at least one complete cue (index, clock line, and text), so
+    ordinary prose or dialogue scripts never match — an arrow-like string
+    inside prose is not enough.
+    """
+    return len(parse_srt(text)) >= 1
+
+
+def parse_srt(text: str) -> list[SrtCue]:
+    """Parse SubRip cues from *text*, tolerating missing index lines.
+
+    Raises :class:`ValueError` when the text contains cue-looking blocks
+    whose clock lines are malformed — that indicates a corrupt subtitle
+    file rather than a non-SRT document.
+    """
+    blocks: list[tuple[list[str], int]] = []  # (raw lines, block start line no)
+    current: list[str] = []
+    start_line = 1
+    for line_number, raw in enumerate(text.splitlines(), start=1):
+        if raw.strip():
+            if not current:
+                start_line = line_number
+            current.append(raw)
+        elif current:
+            blocks.append((current, start_line))
+            current = []
+    if current:
+        blocks.append((current, start_line))
+
+    cues: list[SrtCue] = []
+    for raw_lines, block_start in blocks:
+        lines = list(raw_lines)
+        if lines and _SRT_INDEX_RE.match(lines[0]):
+            lines = lines[1:]
+        if not lines:
+            continue
+        clock = _SRT_TIME_RE.match(lines[0])
+        if not clock:
+            continue  # not a cue block (trailing credits text, stray numbers)
+        hours_a, min_a, sec_a, ms_a, hours_b, min_b, sec_b, ms_b = (int(g) for g in clock.groups())
+        start = hours_a * 3600 + min_a * 60 + sec_a + ms_a / 1000
+        end = hours_b * 3600 + min_b * 60 + sec_b + ms_b / 1000
+        text_lines = [_SRT_MARKUP_RE.sub("", line).strip() for line in lines[1:]]
+        text_lines = [line for line in text_lines if line]
+        if not text_lines:
+            continue  # an empty cue carries no dialogue
+        cues.append(
+            SrtCue(
+                index=len(cues) + 1,
+                start_seconds=start,
+                end_seconds=end,
+                lines=text_lines,
+            )
+        )
+    return cues
+
+
+def _speaker_of(line: str) -> tuple[str | None, str]:
+    """Split a leading ``Name:`` prefix off a cue line.
+
+    Returns ``(speaker_or_None, remaining_text)``. The label must pass the
+    ingester's own speaker validation, so ``Note:``-style prose prefixes in
+    subtitles are kept as speech text rather than becoming phantom speakers.
+    """
+    match = _SPEAKER_PREFIX_RE.match(line)
+    if match:
+        label = match.group("label").strip()
+        if canonical_speaker_label(label) is not None:
+            return canonical_speaker_label(label), match.group("rest").strip()
+    return None, line
+
+
+def _cue_turns(
+    cue: SrtCue, current_speaker: str | None, last_other_speaker: str | None
+) -> list[tuple[str, str]]:
+    """Resolve one cue into (speaker, text) turns.
+
+    Dashed lines split into separate turns (the two-speaker subtitle
+    convention): the first line belongs to the current speaker and each
+    subsequent line alternates to the *other* voice of the pair — the last
+    speaker different from the current one, or the ``Narrator`` fallback
+    when nobody else has been named yet. Splitting preserves the turn
+    boundary so misattributions are at least visible and editable. A
+    ``Name:`` prefix on a line always wins over the alternation.
+    """
+    turns: list[tuple[str, str]] = []
+    dashed = any(_SRT_DASH_RE.match(line) for line in cue.lines)
+    if dashed:
+        speaker = current_speaker or _NARRATOR
+        for line in cue.lines:
+            body = _SRT_DASH_RE.sub("", line).strip()
+            if not body:
+                continue
+            named, text = _speaker_of(body)
+            if named:
+                speaker = named
+            elif turns:
+                # Alternate to the other voice of the pair.
+                speaker = last_other_speaker or _NARRATOR
+            turns.append((speaker, text))
+        return turns
+
+    first_line = cue.lines[0]
+    speaker, text = _speaker_of(first_line)
+    if len(cue.lines) > 1:
+        text = " ".join([text, *[line.strip() for line in cue.lines[1:] if line.strip()]])
+    return [(speaker or current_speaker or _NARRATOR, text)]
+
+
+def srt_to_dialogue_text(text: str) -> tuple[str, int, int]:
+    """Convert SRT *text* into a canonical dialogue script.
+
+    Returns ``(script_text, cue_count, speaker_count)``. Consecutive cues by
+    the same speaker are merged into one turn, because subtitle cues are
+    sentence fragments, not complete dialogue lines.
+    """
+    cues = parse_srt(text)
+    turns: list[tuple[str, str]] = []
+    current_speaker: str | None = None
+    last_other_speaker: str | None = None
+    for cue in cues:
+        dashed_cue = any(_SRT_DASH_RE.match(line) for line in cue.lines)
+        cue_turns = _cue_turns(cue, current_speaker, last_other_speaker)
+        for turn_index, (speaker, utterance) in enumerate(cue_turns):
+            same_speaker = turns and turns[-1][0] == speaker
+            # Consecutive cues by the same speaker merge into one turn (cue
+            # fragments read terribly one-by-one), but turns *within* one
+            # dashed cue must never re-merge — the dash split them because
+            # they are different people.
+            may_merge = same_speaker and not (dashed_cue and turn_index > 0)
+            if may_merge:
+                turns[-1] = (speaker, f"{turns[-1][1]} {utterance}".strip())
+            else:
+                turns.append((speaker, utterance))
+            if current_speaker and speaker != current_speaker:
+                last_other_speaker = current_speaker
+            current_speaker = speaker
+    lines = [f"{speaker}: {utterance}" for speaker, utterance in turns]
+    script = "\n".join(lines) + ("\n" if lines else "")
+    speakers = {speaker for speaker, _utterance in turns}
+    return script, len(cues), len(speakers)
+
+
+def convert_srt_file(path: str | Path, *, overwrite: bool = False) -> tuple[Path, int, int]:
+    """Convert an ``.srt`` file on disk into a sibling ``.txt`` dialogue script.
+
+    The converted script is written next to the subtitle file as
+    ``<name>.srt.txt`` (or ``<name>.txt`` when the file is already named
+    that way) so the render pipeline ingests the script, not the subtitles.
+    Returns ``(script_path, cue_count, speaker_count)``. Raises
+    :class:`ValueError` when the file is not valid SubRip, and
+    :class:`FileExistsError` when the target script already exists unless
+    ``overwrite`` is set.
+    """
+    file_path = Path(path)
+    raw = file_path.read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252")
+    script, cue_count, speaker_count = srt_to_dialogue_text(text)
+    if not script:
+        raise ValueError(f"No valid SubRip cues found in {file_path}")
+    suffix = ".srt.txt" if file_path.suffix.lower() == ".srt" else ".txt"
+    target = file_path.with_suffix(suffix)
+    if target.exists() and not overwrite:
+        raise FileExistsError(f"Converted script already exists: {target}")
+    target.write_text(script, encoding="utf-8")
+    return target, cue_count, speaker_count
