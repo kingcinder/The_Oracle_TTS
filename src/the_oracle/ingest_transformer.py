@@ -92,6 +92,7 @@ class FormatIssue:
     snippet: str
     fixable: bool = False
     fix_description: str = ""
+    rule: str = ""  # transformer rule name ('dash', 'timestamp', ...); '' for warnings
 
 
 @dataclass(slots=True)
@@ -214,12 +215,14 @@ def analyze_text(text: str) -> list[FormatIssue]:
             candidate = stripped
 
         fix_description = ""
+        rule_name = ""
 
         if _BULLET_RE.match(line):
             inner = _strip_bullet(line).strip()
             inner_marker = _SPEAKER_RE.match(inner)
             if inner_marker and _looks_like_speaker(inner_marker.group("label")):
                 fix_description = f"Remove the list/quote marker so the line reads '{inner}'."
+                rule_name = "bullet"
 
         if not fix_description:
             dash = _DASH_SEP_RE.match(candidate)
@@ -234,18 +237,21 @@ def analyze_text(text: str) -> list[FormatIssue]:
                         "A dash or pipe is used instead of a colon; rewrite as "
                         f"'{fixed}'."
                     )
+                    rule_name = "dash"
 
         if not fix_description:
             period = _PERIOD_SEP_RE.match(candidate)
             if period and _looks_like_speaker(period.group("label").strip()):
                 fixed = f"{period.group('label').strip()}: {period.group('text').strip()}"
                 fix_description = f"A period is used after the speaker name; rewrite as '{fixed}'."
+                rule_name = "period"
 
         if not fix_description:
             bracketed = _BRACKETED_LABEL_RE.match(candidate)
             if bracketed and _looks_like_speaker(bracketed.group("label").strip()):
                 fixed = f"{bracketed.group('label').strip()}: {bracketed.group('text').strip()}"
                 fix_description = f"Remove the brackets; rewrite as '{fixed}'."
+                rule_name = "bracket"
 
         if not fix_description:
             prefixed = _BRACKETED_PREFIX_RE.match(candidate)
@@ -257,6 +263,7 @@ def analyze_text(text: str) -> list[FormatIssue]:
                         "A chat-export timestamp prefixes the line; drop it and keep "
                         f"'{rest}'."
                     )
+                    rule_name = "timestamp"
 
         if not fix_description:
             orphan = _LABEL_ONLY_RE.match(candidate)
@@ -268,6 +275,7 @@ def analyze_text(text: str) -> list[FormatIssue]:
                         "The speaker label has no dialogue on its line; join it with "
                         f"the next line as '{fixed}'."
                     )
+                    rule_name = "orphan"
 
         if fix_description:
             issues.append(
@@ -277,6 +285,7 @@ def analyze_text(text: str) -> list[FormatIssue]:
                     snippet=stripped[:120],
                     fixable=True,
                     fix_description=fix_description,
+                    rule=rule_name,
                 )
             )
             continue
@@ -374,6 +383,7 @@ def analyze_input_file(path: str | Path) -> FileAnalysis:
                     snippet=file_path.name,
                     fixable=True,
                     fix_description="Transcode the file to plain UTF-8.",
+                    rule="encoding",
                 )
             )
         else:
@@ -408,6 +418,7 @@ def analyze_input_file(path: str | Path) -> FileAnalysis:
                 snippet=file_path.name,
                 fixable=True,
                 fix_description="Convert the subtitles into a canonical dialogue script.",
+                rule="srt",
             )
         )
         analysis.issues.sort(key=lambda issue: 0 if issue.line_number == 0 else 1)

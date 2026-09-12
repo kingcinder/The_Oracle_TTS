@@ -1073,3 +1073,34 @@ def test_fix_input_flag_conflict_beats_missing_required_args() -> None:
     with pytest.raises(SystemExit) as excinfo:
         handle_render(args)
     assert "mutually exclusive" in str(excinfo.value)
+
+
+# ------------- rule names in check-input human + JSON reports -------------
+
+
+def test_check_input_human_report_includes_rule_names(tmp_path, capsys) -> None:
+    file_path = tmp_path / "messy.txt"
+    file_path.write_text("[A]: Hello.\n[2024-01-01 10:00] B: Hi.\n", encoding="utf-8")
+    args = argparse.Namespace(file=str(file_path), fix=False, json=False)
+    assert handle_check_input(args) == 1
+    err_out = capsys.readouterr().out
+    assert "line 1 [bracket]:" in err_out
+    assert "line 2 [timestamp]:" in err_out
+
+
+def test_check_input_json_includes_rule_field(tmp_path, capsys) -> None:
+    file_path = tmp_path / "messy.txt"
+    file_path.write_text("[A]: Hello.\n", encoding="utf-8")
+    args = argparse.Namespace(file=str(file_path), fix=False, json=True)
+    assert handle_check_input(args) == 1
+    document = json.loads(capsys.readouterr().out)
+    assert document["issues"][0]["rule"] == "bracket"
+    # SRT files report the whole-document rule.
+    srt_path = tmp_path / "movie.srt"
+    srt_path.write_text(
+        "1\n00:00:01,000 --> 00:00:04,000\nWinston: The plans are ready.\n", encoding="utf-8"
+    )
+    args = argparse.Namespace(file=str(srt_path), fix=False, json=True)
+    assert handle_check_input(args) == 1
+    document = json.loads(capsys.readouterr().out)
+    assert document["issues"][0]["rule"] == "srt"

@@ -284,6 +284,7 @@ def _input_issue_json(issue, *, fixable: bool) -> dict:
         "snippet": issue.snippet,
         "fixable": fixable,
         "description": issue.fix_description if fixable else issue.description,
+        "rule": getattr(issue, "rule", "") or None,
     }
 
 
@@ -441,7 +442,8 @@ def _check_input_formatting(input_path: str, fix: bool, json_output: bool = Fals
     )
     for issue in fixable[:5]:
         where = f"line {issue.line_number}" if issue.line_number else "file"
-        print(f"  - {where}: {issue.fix_description}", file=sys.stderr)
+        rule = f" [{getattr(issue, 'rule', '') or 'file'}]" if issue.line_number else ""
+        print(f"  - {where}{rule}: {issue.fix_description}", file=sys.stderr)
     for issue in warnings[:5]:
         where = f"line {issue.line_number}" if issue.line_number else "file"
         print(f"  - {where}: {issue.description}", file=sys.stderr)
@@ -653,7 +655,8 @@ def handle_check_input(args: argparse.Namespace) -> int:
         print(f"{file_path}: {len(warnings)} formatting warning(s):")
     for issue in fixable[:10]:
         where = f"line {issue.line_number}" if issue.line_number else "file"
-        print(f"  - {where}: {issue.fix_description}")
+        rule = f" [{getattr(issue, 'rule', '') or 'file'}]" if issue.line_number else ""
+        print(f"  - {where}{rule}: {issue.fix_description}")
     for issue in warnings[:10]:
         where = f"line {issue.line_number}" if issue.line_number else "file"
         print(f"  ! {where}: {issue.description}")
