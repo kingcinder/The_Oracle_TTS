@@ -463,6 +463,34 @@ def rule_label(rule: str) -> str:
     return RULE_LABELS.get(rule, rule)
 
 
+# Per-rule text colors for the preview dialogs, so each fix rule scans as
+# its own hue (a greenish dash fix reads differently from an orange
+# timestamp fix at a glance). Full-saturation-on-white values, tinted by
+# the dialog code; unknown rules hash to a stable fallback hue so new
+# rules are visible without touching this table.
+RULE_COLORS: dict[str, tuple[int, int, int]] = {
+    "dash": (0, 122, 92),  # green
+    "period": (142, 45, 226),  # purple
+    "bracket": (0, 95, 184),  # blue
+    "timestamp": (202, 80, 16),  # orange
+    "orphan": (166, 25, 46),  # crimson
+    "bullet": (94, 80, 0),  # olive
+    "encoding": (68, 68, 68),  # grey
+    "srt": (16, 84, 130),  # teal
+}
+
+
+def rule_color(rule: str) -> tuple[int, int, int]:
+    """A stable (r, g, b) text color for a fix rule's label in previews."""
+    if rule in RULE_COLORS:
+        return RULE_COLORS[rule]
+    # FNV-1a over the rule name -> a repeatable fallback hue.
+    h = 2166136261
+    for byte in rule.encode("utf-8"):
+        h = ((h ^ byte) * 16777619) & 0xFFFFFFFF
+    return (h >> 16 & 0x7F, h >> 8 & 0x7F, h & 0x7F)
+
+
 def transform_text(text: str) -> tuple[str, int]:
     """Rewrite every fixable format into canonical ``Label: dialogue`` lines.
 

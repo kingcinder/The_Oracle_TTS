@@ -912,3 +912,52 @@ def test_batch_rule_filter_excludes_rule_from_apply(qt_app, monkeypatch, tmp_pat
     assert [lf.rule for lf in accepted[0].line_fixes] == ["timestamp"]
     # The excluded rule's line survives untouched in the rewrite.
     assert "[A]: Hello." in accepted[0].fixed_text
+
+
+def test_preview_dialog_colors_rule_labels(qt_app, monkeypatch, tmp_path) -> None:
+    """Each [rule label] in the diff panes is tinted with its rule's color."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    from the_oracle.ingest_transformer import preview_fixed_text, rule_color
+
+    target = tmp_path / "messy.txt"
+    target.write_text(
+        "[Speaker A]: Hello there.\n[2024-01-01 10:00] Julia: Do they suspect anything?\n",
+        encoding="utf-8",
+    )
+    original_text, fixed_text, fix_count, _issues, line_fixes = preview_fixed_text(target)
+    expected = {rule_color("bracket"), rule_color("timestamp")}
+
+    import the_oracle.app_gui as app_gui
+
+    real_dialog = app_gui.QDialog
+    seen: dict = {}
+
+    class _PreviewDialog(real_dialog):
+        def exec(self):  # noqa: D102 - capture right-pane foreground colors
+            from PySide6.QtWidgets import QPlainTextEdit
+
+            panes = self.findChildren(QPlainTextEdit)
+            colors = {
+                s.format.foreground().color().name() for s in panes[1].extraSelections()
+            }
+            seen["colors"] = colors
+            from PySide6.QtCore import Qt as _Qt
+
+            seen["left_details"] = [
+                (s.format.foreground().style(), s.cursor.selectedText()[:30])
+                for s in panes[0].extraSelections()
+            ]
+            # PySide6 enums are always truthy; compare against NoBrush.
+            seen["left_brushless"] = all(
+                style == _Qt.BrushStyle.NoBrush for style, _text in seen["left_details"]
+            )
+            return real_dialog.DialogCode.Rejected
+
+    monkeypatch.setattr(app_gui, "QDialog", _PreviewDialog)
+    window._show_fix_preview_dialog(original_text, fixed_text, fix_count, line_fixes)
+    rgb_from_hex = lambda hexname: (  # noqa: E731
+        int(hexname[1:3], 16), int(hexname[3:5], 16), int(hexname[5:7], 16)
+    )
+    assert expected <= {rgb_from_hex(c) for c in seen["colors"]}
+    # The left pane's row backgrounds are pure backgrounds (no text tint).
+    assert seen["left_brushless"] is True, seen["left_details"]
