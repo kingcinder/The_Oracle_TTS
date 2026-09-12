@@ -8,6 +8,15 @@ rewritten by the loop).
 
 ## Done
 
+- **Front-end live debug session (2026-09-12)**: drove the remaining
+  unexercised GUI flows offscreen (recording studio/wizard lifecycles,
+  preview-dialog geometry persistence, template menu rebuild idempotency,
+  close-with-studio-open). Two probe FAILs were diagnosed as probe artifacts,
+  not product bugs: `_start_recording_wizard` correctly no-ops when no studio
+  is open (passing with one open), and geometry persistence is deliberately
+  gated on `_app_settings_ready` (probe now sets it; round-trip verified).
+  All 227 GUI-suite tests pass; no code changes needed; main at `a2bb961`.
+
 - **Ingestion transformer (2026-09-11, this campaign)**: new
   `src/the_oracle/ingest_transformer.py` analyzes an input script before use
   and automatically corrects non-canonical speaker-turn formats. Detected and
