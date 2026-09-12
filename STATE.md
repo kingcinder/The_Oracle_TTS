@@ -205,7 +205,19 @@ rewritten by the loop).
   theme-safe alpha). Row→line mapping is positional from
   `side_by_side_diff_rows`, so highlights are exact even with repeated
   lines. 1 GUI test asserts the highlight counts inside the live dialog;
-  full suite 821 passing. Applying a batch now honors the contract for **both** formats:
+  full suite 821 passing.
+
+- **Remembered preview dialog geometry (2026-09-11, this campaign)**: the
+  Preview Fixed Text dialog's size and position persist between sessions
+  via the app-settings file (`preview_dialog_geometry`, a base64 Qt
+  geometry blob). Restore happens before show (falling back to the
+  900x560 default when absent); save happens on dialog close whenever
+  app-settings persistence is enabled. The Qt blob encodes position
+  relative to the virtual desktop, so multi-monitor moves survive; a
+  corrupt blob fails `restoreGeometry` harmlessly. Schema hygiene added
+  in `_normalize_app_settings` (non-string/empty values dropped). 1 GUI
+  test (save → settings key → fresh-dialog restore); full suite 822
+  passing. Applying a batch now honors the contract for **both** formats:
   a latent pre-existing bug had `apply_folder_fixes` writing the
   converted script *into* the subtitle file; it now redirects to the
   sibling script and reports that path. 6 converter tests + 3

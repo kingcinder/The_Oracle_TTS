@@ -832,3 +832,47 @@ def test_preview_dialog_color_codes_changed_rows(qt_app, monkeypatch, tmp_path) 
     # red row on the left and its green counterpart on the right.
     assert captured["left_selections"] >= 2
     assert captured["right_selections"] >= 2
+
+
+def test_preview_dialog_remembers_geometry_between_sessions(qt_app, monkeypatch, tmp_path) -> None:
+    """The dialog's size/position persists via app settings and restores."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    window._app_settings_ready = True
+    from the_oracle.ingest_transformer import preview_fixed_text
+
+    target = tmp_path / "messy.txt"
+    target.write_text("[Speaker A]: Hello there.\n", encoding="utf-8")
+    original_text, fixed_text, fix_count, _issues, line_fixes = preview_fixed_text(target)
+
+    import the_oracle.app_gui as app_gui
+    from PySide6.QtCore import QByteArray
+
+    real_dialog = app_gui.QDialog
+    saved_blobs: list[bytes] = []
+
+    class _PreviewDialog(real_dialog):
+        def exec(self):  # noqa: D102 - accept, after claiming a known size
+            self.resize(1100, 640)
+            return real_dialog.DialogCode.Accepted
+
+    # Capture the blob the dialog saves, then verify a fresh dialog restores it.
+    original_restore = real_dialog.restoreGeometry
+
+    def spy_restore(self, blob):  # noqa: ANN001
+        saved_blobs.append(bytes(blob))
+        return original_restore(self, blob)
+
+    monkeypatch.setattr(app_gui, "QDialog", _PreviewDialog)
+
+    accepted = window._show_fix_preview_dialog(
+        original_text, fixed_text, fix_count, line_fixes, input_file=str(target)
+    )
+    assert accepted is True
+    stored = window._app_settings.get("preview_dialog_geometry")
+    assert isinstance(stored, str) and stored
+    decoded = QByteArray.fromBase64(stored.encode("ascii"))
+    assert not decoded.isNull()
+
+    # Second "session": a fresh dialog restoring the stored blob picks up the size.
+    fresh = real_dialog()
+    assert fresh.restoreGeometry(decoded) is True

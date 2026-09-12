@@ -150,6 +150,11 @@ def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
         trusted = [entry for entry in data["trusted_format_files"] if isinstance(entry, str) and entry.strip()]
         if trusted:
             normalized["trusted_format_files"] = trusted
+    # Remembered size/position of the Preview Fixed Text dialog (a Qt
+    # geometry blob, base64-encoded). Pass-through: non-string or empty
+    # values are dropped, a corrupt blob fails restoreGeometry harmlessly.
+    if isinstance(data.get("preview_dialog_geometry"), str) and data["preview_dialog_geometry"]:
+        normalized["preview_dialog_geometry"] = data["preview_dialog_geometry"]
     if isinstance(data.get("recording_settings"), dict):
         recording = dict(data["recording_settings"])
         for key in ("input_file", "output_dir", "output_filename"):
