@@ -761,6 +761,7 @@ def test_popup_and_panel_surface_speaker_ref_hints(qt_app, monkeypatch, tmp_path
 
     def fake_exec(self):  # noqa: ANN001 - capture the popup, pick Fix
         seen.setdefault("popup", self)
+        seen.setdefault("popup_text", self.informativeText())
         fix_button = next(
             (b for b in self.buttons() if b.text() == "Fix File Automatically"), None
         )
@@ -789,6 +790,9 @@ def test_popup_and_panel_surface_speaker_ref_hints(qt_app, monkeypatch, tmp_path
     monkeypatch.setattr(app_gui.QMessageBox, "information", staticmethod(fake_information))
     assert window._run_ingest_transformer_check() is True
     corrected_text = seen.get("corrected", "")
+    # The pre-fix warning popup itself carries the cast suggestions too.
+    assert "Speaker voices to provide" in seen.get("popup_text", "")
+    assert "winston -> voice A" in seen.get("popup_text", "")
     assert "Speaker voices to provide" in corrected_text
     assert "winston -> voice A" in corrected_text
     assert "julia -> voice B" in corrected_text
