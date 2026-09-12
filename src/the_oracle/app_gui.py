@@ -1592,8 +1592,10 @@ class SpeakerGroup(QHSectionGroup):
         self.on_save_blend = on_save_blend
         self.reference_path = QLineEdit()
         self.reference_picker = QComboBox()
-        self.reference_picker.currentIndexChanged.connect(self._handle_reference_selection)
-        # Use activated so selecting the already-current custom option still fires.
+        # activated alone (not currentIndexChanged): a user pick fires BOTH
+        # signals, and connecting both made _pick_audio() run twice — two
+        # stacked modal file dialogs. activated also covers the
+        # already-current custom option that currentIndexChanged would miss.
         self.reference_picker.activated.connect(self._handle_reference_selection)
         self._available_reference_paths: set[str] = set()
 
@@ -5878,20 +5880,31 @@ class MainWindow(QMainWindow):
     def _populate_table(self, plan: RenderPlan) -> None:
         self.table.setRowCount(len(plan.utterances))
         for row, utterance in enumerate(plan.utterances):
-            self.table.setItem(row, 0, QTableWidgetItem(str(utterance.index)))
+            index_item = QTableWidgetItem(str(utterance.index))
+            # The Index/Duration columns are computed, not inputs: default
+            # items are editable, and a user typing into them would corrupt
+            # the display until the next repopulate.
+            index_item.setFlags(index_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row, 0, index_item)
             speaker_combo = QComboBox()
             speakers = sorted(set(self._cast) | {item.speaker for item in plan.utterances})
             speaker_combo.addItems(speakers or ["A", "B"])
             speaker_combo.setCurrentText(utterance.speaker)
             self.table.setCellWidget(row, 1, speaker_combo)
-            self.table.setItem(row, 2, QTableWidgetItem(utterance.original_text))
+            original_item = QTableWidgetItem(utterance.original_text)
+            # Source text is the untouched input record; only Repaired Text
+            # (column 3) is meant to be edited.
+            original_item.setFlags(original_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row, 2, original_item)
             repaired = QTableWidgetItem(utterance.repaired_text)
             repaired.setFlags(repaired.flags() | Qt.ItemIsEditable)
             self.table.setItem(row, 3, repaired)
             emotion = self._create_emotion_combo(utterance.emotion)
             self.table.setCellWidget(row, 4, emotion)
             duration = "" if utterance.duration_seconds is None else f"{utterance.duration_seconds:.2f}s"
-            self.table.setItem(row, 5, QTableWidgetItem(duration))
+            duration_item = QTableWidgetItem(duration)
+            duration_item.setFlags(duration_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(row, 5, duration_item)
             # Show status in a dedicated column
             status = QTableWidgetItem(utterance.status)
             status.setFlags(status.flags() & ~Qt.ItemIsEditable)
@@ -5925,6 +5938,10 @@ class MainWindow(QMainWindow):
     def _handle_row_action(self, idx: int, row: int, control: QComboBox) -> None:
         if idx == 0 or not self.plan:
             return
+        # Sync the table into the plan BEFORE mutating it: the repopulate at
+        # the end rebuilds every row from the plan, so unsaved edits in other
+        # rows (repaired text, speaker, emotion) would be silently discarded.
+        self._sync_plan_from_table()
         if idx == 1:
             self.plan.utterances.insert(row + 1, self._blank_utterance())
         elif idx == 2 and 0 <= row < len(self.plan.utterances):

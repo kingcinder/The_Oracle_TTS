@@ -2225,3 +2225,111 @@ def test_save_blend_as_voice_requires_base_and_target(
         assert "Pick a base voice" in window.error_panel.toPlainText()
     finally:
         window.close()
+
+
+# ------------- GUI bug-fix regressions (2026-09-12 audit) -------------
+
+
+def test_reference_picker_single_dialog_on_custom_pick(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Selecting 'Custom...' must open exactly ONE file dialog.
+
+    Regression: the picker connected both currentIndexChanged and activated
+    to the same handler, so a real user pick fired both and stacked two
+    modal dialogs.
+    """
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        calls: list[str] = []
+        monkeypatch.setattr(window.speaker_a, "_pick_audio", lambda: calls.append("picked"))
+        group = window.speaker_a
+        # Repopulate with a default voice + custom option, simulating the
+        # user then choosing Custom in the dropdown.
+        group.set_reference_choices(
+            [type("V", (), {"label": "D1", "path": "/tmp/d1.wav"})()], [], ""
+        )
+        custom_index = group.reference_picker.findData("__custom__")
+        assert custom_index >= 0
+        group.reference_picker.setCurrentIndex(custom_index)  # index change
+        group.reference_picker.activated.emit(custom_index)  # user pick
+        assert calls == ["picked"], calls
+    finally:
+        window.close()
+
+
+def test_reference_picker_still_fires_when_custom_already_current(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The activated-only connection keeps the first-click behavior."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        calls: list[str] = []
+        monkeypatch.setattr(window.speaker_a, "_pick_audio", lambda: calls.append("picked"))
+        group = window.speaker_a
+        group.set_reference_choices([], [], "")
+        assert group.reference_picker.currentData() == "__custom__"
+        group.reference_picker.activated.emit(group.reference_picker.currentIndex())
+        assert calls == ["picked"]
+    finally:
+        window.close()
+
+
+def test_row_removal_preserves_unsaved_edits(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Removing a row must not discard edits made in other rows.
+
+    Regression: _handle_row_action repopulated the table from the plan
+    without syncing the table's edited cells into the plan first.
+    """
+    from PySide6.QtWidgets import QComboBox
+
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        # Minimal plan + direct populate (file convention): prepare_project
+        # loads real repair machinery we don't need here.
+        plan = _minimal_plan(paths)
+        plan.utterances.append(
+            Utterance(index=1, original_text="Second.", repaired_text="Second.")
+        )
+        plan.utterances.append(
+            Utterance(index=2, original_text="Third.", repaired_text="Third.")
+        )
+        window.plan = plan
+        window._populate_table(plan)
+        assert len(plan.utterances) >= 2
+        window.delete_confirm_enabled = False  # no modal in offscreen tests
+        # Edit row 0's repaired text directly in the table (unsynced).
+        window.table.item(0, 3).setText("user edit that must survive")
+        # Remove the LAST row via its +/- control.
+        last = len(plan.utterances) - 1
+        control = window.table.cellWidget(last, 8)
+        assert isinstance(control, QComboBox)
+        control.setCurrentIndex(2)  # Remove
+        # The row 0 edit must have survived the repopulate.
+        assert window.plan.utterances[0].repaired_text == "user edit that must survive"
+        assert window.table.item(0, 3).text() == "user edit that must survive"
+    finally:
+        window.close()
+
+
+def test_computed_table_columns_are_read_only(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Index/Original/Duration/Status cells must not be user-editable.
+
+    Regression: Status was protected but Index, Original Text and Duration
+    were created with default (editable) flags.
+    """
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        plan = _minimal_plan(paths)
+        window.plan = plan
+        window._populate_table(plan)
+        assert window.plan
+        for row in range(len(window.plan.utterances)):
+            for col in (0, 2, 5, 6):  # Index, Original, Duration, Status
+                item = window.table.item(row, col)
+                assert item is not None
+                assert not (item.flags() & 0x1) or not item.flags() & __import__(
+                    "PySide6.QtCore", fromlist=["Qt"]
+                ).Qt.ItemIsEditable, f"row {row} col {col} editable"
+            # Repaired text stays editable.
+            assert window.table.item(row, 3).flags() & __import__(
+                "PySide6.QtCore", fromlist=["Qt"]
+            ).Qt.ItemIsEditable
+    finally:
+        window.close()
