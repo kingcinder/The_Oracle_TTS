@@ -76,7 +76,20 @@ rewritten by the loop).
   was applied, in one object so consumers can always parse stdout as a
   single document). Missing/unreadable files report an `error` key rather
   than emitting nothing. 6 tests in `tests/test_cli.py`; full suite 752
-  passing.
+  passing. The document builder is shared with `check-input --json`
+  (below) so the two schemas can never drift.
+
+- **check-input --json (2026-09-11, this campaign)**:
+  `the-oracle check-input FILE [--fix] [--json]` emits the same
+  machine-readable report the render path produces — one JSON document on
+  stdout, nothing else printed in json mode so CI can parse stdout
+  cleanly. Exit codes are unchanged and the document always agrees with
+  them: 0 = clean (or fixed with `--fix`, where the document describes the
+  file's **post-fix** state and gains `fixed_count`/`backup`), 1 = issues
+  found, 2 = missing/unreadable (or fix failure) with an `error` key.
+  `speaker_refs`/`rejected_labels` are always present (stable schema).
+  5 tests in `tests/test_cli.py`, including a schema-parity pin against
+  `_input_json_document`; full suite 804 passing.
 
 - **--speaker-ref suggestions (2026-09-11, this campaign)**: when the
   transformer reports a file, the report now suggests the exact voice flags
