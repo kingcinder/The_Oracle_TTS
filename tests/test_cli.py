@@ -1129,3 +1129,96 @@ def test_voices_json_is_parseable_array(capsys) -> None:
     assert isinstance(document, list) and document
     assert {"label", "path"} <= set(document[0])
     assert Path(document[0]["path"]).is_file()
+
+
+# ------------- check-input --check-refs -------------
+
+
+def _real_audio_ref(tmp_path: Path) -> Path:
+    """A tiny real WAV built with soundfile (no bundled-clip dependency)."""
+    import soundfile as sf
+    import numpy as np
+
+    path = tmp_path / "ref_ok.wav"
+    sf.write(str(path), np.zeros(480, dtype="float32"), 24000, subtype="PCM_16")
+    return path
+
+
+def test_check_input_check_refs_ok_passes(tmp_path: Path, capsys) -> None:
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\nB: Hi.\n", encoding="utf-8")
+    good = _real_audio_ref(tmp_path)
+    args = build_parser().parse_args(
+        ["check-input", str(script), "--check-refs", "--speakerA-ref", str(good)]
+    )
+    assert handle_check_input(args) == 0
+    out = capsys.readouterr().out
+    assert "[OK] voice A" in out
+    assert "[OK] voice B" in out  # unset counts as OK
+
+
+def test_check_input_check_refs_bad_ref_fails(tmp_path: Path, capsys) -> None:
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\nB: Hi.\n", encoding="utf-8")
+    good = _real_audio_ref(tmp_path)
+    bad = tmp_path / "ref_bad.wav"
+    bad.write_text("this is not audio", encoding="utf-8")
+    missing = tmp_path / "missing.wav"
+    args = build_parser().parse_args(
+        [
+            "check-input",
+            str(script),
+            "--check-refs",
+            "--speakerA-ref",
+            str(good),
+            "--speakerB-ref",
+            str(bad),
+            "--speaker-ref",
+            f"C={missing}",
+        ]
+    )
+    assert handle_check_input(args) == 1
+    out = capsys.readouterr().out
+    assert "[OK] voice A" in out
+    assert "[BAD] voice B" in out
+    assert "[BAD] voice C" in out and "file not found" in out
+
+
+def test_check_input_json_includes_checked_refs(tmp_path: Path, capsys) -> None:
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\n", encoding="utf-8")
+    bad = tmp_path / "ref_bad.wav"
+    bad.write_text("junk", encoding="utf-8")
+    args = build_parser().parse_args(
+        ["check-input", str(script), "--json", "--check-refs", "--speakerA-ref", str(bad)]
+    )
+    assert handle_check_input(args) == 1
+    document = json.loads(capsys.readouterr().out)
+    assert document["refs_ok"] is False
+    assert document["checked_refs"][0]["voice_key"] == "A"
+    assert document["checked_refs"][0]["ref_status"].startswith("bad:")
+
+
+def test_check_input_json_checked_refs_ok(tmp_path: Path, capsys) -> None:
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\n", encoding="utf-8")
+    good = _real_audio_ref(tmp_path)
+    args = build_parser().parse_args(
+        ["check-input", str(script), "--json", "--check-refs", "--speakerA-ref", str(good)]
+    )
+    assert handle_check_input(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["refs_ok"] is True
+    assert document["checked_refs"][0]["ref_status"] == "ok"
+
+
+def test_check_input_without_check_refs_omits_checked_refs(tmp_path: Path, capsys) -> None:
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\n", encoding="utf-8")
+    args = build_parser().parse_args(["check-input", str(script), "--json"])
+    assert handle_check_input(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    # Stable schema: the keys exist in JSON mode even when --check-refs was
+    # not passed; the list is simply empty and nothing was validated.
+    assert document["checked_refs"] == []
+    assert document["refs_ok"] is True
