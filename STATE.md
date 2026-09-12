@@ -238,7 +238,19 @@ rewritten by the loop).
   applying them as-is would ignore the filter) intersected with the
   per-file checkboxes. Example: untick everything but ``chat-export
   timestamp`` to accept only timestamp fixes. 3 module tests + 1 GUI
-  test; full suite 828 passing. Applying a batch now honors the contract for **both** formats:
+  test; full suite 828 passing.
+
+- **Rule names in the CLI reports (2026-09-11, this campaign)**:
+  `FormatIssue` gained a ``rule`` field (the transformer rule name —
+  `dash`, `period`, `bracket`, `timestamp`, `bullet`, `orphan`, `srt`,
+  `encoding` — empty for warnings), populated by `analyze_text` and the
+  file-level analyzers. The CLI human reports (`check-input` and the
+  render path's format check) tag each fixable line as
+  ``line N [rule]:``; both JSON documents (`check-input --json` and the
+  render path's `--check-input-json`, via the shared
+  `_input_issue_json`) gained a stable ``rule`` key (`null` for
+  warnings/file-level issues without a rule), so CI can filter or group
+  findings by rule. 2 tests; full suite 830 passing. Applying a batch now honors the contract for **both** formats:
   a latent pre-existing bug had `apply_folder_fixes` writing the
   converted script *into* the subtitle file; it now redirects to the
   sibling script and reports that path. 6 converter tests + 3
