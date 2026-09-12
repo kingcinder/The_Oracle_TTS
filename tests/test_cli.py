@@ -1044,3 +1044,32 @@ def test_maybe_convert_srt_reuse_also_prints_hints(tmp_path, capsys) -> None:
     err = capsys.readouterr().err
     assert "reusing previously converted script" in err
     assert "Speaker voices to provide" in err
+
+
+# ------------- --fix-input / --fix-input-interactive are mutually exclusive -------------
+
+
+def test_fix_input_flags_are_mutually_exclusive(tmp_path, capsys) -> None:
+    """Combining the two fix flags is an explicit error, not a silent pick."""
+    args = build_parser().parse_args([
+        "render",
+        "--input", str(tmp_path / "in.txt"),
+        "--outdir", str(tmp_path / "out"),
+        "--speakerA-ref", "a.wav",
+        "--speakerB-ref", "b.wav",
+        "--fix-input",
+        "--fix-input-interactive",
+    ])
+    with pytest.raises(SystemExit) as excinfo:
+        handle_render(args)
+    message = str(excinfo.value)
+    assert "--fix-input and --fix-input-interactive are mutually exclusive" in message
+    assert "--fix-input-interactive shows the diff" in message  # the helpful part
+
+
+def test_fix_input_flag_conflict_beats_missing_required_args() -> None:
+    """The conflict is reported first, before --input/--outdir validation."""
+    args = build_parser().parse_args(["render", "--fix-input", "--fix-input-interactive"])
+    with pytest.raises(SystemExit) as excinfo:
+        handle_render(args)
+    assert "mutually exclusive" in str(excinfo.value)

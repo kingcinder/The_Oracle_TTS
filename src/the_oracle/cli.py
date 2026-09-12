@@ -677,6 +677,16 @@ def handle_render(args: argparse.Namespace) -> int:
         # eagerly spawns the LanguageTool download (hundreds of MB) and waits
         # on it, so a missing-flag mistake should fail fast instead of after an
         # expensive load.
+        if args.fix_input and args.fix_input_interactive:
+            # An explicit error instead of silently favoring one flag: the
+            # combination is almost always a script mistake, and a surprise
+            # behavior (whichever fix ran) is worse than a clear refusal.
+            raise SystemExit(
+                "--fix-input and --fix-input-interactive are mutually exclusive.\n"
+                "  --fix-input corrects fixable issues in place without asking.\n"
+                "  --fix-input-interactive shows the diff and prompts before writing.\n"
+                "Pick the one you want; drop the other."
+            )
         missing = [name for name, value in {"--input": args.input, "--outdir": args.outdir}.items() if not value]
         if missing:
             raise SystemExit(
