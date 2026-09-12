@@ -2623,9 +2623,17 @@ class MainWindow(QMainWindow):
             "prompt for review again before any automatic correction."
         )
         clear_trust_action.triggered.connect(self._clear_trusted_input_files)
+        restore_backup_action = QAction("Restore most recent input-file backup", self)
+        restore_backup_action.setToolTip(
+            "Undo the most recent input-formatting fix by restoring the file from "
+            "the timestamped backup taken before the correction. Regret a fix? "
+            "This puts the original back."
+        )
+        restore_backup_action.triggered.connect(self._restore_most_recent_format_backup)
         settings_menu.addSeparator()
         settings_menu.addAction(self.confirmation_action)
         settings_menu.addAction(clear_trust_action)
+        settings_menu.addAction(restore_backup_action)
         settings_menu.addSeparator()
         self.remember_backend_action = QAction("Remember GPU/CPU choice", self)
         self.remember_backend_action.setCheckable(True)
@@ -5396,6 +5404,7 @@ class MainWindow(QMainWindow):
                 _text, fix_count, backup_path = fix_input_file(input_file)
             except (OSError, ValueError):
                 return True  # fall back to the normal flow if the fix fails
+            self._remember_format_backup(input_file, backup_path)
             self.error_panel.append(
                 f"Input formatting: auto-corrected {fix_count} problem(s) in "
                 f"{Path(input_file).name} (trusted file; backup kept)."
@@ -5460,6 +5469,7 @@ class MainWindow(QMainWindow):
             except (OSError, ValueError) as exc:
                 QMessageBox.critical(self, "Fix Failed", f"The file could not be corrected:\n{exc}")
                 return False
+            self._remember_format_backup(input_file, backup_path)
             message = f"Corrected {fix_count} formatting problem(s) in {Path(input_file).name}."
             if backup_path:
                 message += f"\n\nA backup of the original was saved to:\n{backup_path}"
@@ -5549,6 +5559,108 @@ class MainWindow(QMainWindow):
                 )
             except OSError:
                 pass
+
+    def _remember_format_backup(self, fixed_file: str, backup_path: str | None) -> None:
+        """Record a fix's backup so it can be restored from Settings later."""
+        if not backup_path:
+            return
+        from datetime import datetime
+
+        resolved = str(Path(fixed_file).resolve())
+        backup = str(Path(backup_path).resolve())
+        records = [
+            r
+            for r in self._app_settings.get("recent_format_backups", [])
+            if isinstance(r, dict) and r.get("file") != resolved
+        ]
+        records.insert(
+            0,
+            {
+                "file": resolved,
+                "backup": backup,
+                "stamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            },
+        )
+        self._app_settings["recent_format_backups"] = records[:20]
+        if self._app_settings_ready:
+            try:
+                save_app_settings(self._app_settings)
+            except OSError:
+                pass
+
+    def _restore_most_recent_format_backup(self) -> None:
+        """Settings action: undo the most recent input-file fix from its backup."""
+        records = [
+            r
+            for r in self._app_settings.get("recent_format_backups", [])
+            if isinstance(r, dict) and r.get("file") and r.get("backup")
+        ]
+        if not records:
+            QMessageBox.information(
+                self,
+                "Restore Backup",
+                "No input-file backups are recorded yet. Backups are noted "
+                "whenever a formatting fix corrects a file in place.",
+            )
+            return
+        record = records[0]
+        fixed_file = Path(record["file"])
+        backup_file = Path(record["backup"])
+        if not backup_file.is_file():
+            QMessageBox.critical(
+                self,
+                "Restore Backup",
+                f"The backup file no longer exists:\n{backup_file}",
+            )
+            self._app_settings["recent_format_backups"] = records[1:]
+            if self._app_settings_ready:
+                try:
+                    save_app_settings(self._app_settings)
+                except OSError:
+                    pass
+            return
+        stamp = record.get("stamp") or "an earlier time"
+        answer = QMessageBox.question(
+            self,
+            "Restore Backup",
+            f"Restore {fixed_file.name} from its most recent backup?\n\n"
+            f"Backup: {backup_file}\nTaken: {stamp}\n\n"
+            "The corrected version will be overwritten by the original.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            text = backup_file.read_text(encoding="utf-8")
+            fixed_file.write_text(text, encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            QMessageBox.critical(
+                self,
+                "Restore Failed",
+                f"The backup could not be restored:\n{exc}",
+            )
+            return
+        self._app_settings["recent_format_backups"] = records[1:]
+        if self._app_settings_ready:
+            try:
+                save_app_settings(self._app_settings)
+            except OSError:
+                pass
+        self.error_panel.append(
+            f"Restored {fixed_file.name} from its backup (fix of {stamp} undone)."
+        )
+        # Re-point the input field when the restored file is the remembered
+        # input (or nothing is loaded), so the next Analyze/render uses it.
+        current = self.input_path.text().strip()
+        if not current or Path(current).resolve() == fixed_file:
+            self.input_path.setText(str(fixed_file))
+        QMessageBox.information(
+            self,
+            "Backup Restored",
+            f"{fixed_file.name} was restored from its backup.\n\n"
+            "The corrected version was overwritten by the original.",
+        )
 
     def _show_fix_preview_dialog(
         self,
