@@ -795,3 +795,40 @@ def test_popup_and_panel_surface_speaker_ref_hints(qt_app, monkeypatch, tmp_path
     # The status panel mirrors the hints.
     panel = window.error_panel.toPlainText()
     assert "winston -> voice A" in panel
+
+
+def test_preview_dialog_color_codes_changed_rows(qt_app, monkeypatch, tmp_path) -> None:
+    """Changed rows get red highlights left, green highlights right."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    from the_oracle.ingest_transformer import preview_fixed_text
+
+    target = tmp_path / "messy.txt"
+    target.write_text(
+        "[Speaker A]: Hello there.\nA: clean line untouched.\nB:\nHi back.\n",
+        encoding="utf-8",
+    )
+    original_text, fixed_text, fix_count, _issues, line_fixes = preview_fixed_text(target)
+
+    captured: dict = {}
+    import the_oracle.app_gui as app_gui
+    real_dialog = app_gui.QDialog
+
+    class _PreviewDialog(real_dialog):
+        def exec(self):  # noqa: D102 - capture pane highlights
+            from PySide6.QtWidgets import QPlainTextEdit
+
+            panes = self.findChildren(QPlainTextEdit)
+            assert len(panes) == 2
+            captured["left_selections"] = len(panes[0].extraSelections())
+            captured["right_selections"] = len(panes[1].extraSelections())
+            return real_dialog.DialogCode.Rejected
+
+    monkeypatch.setattr(app_gui, "QDialog", _PreviewDialog)
+    accepted = window._show_fix_preview_dialog(
+        original_text, fixed_text, fix_count, line_fixes, input_file=str(target)
+    )
+    assert accepted is False  # Rejected above; we only needed the built dialog
+    # Two rewritten regions (bracketed label + orphan label join): each has a
+    # red row on the left and its green counterpart on the right.
+    assert captured["left_selections"] >= 2
+    assert captured["right_selections"] >= 2

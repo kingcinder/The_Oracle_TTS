@@ -195,7 +195,17 @@ rewritten by the loop).
   useful content there), and the GUI fix flow adds them to the post-fix
   "File Corrected" popup and the status panel, computed from the
   post-transform text so a subtitle conversion's cast is suggested even
-  before the user accepts the fix. Full suite 820 passing. Applying a batch now honors the contract for **both** formats:
+  before the user accepts the fix. Full suite 820 passing.
+
+- **Color-coded preview rows (2026-09-11, this campaign)**: the
+  side-by-side Preview Fixed Text dialog highlights changed rows — soft
+  red (70-alpha) on the original pane for `changed`/`removed` rows, soft
+  green on the corrected pane for `changed`/`added` rows — via
+  `QTextEdit.ExtraSelection` full-width line backgrounds (no rich text,
+  theme-safe alpha). Row→line mapping is positional from
+  `side_by_side_diff_rows`, so highlights are exact even with repeated
+  lines. 1 GUI test asserts the highlight counts inside the live dialog;
+  full suite 821 passing. Applying a batch now honors the contract for **both** formats:
   a latent pre-existing bug had `apply_folder_fixes` writing the
   converted script *into* the subtitle file; it now redirects to the
   sibling script and reports that path. 6 converter tests + 3
