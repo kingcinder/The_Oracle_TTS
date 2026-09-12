@@ -8,6 +8,22 @@ rewritten by the loop).
 
 ## Done
 
+- **Whole-program debug session (2026-09-12)**: full-suite baseline (867
+  passed), then live end-to-end exercise of every CLI subcommand through real
+  dispatch — check-input (clean/messy/missing/JSON/`--check-refs` with real
+  WAV probing), fix-folder (dry-run, JSON apply with backups, missing-folder
+  exit 2), voices (+JSON), and the render flag matrix. The flag-conflict
+  guard, SRT auto-convert, and graceful missing-model handling all verified.
+  A **real render succeeded end-to-end**: an .srt input was auto-converted,
+  speakers attributed (Winston→A, Julia→B), two utterances synthesized by
+  Chatterbox, assembled FLAC + render_plan.json written, exit 0. Dev tools
+  green: deterministic smoke (cache reuse verified), doctor (the one FAIL is
+  the environmental turbo-checkpoint prefetch; WARNs are hardware reality —
+  1 GiB Quadro below VRAM minimum — correctly reported, not crashed on),
+  GUI theme certifier (all 6 themes legibility-certified). Zero product
+  bugs found; three initial probe "failures" were probe mistakes (wrong flag
+  names / dispatch pattern), corrected and re-verified.
+
 - **Front-end live debug session (2026-09-12)**: drove the remaining
   unexercised GUI flows offscreen (recording studio/wizard lifecycles,
   preview-dialog geometry persistence, template menu rebuild idempotency,
