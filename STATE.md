@@ -379,6 +379,22 @@ rewritten by the loop).
   captures use default-arg binding). 4 regression tests; full suite 864
   passing.
 
+- **GUI error-path audit (2026-09-12)**: second pass over runtime-error
+  families (handler signatures, exception gaps, dangling refs, media
+  lifecycles, wizard cleanup). One bug fixed: `load_gui_settings` let raw
+  `FileNotFoundError`/`JSONDecodeError` escape, so clicking a template
+  that had been deleted or was corrupt JSON crashed the menu click with
+  an unhandled traceback instead of the intended error dialog — it now
+  raises `GUISettingsError`, which every caller already catches
+  (`load_app_settings` was already safe with its own fallback). Verified
+  correct in the same sweep: all eight worker `run()` methods are fully
+  try-wrapped with failed-signal emission; both wizards emit `completed`
+  on window-X close (`closeEvent` → `_finish(False)`), so no dangling
+  `_inference_wizard`/`_recording_wizard` ref blocks reopening; media
+  status handlers defer player stops out of signal emission; slot
+  signatures match their signals (zero-arg slots on value-bearing signals
+  are legal Qt). 3 tests; full suite 867 passing.
+
 - **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
   own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`
   pre-flight. `analyze_input_file` flags a structurally-valid SubRip file
