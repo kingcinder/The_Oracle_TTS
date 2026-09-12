@@ -686,7 +686,8 @@ def test_batch_tree_selection_switches_diff(qt_app, monkeypatch, tmp_path) -> No
             return real_qdialog.DialogCode.Accepted
 
     monkeypatch.setattr(app_gui, "QDialog", _BatchDialog)
-    assert window._show_batch_fix_preview_dialog(str(folder), *_fixes_and_warnings(folder)) is True
+    accepted = window._show_batch_fix_preview_dialog(str(folder), *_fixes_and_warnings(folder))
+    assert isinstance(accepted, list) and len(accepted) == 2
     assert "dash/pipe separator" in seen["dash.txt"]
     assert "bracketed label" in seen["brackets.md"]
 
@@ -695,3 +696,52 @@ def _fixes_and_warnings(folder):
     from the_oracle.ingest_transformer import preview_folder_fixes
 
     return preview_folder_fixes(folder)
+
+
+def test_batch_tree_checkboxes_exclude_files_from_apply(qt_app, monkeypatch, tmp_path) -> None:
+    """Unticking a file removes it from the returned apply list."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    import the_oracle.app_gui as app_gui
+
+    folder = tmp_path / "inputs"
+    folder.mkdir()
+    (folder / "dash.txt").write_text("A - Hello.\n", encoding="utf-8")
+    (folder / "brackets.md").write_text("[A]: Greetings.\n", encoding="utf-8")
+    (folder / "period.txt").write_text("A. Period style.\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        app_gui.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder))
+    )
+
+    real_qdialog = app_gui.QDialog
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QPushButton, QTreeWidget
+
+    class _BatchDialog(real_qdialog):
+        def exec(self):  # noqa: D102 - untick one file, verify the rest apply
+            tree = self.findChildren(QTreeWidget)[0]
+            root = tree.topLevelItem(0)
+            assert root.childCount() == 3
+            # All ticked by default.
+            for i in range(root.childCount()):
+                assert root.child(i).checkState(0) == Qt.Checked
+            items = {root.child(i).text(0): root.child(i) for i in range(root.childCount())}
+            # Untick one file.
+            items["dash.txt"].setCheckState(0, Qt.Unchecked)
+            apply_button = self.findChildren(QPushButton)[0]
+            assert "2 of 3" in apply_button.text()
+            assert apply_button.isEnabled()
+            # Untick everything: the apply button must disable.
+            for item in items.values():
+                item.setCheckState(0, Qt.Unchecked)
+            assert not apply_button.isEnabled()
+            # Re-tick two files to apply.
+            items["dash.txt"].setCheckState(0, Qt.Checked)
+            items["period.txt"].setCheckState(0, Qt.Checked)
+            assert "2 of 3" in apply_button.text()
+            return real_qdialog.DialogCode.Accepted
+
+    monkeypatch.setattr(app_gui, "QDialog", _BatchDialog)
+    accepted = window._show_batch_fix_preview_dialog(str(folder), *_fixes_and_warnings(folder))
+    included_names = {fix.path.name for fix in accepted}
+    assert included_names == {"dash.txt", "period.txt"}  # brackets.md excluded
