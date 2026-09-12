@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import asdict, replace
 from pathlib import Path
 from time import perf_counter, time
+import difflib
 import json
 import os
 import sys
@@ -2560,6 +2561,16 @@ class MainWindow(QMainWindow):
         )
         load_profile_action.triggered.connect(self.load_settings_profile)
         file_menu.addAction(load_profile_action)
+        file_menu.addSeparator()
+        batch_fix_action = QAction("Batch Fix Input Folder...", self)
+        batch_fix_action.setToolTip(
+            "Scan a folder of input scripts for formatting problems the engine "
+            "would misread, show one combined preview of every proposed "
+            "correction, and fix all accepted files in place (each original "
+            "backed up)."
+        )
+        batch_fix_action.triggered.connect(self._batch_fix_input_folder)
+        file_menu.addAction(batch_fix_action)
 
         settings_menu = self.menuBar().addMenu("Settings")
         reset_defaults_action = QAction("Reset to Defaults", self)
@@ -2603,8 +2614,15 @@ class MainWindow(QMainWindow):
         self.templates_menu.aboutToShow.connect(self._rebuild_templates_menu)
         self.confirmation_action = QAction("Re-enable delete confirmations", self)
         self.confirmation_action.triggered.connect(self._enable_delete_confirmation)
+        clear_trust_action = QAction("Forget remembered auto-fix approvals", self)
+        clear_trust_action.setToolTip(
+            "Files approved via 'Remember this choice' in the fix preview will "
+            "prompt for review again before any automatic correction."
+        )
+        clear_trust_action.triggered.connect(self._clear_trusted_input_files)
         settings_menu.addSeparator()
         settings_menu.addAction(self.confirmation_action)
+        settings_menu.addAction(clear_trust_action)
         settings_menu.addSeparator()
         self.remember_backend_action = QAction("Remember GPU/CPU choice", self)
         self.remember_backend_action.setCheckable(True)
@@ -5005,6 +5023,376 @@ class MainWindow(QMainWindow):
             self.error_panel.append(f"Save failed: {exc}")
             QMessageBox.critical(self, "Save Project Failed", str(exc))
 
+    def _batch_fix_input_folder(self) -> None:
+        """Scan a folder for misformatted input scripts and fix them in bulk.
+
+        One folder picker, one combined preview of every file's exact
+        rewrite, then a single Apply that writes every accepted file (each
+        original backed up) and reports per-file results in the status panel.
+        """
+        from the_oracle.ingest_transformer import analyze_folder, apply_folder_fixes, preview_folder_fixes
+
+        folder = QFileDialog.getExistingDirectory(self, "Choose Folder of Input Scripts", "")
+        if not folder:
+            return
+        try:
+            analyses = analyze_folder(folder)
+        except (OSError, ValueError, UnicodeDecodeError):
+            QMessageBox.critical(self, "Scan Failed", f"The folder could not be read:\n{folder}")
+            return
+        if not analyses:
+            QMessageBox.information(
+                self,
+                "Input Formatting",
+                f"No formatting problems found in:\n{folder}\n\nEvery file is already in a format the engine attributes correctly.",
+            )
+            return
+
+        warnings_only = [a for a in analyses if not a.fixable_issues]
+        try:
+            fixes, _warnings = preview_folder_fixes(folder)
+        except ValueError:
+            # Nothing fixable: only warnings. Report them, offer no fix.
+            lines = [f"Found {len(warnings_only)} file(s) with unfixable formatting warnings:"]
+            for analysis in warnings_only[:10]:
+                for issue in analysis.warning_issues[:3]:
+                    lines.append(f"  \u2022 {Path(analysis.path).name}, line {issue.line_number}: {issue.description}")
+            QMessageBox.warning(self, "Input Formatting", "\n".join(lines))
+            return
+
+        if not self._show_batch_fix_preview_dialog(folder, fixes, warnings_only):
+            self.error_panel.append("Batch fix cancelled: no files were changed.")
+            return
+        try:
+            written = apply_folder_fixes(fixes)
+        except OSError as exc:
+            QMessageBox.critical(self, "Batch Fix Failed", f"The files could not be corrected:\n{exc}")
+            return
+        total = sum(count for _path, count, _backup in written)
+        self.error_panel.append(
+            f"Batch fix: corrected {total} formatting problem(s) across "
+            f"{len(written)} file(s) in {folder}."
+        )
+        for path, count, backup_path in written:
+            self.error_panel.append(
+                f"  \u2022 {Path(path).name}: {count} fix(es)"
+                + (f" (backup: {backup_path})" if backup_path else "")
+            )
+        QMessageBox.information(
+            self,
+            "Batch Fix Complete",
+            f"Corrected {total} formatting problem(s) across {len(written)} file(s).\n\n"
+            "Backups of every original were saved next to the files.",
+        )
+
+    def _show_batch_fix_preview_dialog(
+        self,
+        folder: str,
+        fixes: list,
+        warnings_only: list,
+    ) -> bool:
+        """One combined preview of every file's rewrite; True when accepted.
+
+        Each file's diff is grouped under a filename header so the user can
+        review the whole batch as a single document before anything is
+        written. Unfixable warnings are listed at the bottom for context.
+        """
+        import difflib
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Preview Batch Fix")
+        dialog.setModal(True)
+        dialog.resize(760, 560)
+        layout = QVBoxLayout(dialog)
+
+        total = sum(fix.fix_count for fix in fixes)
+        summary = QLabel(
+            f"{len(fixes)} file(s) in the folder can be corrected "
+            f"({total} fix(es) total). Review the exact changes before "
+            "accepting; every original is backed up either way."
+        )
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        sections: list[str] = []
+        from the_oracle.ingest_transformer import labeled_fixed_diff
+
+        for fix in fixes:
+            name = fix.path.name
+            sections.append(f"=== {name} ({fix.fix_count} fix(es)) ===")
+            sections.extend(
+                labeled_fixed_diff(fix.original_text, fix.fixed_text, fix.line_fixes).splitlines()
+            )
+            sections.append("")
+        for analysis in warnings_only:
+            name = Path(analysis.path).name
+            for issue in analysis.warning_issues[:3]:
+                sections.append(
+                    f"! {name}, line {issue.line_number}: {issue.description} (cannot be fixed automatically)"
+                )
+
+        view = QPlainTextEdit()
+        view.setPlainText("\n".join(sections))
+        view.setReadOnly(True)
+        view.setFont(self.font())
+        layout.addWidget(view, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        accept = QPushButton(f"Apply Fixes to {len(fixes)} File(s)")
+        accept.setDefault(True)
+        cancel = QPushButton("Cancel")
+        buttons.addWidget(accept)
+        buttons.addWidget(cancel)
+        layout.addLayout(buttons)
+        accept.clicked.connect(dialog.accept)
+        cancel.clicked.connect(dialog.reject)
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _run_ingest_transformer_check(self) -> bool:
+        """Check the input file's formatting with the ingestion transformer.
+
+        When fixable or unfixable format issues are found, show a warning
+        popup explaining them; the popup offers a one-click in-place fix
+        (with a timestamped backup) when the issues are fixable.
+
+        Returns True when analysis should proceed (no issues, user fixed the
+        file, or user chose to continue anyway); False when the user wants to
+        stop and fix the file themselves.
+        """
+        from the_oracle.ingest_transformer import analyze_input_file, fix_input_file, preview_fixed_text
+
+        input_file = self.input_path.text().strip()
+        if not input_file or not Path(input_file).is_file():
+            return True
+        try:
+            analysis = analyze_input_file(input_file)
+        except (OSError, ValueError, UnicodeDecodeError):
+            # An unreadable file will fail on its own in prepare_plan with a
+            # clear error; the transformer must never block analysis.
+            return True
+        if not analysis.has_issues:
+            return True
+        if self._input_file_is_trusted(input_file):
+            # The user pre-approved fixes for this file: apply them silently
+            # (backup kept) and continue, no popup.
+            try:
+                _text, fix_count, backup_path = fix_input_file(input_file)
+            except (OSError, ValueError):
+                return True  # fall back to the normal flow if the fix fails
+            self.error_panel.append(
+                f"Input formatting: auto-corrected {fix_count} problem(s) in "
+                f"{Path(input_file).name} (trusted file; backup kept)."
+            )
+            return True
+
+        fixable = analysis.fixable_issues
+        warnings = analysis.warning_issues
+        lines: list[str] = []
+        if fixable:
+            lines.append(
+                f"Found {len(fixable)} formatting problem(s) that can be corrected automatically:"
+            )
+            for issue in fixable[:5]:
+                where = f"line {issue.line_number}" if issue.line_number else "file"
+                lines.append(f"  \u2022 {where}: {issue.fix_description}")
+            if len(fixable) > 5:
+                lines.append(f"  \u2026 and {len(fixable) - 5} more.")
+        if warnings:
+            lines.append(
+                f"Found {len(warnings)} formatting warning(s) that cannot be corrected automatically:"
+            )
+            for issue in warnings[:5]:
+                where = f"line {issue.line_number}" if issue.line_number else "file"
+                lines.append(f"  \u2022 {where}: {issue.description}")
+            if len(warnings) > 5:
+                lines.append(f"  \u2026 and {len(warnings) - 5} more.")
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Input Formatting")
+        box.setText(
+            "The input file's formatting may prevent correct speaker attribution."
+        )
+        box.setInformativeText("\n".join(lines))
+        if fixable:
+            fix_button = box.addButton("Fix File Automatically", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.addButton(QMessageBox.StandardButton.Ignore)
+            box.setDefaultButton(fix_button)
+        else:
+            box.addButton(QMessageBox.StandardButton.Ok)
+            box.setDefaultButton(QMessageBox.StandardButton.Ok)
+        box.exec()
+        clicked = box.clickedButton()
+        if not fixable:
+            return True
+        if clicked is fix_button:
+            try:
+                original_text, fixed_text, fix_count, _issues, line_fixes = preview_fixed_text(input_file)
+            except (OSError, ValueError) as exc:
+                QMessageBox.critical(self, "Fix Failed", f"The file could not be corrected:\n{exc}")
+                return False
+            if not self._show_fix_preview_dialog(original_text, fixed_text, fix_count, line_fixes, input_file=input_file):
+                self.error_panel.append("Fix cancelled: the input file was left unchanged.")
+                return False
+            try:
+                _text, fix_count, backup_path = fix_input_file(input_file)
+            except (OSError, ValueError) as exc:
+                QMessageBox.critical(self, "Fix Failed", f"The file could not be corrected:\n{exc}")
+                return False
+            message = f"Corrected {fix_count} formatting problem(s) in {Path(input_file).name}."
+            if backup_path:
+                message += f"\n\nA backup of the original was saved to:\n{backup_path}"
+            QMessageBox.information(self, "File Corrected", message)
+            self.error_panel.append(
+                f"Input formatting: corrected {fix_count} problem(s) in "
+                f"{Path(input_file).name}"
+                + (f" (backup: {backup_path})" if backup_path else "")
+                + " \u2014 re-analyzing the corrected file now."
+            )
+            return True
+        # standardButton() maps the clicked widget back to its role; a bare
+        # `is` comparison against the enum can never be true for a button.
+        if box.standardButton(clicked) == QMessageBox.StandardButton.Cancel:
+            return False
+        return True  # Ignore (or any non-fix button) proceeds without a fix
+
+    def _input_file_is_trusted(self, input_file: str) -> bool:
+        """True when the user pre-approved auto-fixes for this exact file."""
+        trusted = self._app_settings.get("trusted_format_files", [])
+        return bool(trusted) and str(Path(input_file).resolve()) in {str(Path(p).resolve()) for p in trusted}
+
+    def _remember_trusted_input_file(self, input_file: str) -> None:
+        """Add the file to the trusted list and persist app settings."""
+        resolved = str(Path(input_file).resolve())
+        trusted = list(self._app_settings.get("trusted_format_files", []))
+        if resolved not in trusted:
+            trusted.append(resolved)
+        self._app_settings["trusted_format_files"] = trusted
+        if self._app_settings_ready:
+            try:
+                save_app_settings(self._app_settings)
+            except OSError:
+                pass
+
+    def _clear_trusted_input_files(self) -> None:
+        """Forget every pre-approved file (Settings menu action)."""
+        self._app_settings["trusted_format_files"] = []
+        if self._app_settings_ready:
+            try:
+                save_app_settings(self._app_settings)
+                self.error_panel.append(
+                    "Cleared the remembered auto-fix approvals; every input file "
+                    "will be reviewed again before a fix."
+                )
+            except OSError:
+                pass
+
+    def _show_fix_preview_dialog(
+        self,
+        original_text: str,
+        fixed_text: str,
+        fix_count: int,
+        line_fixes: list | None = None,
+        input_file: str | None = None,
+    ) -> bool:
+        """Show the exact rewrite for review side by side; True when accepted.
+
+        Two aligned panes: the original script on the left, the corrected
+        script on the right. Rewritten rows are paired line-for-line and the
+        right-hand cell is labeled with the fix rule that produced it (e.g.
+        ``[dash/pipe separator]``); rows scroll in sync so long scripts stay
+        reviewable.
+        """
+        from the_oracle.ingest_transformer import rule_label, side_by_side_diff_rows
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Preview Fixed Text")
+        dialog.setModal(True)
+        dialog.resize(900, 560)
+        layout = QVBoxLayout(dialog)
+
+        summary = QLabel(
+            f"The correction rewrites {fix_count} line(s). Original on the "
+            "left, corrected on the right \u2014 review the changes before "
+            "accepting; the original is backed up either way."
+        )
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+
+        panes = QHBoxLayout()
+        left_column = QVBoxLayout()
+        left_header = QLabel("Original")
+        left_view = QPlainTextEdit()
+        left_view.setReadOnly(True)
+        left_view.setFont(self.font())
+        left_column.addWidget(left_header)
+        left_column.addWidget(left_view, 1)
+        panes.addLayout(left_column, 1)
+
+        right_column = QVBoxLayout()
+        right_header = QLabel("Corrected (with fix rule)")
+        right_view = QPlainTextEdit()
+        right_view.setReadOnly(True)
+        right_view.setFont(self.font())
+        right_column.addWidget(right_header)
+        right_column.addWidget(right_view, 1)
+        panes.addLayout(right_column, 1)
+        layout.addLayout(panes, 1)
+
+        rows = side_by_side_diff_rows(original_text, fixed_text, line_fixes or [])
+        left_lines: list[str] = []
+        right_lines: list[str] = []
+        for row in rows:
+            if row.kind == "same":
+                left_lines.append(row.left or "")
+                right_lines.append(row.right or "")
+            elif row.kind == "changed":
+                left_lines.append(f"- {row.left}")
+                label = f" [{rule_label(row.rule)}]" if row.rule else ""
+                right_lines.append(f"+ {row.right}{label}")
+            elif row.kind == "removed":
+                left_lines.append(f"- {row.left}")
+                right_lines.append("")
+            else:  # added
+                label = f" [{rule_label(row.rule)}]" if row.rule else ""
+                left_lines.append("")
+                right_lines.append(f"+ {row.right}{label}")
+        left_view.setPlainText("\n".join(left_lines))
+        right_view.setPlainText("\n".join(right_lines))
+
+        # Synchronized scrolling: either pane's scroll drives the other.
+        left_bar = left_view.verticalScrollBar()
+        right_bar = right_view.verticalScrollBar()
+        left_bar.valueChanged.connect(right_bar.setValue)
+        right_bar.valueChanged.connect(left_bar.setValue)
+
+        remember = None
+        if input_file:
+            remember = QCheckBox("Remember this choice and fix this file automatically in the future")
+            remember.setToolTip(
+                "Pre-approve fixes for this exact file: future Analyze/Render runs "
+                "correct it silently (a backup is still kept) without this popup. "
+                "Clear via Settings > Forget remembered auto-fix approvals."
+            )
+            layout.addWidget(remember)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        accept = QPushButton("Accept Fix")
+        accept.setDefault(True)
+        cancel = QPushButton("Cancel")
+        buttons.addWidget(accept)
+        buttons.addWidget(cancel)
+        layout.addLayout(buttons)
+        accept.clicked.connect(dialog.accept)
+        cancel.clicked.connect(dialog.reject)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        if accepted and remember is not None and remember.isChecked() and input_file:
+            self._remember_trusted_input_file(input_file)
+        return accepted
+
     def prepare_project(self) -> None:
         with self._prewarm_lock:
             if self._prewarm_state == "warming":
@@ -5012,6 +5400,9 @@ class MainWindow(QMainWindow):
                 return
         analyze_click_wall = time()
         self._log_action_timing("analyze_click", analyze_click_wall)
+        if not self._run_ingest_transformer_check():
+            self.error_panel.append("Analysis cancelled: fix the input file formatting and try again.")
+            return
         try:
             # Lazily create the output folder now that analysis actually needs
             # it; typing in the field alone never creates directories.

@@ -143,6 +143,13 @@ def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
         normalized["recording_wizard_completed"] = data["recording_wizard_completed"]
     if isinstance(data.get("recording_wizard_dismissed"), bool):
         normalized["recording_wizard_dismissed"] = data["recording_wizard_dismissed"]
+    # Files whose input-formatting fixes the user pre-approved ("remember my
+    # choice" in the preview dialog). Pass-through with light hygiene: only
+    # non-empty absolute-ish path strings are kept.
+    if isinstance(data.get("trusted_format_files"), list):
+        trusted = [entry for entry in data["trusted_format_files"] if isinstance(entry, str) and entry.strip()]
+        if trusted:
+            normalized["trusted_format_files"] = trusted
     if isinstance(data.get("recording_settings"), dict):
         recording = dict(data["recording_settings"])
         for key in ("input_file", "output_dir", "output_filename"):
