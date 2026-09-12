@@ -205,8 +205,8 @@ def test_webvtt_voice_span_becomes_speaker() -> None:
     """<v Winston> is WebVTT's speaker convention; it must survive markup stripping."""
     script, cue_count, speaker_count = srt_to_dialogue_text(VTT_SAMPLE)
     assert cue_count == 3
-    assert "winston: The party is tonight." in script
-    assert "julia: Do they suspect anything?" in script
+    assert "winston: [pause=2000] The party is tonight." in script
+    assert "julia: [pause=500] Do they suspect anything?" in script
     assert speaker_count == 3  # Narrator fallback + winston + julia
 
 
@@ -228,3 +228,47 @@ def test_webvtt_cast_round_trips_through_ingester(tmp_path) -> None:
     document = TextIngestor().ingest(target)
     speakers = {segment.explicit_speaker for segment in document.segments}
     assert {"narrator", "winston", "julia"} <= {s.lower() for s in speakers}
+
+
+# ------------- cue-timing pauses -------------
+
+
+def test_cue_gaps_become_pause_directives() -> None:
+    """A notable silence between cues becomes a [pause=N] on the next turn."""
+    srt = (
+        "1\n00:00:01,000 --> 00:00:04,000\nWinston: The plans are ready.\n"
+        "\n"
+        "2\n00:00:07,500 --> 00:00:09,000\nJulia: Agreed.\n"  # 3.5 s gap
+        "\n"
+        "3\n00:00:09,100 --> 00:00:10,000\nJulia: Tomorrow.\n"  # 100 ms gap
+    )
+    script, _cues, _speakers = srt_to_dialogue_text(srt)
+    assert "winston: The plans are ready." in script  # first turn: no directive
+    assert "julia: [pause=2000] Agreed." in script  # clamped to the 2000 ms domain
+    assert "julia: [pause=100] Tomorrow." not in script
+    # The sub-threshold-gap cue merges into the previous same-speaker turn
+    # (existing merge semantics) without adding a pause directive.
+    assert "julia: [pause=2000] Agreed. Tomorrow." in script
+
+
+def test_pause_directives_round_trip_through_ingester(tmp_path) -> None:
+    """The emitted directives parse into real pause settings for the pipeline."""
+    srt = (
+        "1\n00:00:01,000 --> 00:00:04,000\nWinston: The plans are ready.\n"
+        "\n"
+        "2\n00:00:05,000 --> 00:00:06,500\nJulia: Agreed.\n"  # 1 s gap
+    )
+    source = tmp_path / "movie.srt"
+    source.write_text(srt, encoding="utf-8")
+    target, _cues, _speakers = convert_srt_file(source)
+    assert "[pause=1000]" in target.read_text(encoding="utf-8")
+    from the_oracle.text_repair.directives import apply_directives, parse_directives
+    from the_oracle.models.project import VoiceSettings
+
+    line = next(
+        line for line in target.read_text(encoding="utf-8").splitlines() if "[pause=" in line
+    )
+    text, directives = parse_directives(line)
+    assert directives["pause_ms"] == 1000
+    assert "[pause=" not in text  # the directive is stripped from spoken text
+    assert apply_directives(VoiceSettings(), directives).pause_ms == 1000

@@ -262,7 +262,21 @@ rewritten by the loop).
   backgrounds — `setExtraSelections` replaces the list); used by the
   side-by-side dialog's right pane and the batch dialog's diff pane
   (re-applied per file selection). 2 module tests + 1 GUI test; full
-  suite 833 passing. Applying a batch now honors the contract for **both** formats:
+  suite 833 passing.
+
+- **Cue-timing pauses (2026-09-11, this campaign)**: the subtitle
+  converter now preserves the one thing timings are for — silence. The
+  gap between a cue's end and the next cue's start becomes a
+  ``[pause=N]`` directive on the following turn when the gap is audible
+  (≥ 400 ms; subtitle cues routinely butt together with sub-100 ms gaps
+  that would only be directive noise), clamped to the pacing engine's
+  2000 ms domain. Merged same-speaker turns carry the largest notable
+  gap of their constituent cues; within a dashed cue only the first
+  split turn inherits the gap (the split turns are simultaneous in the
+  source). The directives flow through the pipeline's existing
+  `parse_directives`/`apply_directives` path (verified end-to-end:
+  stripped from spoken text, applied after punctuation scaling, pause_ms
+  lands on the utterance). 2 tests; full suite 835 passing. Applying a batch now honors the contract for **both** formats:
   a latent pre-existing bug had `apply_folder_fixes` writing the
   converted script *into* the subtitle file; it now redirects to the
   sibling script and reports that path. 6 converter tests + 3

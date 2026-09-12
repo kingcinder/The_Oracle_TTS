@@ -61,6 +61,16 @@ _NARRATOR = "Narrator"
 # Speaker-label prefix on a cue's first text line: "Winston: The plans...".
 _SPEAKER_PREFIX_RE = re.compile(r"^(?P<label>[A-Za-z][\w .'\-]{0,48}?)\s*:\s*(?P<rest>\S.*)$")
 
+# Gaps below this are treated as no silence at all (subtitle cues routinely
+# butt up against each other with tens of milliseconds between them; those
+# would only add directive noise). Above it, the gap is emitted as a
+# [pause=N] directive on the following turn.
+_MIN_NOTABLE_GAP_MS = 400.0
+
+# The pacing engine clamps turn pauses to this domain; emitting anything
+# larger would be silently clipped downstream anyway.
+_MAX_PAUSE_MS = 2000
+
 
 @dataclass(slots=True)
 class SrtCue:
@@ -212,12 +222,23 @@ def srt_to_dialogue_text(text: str) -> tuple[str, int, int]:
     Returns ``(script_text, cue_count, speaker_count)``. Consecutive cues by
     the same speaker are merged into one turn, because subtitle cues are
     sentence fragments, not complete dialogue lines.
+
+    Cue *timings* are preserved where they matter: the gap between one
+    cue's end and the next cue's start becomes a ``[pause=N]`` directive on
+    the following turn when the gap is large enough to be audible (above
+    ``_MIN_NOTABLE_GAP_MS``; subtitles routinely carry sub-100-ms gaps that
+    would be noise) and is clamped to the pacing engine's domain (``
+    _MAX_PAUSE_MS``).
     """
     cues = parse_srt(text)
     turns: list[tuple[str, str]] = []
+    turn_gaps: list[float] = []  # ms of source silence before each turn
     current_speaker: str | None = None
     last_other_speaker: str | None = None
-    for cue in cues:
+    for cue_index, cue in enumerate(cues):
+        gap_ms = 0.0
+        if cue_index > 0:
+            gap_ms = max(0.0, (cue.start_seconds - cues[cue_index - 1].end_seconds) * 1000.0)
         dashed_cue = any(_SRT_DASH_RE.match(line) for line in cue.lines)
         cue_turns = _cue_turns(cue, current_speaker, last_other_speaker)
         for turn_index, (speaker, utterance) in enumerate(cue_turns):
@@ -229,12 +250,24 @@ def srt_to_dialogue_text(text: str) -> tuple[str, int, int]:
             may_merge = same_speaker and not (dashed_cue and turn_index > 0)
             if may_merge:
                 turns[-1] = (speaker, f"{turns[-1][1]} {utterance}".strip())
+                # The merged turn spans both cues; its leading pause is the
+                # largest notable gap across everything folded into it.
+                turn_gaps[-1] = max(turn_gaps[-1], gap_ms if turn_index == 0 else 0.0)
             else:
+                # Within one dashed cue the split turns are simultaneous in
+                # the source, so only the first turn inherits the cue gap.
+                turn_gaps.append(gap_ms if turn_index == 0 else 0.0)
                 turns.append((speaker, utterance))
             if current_speaker and speaker != current_speaker:
                 last_other_speaker = current_speaker
             current_speaker = speaker
-    lines = [f"{speaker}: {utterance}" for speaker, utterance in turns]
+    lines: list[str] = []
+    for turn_index, (speaker, utterance) in enumerate(turns):
+        gap = turn_gaps[turn_index] if turn_index < len(turn_gaps) else 0.0
+        if turn_index > 0 and gap >= _MIN_NOTABLE_GAP_MS:
+            lines.append(f"{speaker}: [pause={int(round(min(gap, _MAX_PAUSE_MS)))}] {utterance}")
+        else:
+            lines.append(f"{speaker}: {utterance}")
     script = "\n".join(lines) + ("\n" if lines else "")
     speakers = {speaker for speaker, _utterance in turns}
     return script, len(cues), len(speakers)
