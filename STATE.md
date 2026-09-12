@@ -165,6 +165,17 @@ rewritten by the loop).
   kept, per-file status-panel lines with relative paths). 4 module tests +
   2 GUI tests; full suite 799 passing.
 
+- **Per-file batch checkboxes (2026-09-11, this campaign)**: every file
+  row in the Preview Batch Fix tree gained an include-checkbox (all
+  ticked by default), so a batch can be applied selectively instead of
+  all-or-nothing. The apply button live-updates to "Apply Fixes to N of
+  M File(s) (K fix(es))" as ticks change and disables when nothing is
+  ticked; Apply returns only the ticked fixes and the caller applies
+  exactly those (unticked files untouched, no backups created for them).
+  The dialog now returns the included-fix list (was a bool). 1 new GUI
+  test (exclusion end-to-end, default-all-ticked, live label/enable);
+  full suite 805 passing.
+
 - **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
   own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`
   pre-flight. `analyze_input_file` flags a structurally-valid SubRip file

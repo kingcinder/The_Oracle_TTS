@@ -5062,11 +5062,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Input Formatting", "\n".join(lines))
             return
 
-        if not self._show_batch_fix_preview_dialog(folder, fixes, warnings_only):
+        accepted = self._show_batch_fix_preview_dialog(folder, fixes, warnings_only)
+        if not accepted:
             self.error_panel.append("Batch fix cancelled: no files were changed.")
             return
         try:
-            written = apply_folder_fixes(fixes)
+            written = apply_folder_fixes(accepted)
         except OSError as exc:
             QMessageBox.critical(self, "Batch Fix Failed", f"The files could not be corrected:\n{exc}")
             return
@@ -5097,9 +5098,10 @@ class MainWindow(QMainWindow):
 
         A tree on the left lists every fixable file under the chosen folder
         (recursed, shown as paths relative to the folder) with its fix
-        count; selecting one shows its rule-labeled diff on the right.
-        Unfixable warnings are listed beneath the tree. True when the user
-        accepts applying all fixes.
+        count and an include-checkbox (all ticked by default); selecting
+        one shows its rule-labeled diff on the right. Unfixable warnings
+        are listed beneath the tree. Returns the list of user-included
+        fixes on Apply (empty when cancelled or nothing ticked).
         """
         from the_oracle.ingest_transformer import labeled_fixed_diff
 
@@ -5112,8 +5114,9 @@ class MainWindow(QMainWindow):
         total = sum(fix.fix_count for fix in fixes)
         summary = QLabel(
             f"{len(fixes)} file(s) under the folder can be corrected "
-            f"({total} fix(es) total). Select a file to review its changes; "
-            "every original is backed up either way."
+            f"({total} fix(es) total). Tick the files to include; untick "
+            "any file to leave it untouched. Selecting a file shows its "
+            "changes; every included original is backed up."
         )
         summary.setWordWrap(True)
         layout.addWidget(summary)
@@ -5130,11 +5133,33 @@ class MainWindow(QMainWindow):
         for fix in fixes:
             relative = str(fix.path.relative_to(Path(folder)))
             fixes_by_relative[relative] = fix
-            QTreeWidgetItem(root_item, [relative, str(fix.fix_count)])
+            item = QTreeWidgetItem(root_item, [relative, str(fix.fix_count)])
+            # Every file is included by default; a checkbox excludes it.
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(0, Qt.Checked)
         root_item.setExpanded(True)
         tree_column.addWidget(tree_header)
         tree_column.addWidget(tree, 1)
         body.addLayout(tree_column, 2)
+
+        def _checked_fixes() -> list:
+            """The fixes whose tree items are ticked, in scan order."""
+            return [
+                fixes_by_relative[root_item.child(i).text(0)]
+                for i in range(root_item.childCount())
+                if root_item.child(i).checkState(0) == Qt.Checked
+            ]
+
+        def _update_counts() -> None:
+            checked = _checked_fixes()
+            count = len(checked)
+            fix_total = sum(fix.fix_count for fix in checked)
+            accept.setText(
+                f"Apply Fixes to {count} of {len(fixes)} File(s) ({fix_total} fix(es))"
+            )
+            accept.setEnabled(bool(checked))
+
+        tree.itemChanged.connect(lambda _item, _column: _update_counts())
 
         diff_column = QVBoxLayout()
         diff_header = QLabel("Diff (selected file)")
@@ -5197,7 +5222,9 @@ class MainWindow(QMainWindow):
         layout.addLayout(buttons)
         accept.clicked.connect(dialog.accept)
         cancel.clicked.connect(dialog.reject)
-        return dialog.exec() == QDialog.DialogCode.Accepted
+        # After the button exists, so the label/enablement can be computed.
+        _update_counts()
+        return dialog.exec() == QDialog.DialogCode.Accepted and _checked_fixes()
 
     def _run_ingest_transformer_check(self) -> bool:
         """Check the input file's formatting with the ingestion transformer.
