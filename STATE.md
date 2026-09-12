@@ -288,7 +288,18 @@ rewritten by the loop).
   transformer check — and re-points the field for the run. Both paths
   log the conversion to the status panel; an unreadable file reports
   and aborts instead of loading something unusable. 3 GUI tests; full
-  suite 838 passing. Applying a batch now honors the contract for **both** formats:
+  suite 838 passing.
+
+- **voices subcommand (2026-09-11, this campaign)**:
+  `the-oracle voices` lists the default Seashells reference clips in the
+  exact order the render path picks them — the first two lines are
+  annotated ``(default Speaker A)``/``(default Speaker B)`` — with
+  `--json` emitting a `[{label, path}]` array so scripts can wire paths
+  into `--speaker-ref` flags programmatically. Backed by the same
+  `default_voice_choices` the GUI's Default Voices list and the render
+  fallback use, so the listing can never drift from actual behavior.
+  Exit 1 (no crash) when no clips exist. 2 tests; full suite 840
+  passing. Applying a batch now honors the contract for **both** formats:
   a latent pre-existing bug had `apply_folder_fixes` writing the
   converted script *into* the subtitle file; it now redirects to the
   sibling script and reports that path. 6 converter tests + 3
