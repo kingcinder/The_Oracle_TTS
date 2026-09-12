@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -61,6 +62,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--fix",
         action="store_true",
         help="Correct fixable issues in place (timestamped backup kept) instead of only reporting them.",
+    )
+    check_input.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the report as a single JSON document on stdout (issues list, "
+        "fixable/warning counts, speaker-voice suggestions) instead of "
+        "human-readable text, so CI pipelines can parse it.",
     )
 
     render = subparsers.add_parser("render", help="Batch render a dialogue file.")
@@ -256,6 +264,55 @@ def _maybe_convert_srt(input_path: str) -> str:
     return str(script_path)
 
 
+def _input_issue_json(issue, *, fixable: bool) -> dict:
+    """Serialize one transformer issue for the machine-readable report."""
+    return {
+        "line": issue.line_number,
+        "snippet": issue.snippet,
+        "fixable": fixable,
+        "description": issue.fix_description if fixable else issue.description,
+    }
+
+
+def _input_json_document(
+    input_path: str,
+    analysis,
+    *,
+    error: str | None = None,
+    fixed_count: int | None = None,
+    backup: str | None = None,
+    speaker_refs: list[dict] | None = None,
+    rejected: list[str] | None = None,
+) -> dict:
+    """Build the input-formatting JSON report (one document per run).
+
+    ``speaker_refs``/``rejected_labels`` are always present so consumers can
+    rely on a stable schema; ``fixed_count``/``backup`` appear only when a
+    fix was applied.
+    """
+    document: dict = {"file": input_path}
+    if error is not None:
+        document["error"] = error
+        document["fixable_count"] = 0
+        document["warning_count"] = 0
+        document["issues"] = []
+    else:
+        document["fixable_count"] = len(analysis.fixable_issues)
+        document["warning_count"] = len(analysis.warning_issues)
+        document["issues"] = [
+            _input_issue_json(issue, fixable=True) for issue in analysis.fixable_issues
+        ] + [
+            _input_issue_json(issue, fixable=False) for issue in analysis.warning_issues
+        ]
+    if fixed_count is not None:
+        document["fixed_count"] = fixed_count
+    if backup is not None:
+        document["backup"] = backup
+    document["speaker_refs"] = speaker_refs or []
+    document["rejected_labels"] = rejected or []
+    return document
+
+
 def _speaker_ref_report(file_path: Path, post_fix_text: str | None) -> tuple[list[dict], list[str]]:
     """Compute --speaker-ref suggestions for a script's cast.
 
@@ -307,12 +364,7 @@ def _check_input_formatting(input_path: str, fix: bool, json_output: bool = Fals
     from the_oracle.ingest_transformer import analyze_input_file, fix_input_file
 
     def _issue_json(issue, *, fixable: bool) -> dict:
-        return {
-            "line": issue.line_number,
-            "snippet": issue.snippet,
-            "fixable": fixable,
-            "description": issue.fix_description if fixable else issue.description,
-        }
+        return _input_issue_json(issue, fixable=fixable)
 
     def _report(
         analysis,
@@ -323,27 +375,15 @@ def _check_input_formatting(input_path: str, fix: bool, json_output: bool = Fals
         speaker_refs: list[dict] | None = None,
         rejected: list[str] | None = None,
     ) -> None:
-        document: dict = {"file": input_path}
-        if error is not None:
-            document["error"] = error
-            document["fixable_count"] = 0
-            document["warning_count"] = 0
-            document["issues"] = []
-        else:
-            document["fixable_count"] = len(analysis.fixable_issues)
-            document["warning_count"] = len(analysis.warning_issues)
-            document["issues"] = [
-                _issue_json(issue, fixable=True) for issue in analysis.fixable_issues
-            ] + [
-                _issue_json(issue, fixable=False) for issue in analysis.warning_issues
-            ]
-        if fixed_count is not None:
-            document["fixed_count"] = fixed_count
-        if backup is not None:
-            document["backup"] = backup
-        # Always present so consumers can rely on a stable schema.
-        document["speaker_refs"] = speaker_refs or []
-        document["rejected_labels"] = rejected or []
+        document = _input_json_document(
+            input_path,
+            analysis,
+            error=error,
+            fixed_count=fixed_count,
+            backup=backup,
+            speaker_refs=speaker_refs,
+            rejected=rejected,
+        )
         print(json.dumps(document, ensure_ascii=False))
 
     if json_output:
@@ -512,14 +552,52 @@ def handle_check_input(args: argparse.Namespace) -> int:
     from the_oracle.ingest_transformer import analyze_input_file, fix_input_file
 
     file_path = Path(args.file)
+    json_mode = bool(getattr(args, "json", False))
     if not file_path.is_file():
-        print(f"check-input: file not found: {file_path}", file=sys.stderr)
+        if json_mode:
+            print(json.dumps(_input_json_document(args.file, None, error="file not found"), ensure_ascii=False))
+        else:
+            print(f"check-input: file not found: {file_path}", file=sys.stderr)
         return 2
     try:
         analysis = analyze_input_file(file_path)
     except (OSError, ValueError, UnicodeDecodeError) as exc:
-        print(f"check-input: the file could not be read: {exc}", file=sys.stderr)
+        if json_mode:
+            print(json.dumps(_input_json_document(args.file, None, error=f"unreadable: {exc}"), ensure_ascii=False))
+        else:
+            print(f"check-input: the file could not be read: {exc}", file=sys.stderr)
         return 2
+
+    if json_mode:
+        # Exactly one JSON document per run, on stdout; nothing else is
+        # printed in json mode so pipelines can parse stdout cleanly.
+        refs, rejected = _speaker_ref_report(file_path, None)
+        fixed_count: int | None = None
+        backup: str | None = None
+        if args.fix and analysis.fixable_issues:
+            try:
+                _written, fixed_count, backup = fix_input_file(file_path)
+            except (OSError, ValueError) as exc:
+                print(
+                    json.dumps(_input_json_document(args.file, None, error=f"fix failed: {exc}"), ensure_ascii=False)
+                )
+                return 2
+            # Re-analyze so the document describes the file's current state;
+            # the exit code and the document then always agree.
+            try:
+                analysis = analyze_input_file(file_path)
+            except (OSError, ValueError, UnicodeDecodeError):
+                return 0
+        document = _input_json_document(
+            str(file_path),
+            analysis,
+            fixed_count=fixed_count,
+            backup=backup,
+            speaker_refs=refs,
+            rejected=rejected,
+        )
+        print(json.dumps(document, ensure_ascii=False))
+        return 0 if not analysis.has_issues else 1
 
     if not analysis.has_issues:
         print(f"{file_path}: no formatting issues found.")

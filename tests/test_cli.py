@@ -8,12 +8,20 @@ real text-repair pipeline or any TTS engine.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from the_oracle.cli import build_parser, handle_render
+from the_oracle.cli import (
+    _input_json_document,
+    _speaker_ref_report,
+    build_parser,
+    handle_check_input,
+    handle_render,
+)
+from the_oracle.ingest_transformer import analyze_input_file
 
 
 def _render_args(*extra: str, outdir: str = "/tmp/fake-out") -> argparse.Namespace:
@@ -894,3 +902,72 @@ def test_interactive_non_tty_refuses_prompt_and_continues(tmp_path: Path, monkey
         pass  # downstream fake-pipeline limits are irrelevant to this test
     # Report-only check ran (fix=False), the interactive prompt never fired.
     assert calls and calls[0] == ("check", False)
+
+
+# ------------- check-input --json (CI mode) -------------
+
+def test_check_input_json_clean_file_exits_zero(tmp_path, capsys) -> None:
+    file_path = tmp_path / "clean.txt"
+    file_path.write_text("A: fine.\n", encoding="utf-8")
+    args = argparse.Namespace(file=str(file_path), fix=False, json=True)
+    assert handle_check_input(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["file"] == str(file_path)
+    assert document["fixable_count"] == 0
+    assert document["warning_count"] == 0
+    assert document["issues"] == []
+    assert document["speaker_refs"]  # speaker A suggested
+    assert document["rejected_labels"] == []
+    assert "fixed_count" not in document
+
+
+def test_check_input_json_issues_exits_one(tmp_path, capsys) -> None:
+    file_path = tmp_path / "messy.txt"
+    file_path.write_text("[Speaker A]: Hello there.\n", encoding="utf-8")
+    args = argparse.Namespace(file=str(file_path), fix=False, json=True)
+    assert handle_check_input(args) == 1
+    document = json.loads(capsys.readouterr().out)
+    assert document["fixable_count"] == 1
+    issue = document["issues"][0]
+    assert issue["line"] == 1
+    assert issue["fixable"] is True
+    assert "brackets" in issue["description"]
+    # Exactly one JSON document, nothing else on stdout.
+    assert capsys.readouterr().out == ""
+    assert "fixed_count" not in document
+
+
+def test_check_input_json_missing_file_error_document(tmp_path, capsys) -> None:
+    args = argparse.Namespace(file=str(tmp_path / "nope.txt"), fix=False, json=True)
+    assert handle_check_input(args) == 2
+    document = json.loads(capsys.readouterr().out)
+    assert document["error"] == "file not found"
+    assert document["issues"] == []
+    assert document["speaker_refs"] == []
+    assert document["rejected_labels"] == []
+
+
+def test_check_input_json_fix_reports_backup_and_clean_state(tmp_path, capsys) -> None:
+    file_path = tmp_path / "messy.txt"
+    file_path.write_text("[Speaker A]: Hello there.\n", encoding="utf-8")
+    args = argparse.Namespace(file=str(file_path), fix=True, json=True)
+    assert handle_check_input(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    # The document describes the file's CURRENT (post-fix) state.
+    assert document["fixable_count"] == 0
+    assert document["fixed_count"] == 1
+    assert Path(document["backup"]).is_file()
+    assert file_path.read_text(encoding="utf-8") == "Speaker A: Hello there.\n"
+
+
+def test_check_input_json_reuses_render_path_schema(tmp_path, capsys) -> None:
+    """The standalone document must match the render path's schema exactly."""
+    file_path = tmp_path / "messy.txt"
+    file_path.write_text("[Speaker A]: Hello there.\n", encoding="utf-8")
+    analysis = analyze_input_file(file_path)
+    refs, rejected = _speaker_ref_report(file_path, None)
+    standalone = _input_json_document(str(file_path), analysis, speaker_refs=refs, rejected=rejected)
+    assert set(standalone) == {
+        "file", "fixable_count", "warning_count", "issues",
+        "speaker_refs", "rejected_labels",
+    }
