@@ -335,6 +335,14 @@ rewritten by the loop).
 
 ## Noticed, not yet actioned
 
+- **`tests/test_grammar_language_tool.py` leaks temp dirs (found
+  2026-09-11 during the orphan sweep)**: each test creates its cache via
+  `tempfile.mkdtemp(prefix="oracle_lt_cache_")` and never removes it —
+  ~140 `oracle_lt_cache_*` directories accumulated in `/tmp` across
+  sessions. Pre-existing test-code hygiene issue, not introduced by the
+  transformer campaign; fix is a `tempfile.TemporaryDirectory` context or
+  `shutil.rmtree` teardown (out of scope for this session's requests).
+
 - Serpent-circle inventory scan updated (2026-09-08, in
   `~/.agents/skills/serpent-circle/`): the bloat scan and language
   histogram now honor `.gitignore` — untracked+gitignored residue
