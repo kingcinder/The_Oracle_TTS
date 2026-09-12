@@ -330,6 +330,21 @@ rewritten by the loop).
   (`exclude_rules`) is GUI-only for now, logged for later. 7 tests; full
   suite 852 passing.
 
+- **Rejected-label rename hints (2026-09-12, this campaign)**: when the
+  format report flags a label the engine rejects (`Note:`, `See:`, ...),
+  the suggestion now names the exact `--speaker-ref` flag that label would
+  need *after* being renamed to an accepted form — e.g. `! 'Note' is not
+  accepted ... rename the label, then provide --speaker-ref C=PATH`. The
+  would-be key comes from feeding the whole cast (valid labels
+  canonicalized, rejected ones as lowercase rename candidates) through the
+  pipeline's own voice mapper in first-appearance order, so the flag
+  matches what a render assigns post-rename. Surfaced in `check-input`
+  human hints (stderr), `check-input --json` (`rejected_labels` entries
+  gained `label` + `rename_flag`; string entries became objects — a
+  schema change, consumers reading raw strings must migrate), the render
+  path's report, and the GUI warning/post-fix popups + status panel via
+  `_speaker_ref_hint_lines`. 3 tests; full suite 855 passing.
+
 - **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
   own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`
   pre-flight. `analyze_input_file` flags a structurally-valid SubRip file
