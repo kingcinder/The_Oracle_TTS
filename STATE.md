@@ -299,11 +299,21 @@ rewritten by the loop).
   `default_voice_choices` the GUI's Default Voices list and the render
   fallback use, so the listing can never drift from actual behavior.
   Exit 1 (no crash) when no clips exist. 2 tests; full suite 840
-  passing. Applying a batch now honors the contract for **both** formats:
-  a latent pre-existing bug had `apply_folder_fixes` writing the
-  converted script *into* the subtitle file; it now redirects to the
-  sibling script and reports that path. 6 converter tests + 3
-  transformer/batch tests + 3 CLI tests; full suite 817 passing.
+  passing.
+
+- **check-input --check-refs (2026-09-12, this campaign)**: `check-input`
+  now accepts the render path's reference flags (`--speakerA-ref`,
+  `--speakerB-ref`, repeatable `--speaker-ref KEY=PATH`) and, with
+  `--check-refs`, validates each: the path must exist, be a real file, and
+  decode as readable audio via soundfile's header probe (also rejects
+  zero-frame files). Human mode prints one `[OK]`/`[BAD]` line per voice
+  (a voice with no path is `unset` = OK); a bad reference fails the check
+  with exit 1, alongside — not instead of — the formatting report.
+  `--json` adds stable-schema `checked_refs` (always present in JSON mode,
+  empty without the flag) plus `refs_ok`. The validator reuses the render
+  path's `_validate_speaker_ref_paths`, so pre-flight and check can never
+  disagree about what counts as a usable reference. 5 tests; full suite
+  845 passing.
 
 - **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
   own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`

@@ -79,6 +79,31 @@ def build_parser() -> argparse.ArgumentParser:
         "fixable/warning counts, speaker-voice suggestions) instead of "
         "human-readable text, so CI pipelines can parse it.",
     )
+    check_input.add_argument(
+        "--speakerA-ref",
+        dest="speaker_a_ref",
+        help=argparse.SUPPRESS,
+    )
+    check_input.add_argument(
+        "--speakerB-ref",
+        dest="speaker_b_ref",
+        help=argparse.SUPPRESS,
+    )
+    check_input.add_argument(
+        "--speaker-ref",
+        dest="speaker_refs",
+        action="append",
+        default=[],
+        metavar="KEY=PATH",
+        help=argparse.SUPPRESS,
+    )
+    check_input.add_argument(
+        "--check-refs",
+        action="store_true",
+        help="Validate the speaker references passed via --speakerA-ref/--speakerB-ref/"
+        "--speaker-ref: each path must exist and decode as readable audio. Reported "
+        "per reference (and in --json), and a bad reference fails the check (exit 1).",
+    )
 
     render = subparsers.add_parser("render", help="Batch render a dialogue file.")
     render.add_argument("--project", help="Load a saved project manifest.")
@@ -306,6 +331,7 @@ def _input_json_document(
     backup: str | None = None,
     speaker_refs: list[dict] | None = None,
     rejected: list[str] | None = None,
+    checked_refs: list[dict] | None = None,
 ) -> dict:
     """Build the input-formatting JSON report (one document per run).
 
@@ -333,6 +359,9 @@ def _input_json_document(
         document["backup"] = backup
     document["speaker_refs"] = speaker_refs or []
     document["rejected_labels"] = rejected or []
+    if checked_refs is not None:
+        document["checked_refs"] = checked_refs
+        document["refs_ok"] = all(r["ref_status"] in ("ok", "unset") for r in checked_refs)
     return document
 
 
@@ -571,6 +600,66 @@ def _print_speaker_ref_hints(input_path: str) -> None:
         )
 
 
+def _validate_speaker_ref_paths(pairs: list[tuple[str, str | None]]) -> list[dict]:
+    """Check each ``(voice_key, path)`` speaker ref exists and decodes as audio.
+
+    Returns one ``{voice_key, path, ref_status}`` dict per entry; status is
+    ``"unset"`` when no path was given for that voice, ``"ok"``, or
+    ``"bad: <reason>"``. Validation uses soundfile's header probe — cheap,
+    no full decode — so a truncated or non-audio file with a plausible
+    name still fails loudly.
+    """
+    import soundfile as sf
+
+    checked: list[dict] = []
+    for voice_key, path_text in pairs:
+        entry: dict = {"voice_key": voice_key, "path": path_text or ""}
+        if not (path_text or "").strip():
+            entry["ref_status"] = "unset"
+        else:
+            path = Path(path_text)
+            if not path.is_file():
+                entry["ref_status"] = "bad: file not found"
+            else:
+                try:
+                    info = sf.info(str(path))
+                    if info.frames <= 0:
+                        entry["ref_status"] = "bad: audio file contains no frames"
+                    else:
+                        entry["ref_status"] = "ok"
+                except (sf.LibsndfileError, RuntimeError, ValueError) as exc:
+                    entry["ref_status"] = f"bad: not readable audio ({exc})"
+        checked.append(entry)
+    return checked
+
+
+def _report_checked_refs(checked_refs: list[dict]) -> int:
+    """Print --check-refs results; return 1 if any reference is bad, else 0."""
+    if not checked_refs:
+        return 0
+    print("Speaker references (--check-refs):")
+    bad = False
+    for ref in checked_refs:
+        marker = "OK" if ref["ref_status"] in ("ok", "unset") else "BAD"
+        if marker == "BAD":
+            bad = True
+        path_note = ref["path"] or "(no path given)"
+        print(f"  [{marker}] voice {ref['voice_key']}: {path_note} — {ref['ref_status']}")
+    return 1 if bad else 0
+
+
+def _check_ref_pairs_from_args(args: argparse.Namespace) -> list[tuple[str, str | None]]:
+    """Collect the ``(voice_key, path)`` pairs the user passed for validation."""
+    pairs: list[tuple[str, str | None]] = [
+        ("A", getattr(args, "speaker_a_ref", None)),
+        ("B", getattr(args, "speaker_b_ref", None)),
+    ]
+    for raw in getattr(args, "speaker_refs", None) or []:
+        key, _sep, value = raw.partition("=")
+        pairs.append((key.strip().upper(), value.strip() or None))
+    return pairs
+
+
 def handle_check_input(args: argparse.Namespace) -> int:
     """Lint a dialogue file's formatting without loading the render pipeline.
 
@@ -582,6 +671,10 @@ def handle_check_input(args: argparse.Namespace) -> int:
 
     file_path = Path(args.file)
     json_mode = bool(getattr(args, "json", False))
+    check_refs = bool(getattr(args, "check_refs", False))
+    checked_refs: list[dict] = (
+        _validate_speaker_ref_paths(_check_ref_pairs_from_args(args)) if check_refs else []
+    )
     if not file_path.is_file():
         if json_mode:
             print(json.dumps(_input_json_document(args.file, None, error="file not found"), ensure_ascii=False))
@@ -624,14 +717,18 @@ def handle_check_input(args: argparse.Namespace) -> int:
             backup=backup,
             speaker_refs=refs,
             rejected=rejected,
+            checked_refs=checked_refs,
         )
         print(json.dumps(document, ensure_ascii=False))
+        bad_refs = [r for r in checked_refs if r["ref_status"] not in ("ok", "unset")]
+        if bad_refs:
+            return 1
         return 0 if not analysis.has_issues else 1
 
     if not analysis.has_issues:
         print(f"{file_path}: no formatting issues found.")
         _print_speaker_ref_hints(str(file_path))
-        return 0
+        return _report_checked_refs(checked_refs) or 0
 
     fixable = analysis.fixable_issues
     warnings = analysis.warning_issues
@@ -654,7 +751,7 @@ def handle_check_input(args: argparse.Namespace) -> int:
         if not analysis.has_issues:
             print(f"{file_path}: no formatting issues remain.")
             _print_speaker_ref_hints(str(file_path))
-            return 0
+            return _report_checked_refs(checked_refs) or 0
         fixable = analysis.fixable_issues
         warnings = analysis.warning_issues
 
@@ -675,6 +772,9 @@ def handle_check_input(args: argparse.Namespace) -> int:
         hint = "remain (never rewritten automatically)" if args.fix else "corrected automatically"
         print(f"Re-run with --fix to have the fixable issues {hint}.")
     _print_speaker_ref_hints(str(file_path))
+    # The branch only runs when issues remain, so exit 1 either way; the
+    # report still prints so a bad reference is surfaced alongside them.
+    _report_checked_refs(checked_refs)
     return 1
 
 
