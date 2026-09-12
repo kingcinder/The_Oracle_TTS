@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QTreeWidget,
+    QTreeWidgetItem,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -5091,51 +5093,99 @@ class MainWindow(QMainWindow):
         fixes: list,
         warnings_only: list,
     ) -> bool:
-        """One combined preview of every file's rewrite; True when accepted.
+        """Folder tree + per-file diff preview of the whole batch.
 
-        Each file's diff is grouped under a filename header so the user can
-        review the whole batch as a single document before anything is
-        written. Unfixable warnings are listed at the bottom for context.
+        A tree on the left lists every fixable file under the chosen folder
+        (recursed, shown as paths relative to the folder) with its fix
+        count; selecting one shows its rule-labeled diff on the right.
+        Unfixable warnings are listed beneath the tree. True when the user
+        accepts applying all fixes.
         """
-        import difflib
+        from the_oracle.ingest_transformer import labeled_fixed_diff
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Preview Batch Fix")
         dialog.setModal(True)
-        dialog.resize(760, 560)
+        dialog.resize(860, 560)
         layout = QVBoxLayout(dialog)
 
         total = sum(fix.fix_count for fix in fixes)
         summary = QLabel(
-            f"{len(fixes)} file(s) in the folder can be corrected "
-            f"({total} fix(es) total). Review the exact changes before "
-            "accepting; every original is backed up either way."
+            f"{len(fixes)} file(s) under the folder can be corrected "
+            f"({total} fix(es) total). Select a file to review its changes; "
+            "every original is backed up either way."
         )
         summary.setWordWrap(True)
         layout.addWidget(summary)
 
-        sections: list[str] = []
-        from the_oracle.ingest_transformer import labeled_fixed_diff
+        body = QHBoxLayout()
 
+        tree_column = QVBoxLayout()
+        tree_header = QLabel("Files to fix (folder tree)")
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["File", "Fixes"])
+        tree.setColumnWidth(0, 260)
+        root_item = QTreeWidgetItem(tree, [Path(folder).name or folder, ""])
+        fixes_by_relative: dict[str, object] = {}
         for fix in fixes:
-            name = fix.path.name
-            sections.append(f"=== {name} ({fix.fix_count} fix(es)) ===")
-            sections.extend(
-                labeled_fixed_diff(fix.original_text, fix.fixed_text, fix.line_fixes).splitlines()
-            )
-            sections.append("")
-        for analysis in warnings_only:
-            name = Path(analysis.path).name
-            for issue in analysis.warning_issues[:3]:
-                sections.append(
-                    f"! {name}, line {issue.line_number}: {issue.description} (cannot be fixed automatically)"
-                )
+            relative = str(fix.path.relative_to(Path(folder)))
+            fixes_by_relative[relative] = fix
+            QTreeWidgetItem(root_item, [relative, str(fix.fix_count)])
+        root_item.setExpanded(True)
+        tree_column.addWidget(tree_header)
+        tree_column.addWidget(tree, 1)
+        body.addLayout(tree_column, 2)
 
-        view = QPlainTextEdit()
-        view.setPlainText("\n".join(sections))
-        view.setReadOnly(True)
-        view.setFont(self.font())
-        layout.addWidget(view, 1)
+        diff_column = QVBoxLayout()
+        diff_header = QLabel("Diff (selected file)")
+        diff_view = QPlainTextEdit()
+        diff_view.setReadOnly(True)
+        diff_view.setFont(self.font())
+        diff_column.addWidget(diff_header)
+        diff_column.addWidget(diff_view, 1)
+        body.addLayout(diff_column, 3)
+        layout.addLayout(body, 1)
+
+        if warnings_only:
+            warning_lines = [
+                f"! {Path(a.path).relative_to(Path(folder))}, line {issue.line_number}: "
+                f"{issue.description} (cannot be fixed automatically)"
+                for a in warnings_only
+                for issue in a.warning_issues[:2]
+            ]
+            if warning_lines:
+                warnings_label = QLabel("\n".join(warning_lines[:6]))
+                warnings_label.setWordWrap(True)
+                layout.addWidget(warnings_label)
+
+        first = fixes[0] if fixes else None
+
+        def _show_diff() -> None:
+            selected = tree.selectedItems()
+            if not selected or selected[0] is root_item:
+                if first is not None:
+                    relative = str(first.path.relative_to(Path(folder)))
+                else:
+                    return
+            else:
+                relative = selected[0].text(0)
+            fix = fixes_by_relative.get(relative)
+            if fix is None:
+                return
+            diff_view.setPlainText(
+                labeled_fixed_diff(fix.original_text, fix.fixed_text, fix.line_fixes)
+            )
+
+        tree.itemSelectionChanged.connect(_show_diff)
+        # Preselect the first fixable file so the diff pane is never empty.
+        if fixes:
+            first_relative = str(fixes[0].path.relative_to(Path(folder)))
+            for index in range(root_item.childCount()):
+                child = root_item.child(index)
+                if child.text(0) == first_relative:
+                    tree.setCurrentItem(child)
+                    break
+            _show_diff()
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)

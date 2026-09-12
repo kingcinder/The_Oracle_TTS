@@ -696,18 +696,28 @@ class FolderFix:
 # never re-reads its own backups.
 _BATCH_EXTENSIONS = {".txt", ".md", ".srt"}
 
+# Directory names the recursive batch scan never descends into (besides
+# hidden ones): version control, Python environments, and caches.
+_BATCH_SKIP_DIRS = {"__pycache__", "node_modules", "venv", "site-packages"}
+
 
 def analyze_folder(folder: str | Path) -> list[FileAnalysis]:
-    """Analyze every text file in *folder* (non-recursive, sorted by name).
+    """Analyze every text file under *folder*, recursing into subfolders.
 
-    Returns only the analyses that actually have issues, in file order, so a
-    clean folder yields an empty list and callers never special-case it.
-    Backup files written by previous fixes (``*.bak-*``) are skipped.
+    Returns only the analyses that actually have issues, ordered by
+    relative path so the folder tree reads naturally in previews. Backup
+    files written by previous fixes (``*.bak-*``), hidden files/directories
+    (leading dot), and common VCS/dependency directories are skipped.
     """
     folder_path = Path(folder)
     results: list[FileAnalysis] = []
-    for file_path in sorted(folder_path.iterdir(), key=lambda p: p.name):
+    for file_path in sorted(folder_path.rglob("*"), key=lambda p: str(p.relative_to(folder_path)).lower()):
         if not file_path.is_file():
+            continue
+        relative = file_path.relative_to(folder_path)
+        if any(part.startswith(".") for part in relative.parts[:-1]) or file_path.name.startswith("."):
+            continue  # hidden directories/files (.git, .venv, caches, editors)
+        if any(part in _BATCH_SKIP_DIRS for part in relative.parts[:-1]):
             continue
         if file_path.suffix.lower() not in _BATCH_EXTENSIONS:
             continue

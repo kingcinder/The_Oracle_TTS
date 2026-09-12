@@ -28,17 +28,46 @@ def test_analyze_folder_finds_only_problem_files(tmp_path: Path) -> None:
     assert not any("clean" in name or "prose" in name for name in names)
 
 
-def test_analyze_folder_skips_backups_and_subfolders(tmp_path: Path) -> None:
+def test_analyze_folder_skips_backups_but_scans_subfolders(tmp_path: Path) -> None:
+    """Backups are skipped, subfolders ARE scanned (recursive batch)."""
     (tmp_path / "messy.txt").write_text("A - Hello there.\n", encoding="utf-8")
     (tmp_path / "messy.txt.bak-20260911-000000").write_text("A - old backup.\n", encoding="utf-8")
     (tmp_path / "old.bak").write_text("A - another backup.\n", encoding="utf-8")
     sub = tmp_path / "subdir"
     sub.mkdir()
-    (sub / "nested.txt").write_text("A - not scanned.\n", encoding="utf-8")
+    (sub / "nested.txt").write_text("B - scanned now.\n", encoding="utf-8")
 
     analyses = analyze_folder(tmp_path)
 
-    assert [Path(a.path).name for a in analyses] == ["messy.txt"]
+    assert sorted(Path(a.path).name for a in analyses) == ["messy.txt", "nested.txt"]
+
+
+def test_analyze_folder_skips_hidden_and_vendor_dirs(tmp_path: Path) -> None:
+    """Hidden dirs (.git, .venv) and vendor caches are never descended into."""
+    (tmp_path / "top.txt").write_text("A - Hello.\n", encoding="utf-8")
+    for hidden in (".git", ".venv", "__pycache__", "node_modules"):
+        d = tmp_path / hidden
+        d.mkdir()
+        (d / "junk.txt").write_text("A - should be ignored.\n", encoding="utf-8")
+
+    analyses = analyze_folder(tmp_path)
+
+    assert [Path(a.path).name for a in analyses] == ["top.txt"]
+
+
+def test_analyze_folder_sorts_by_relative_path(tmp_path: Path) -> None:
+    """Deep files come back in stable tree order, not walk order."""
+    deep = tmp_path / "b" / "c"
+    deep.mkdir(parents=True)
+    (tmp_path / "z.txt").write_text("A - z.\n", encoding="utf-8")
+    (deep / "a.txt").write_text("B - a.\n", encoding="utf-8")
+
+    analyses = analyze_folder(tmp_path)
+
+    assert [str(Path(a.path).relative_to(tmp_path)) for a in analyses] == [
+        "b/c/a.txt",
+        "z.txt",
+    ]
 
 
 def test_analyze_folder_ignores_non_text_extensions(tmp_path: Path) -> None:
