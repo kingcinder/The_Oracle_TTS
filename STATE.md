@@ -139,6 +139,19 @@ rewritten by the loop).
   `line_fixes`) and `FolderFix.line_fixes`. 5 module tests + updated
   batch-GUI assertions.
 
+- **Recursive batch fix with folder tree (2026-09-11, this campaign)**:
+  `analyze_folder` now recurses into subfolders (`rglob`), skipping hidden
+  files/directories, `_BATCH_SKIP_DIRS` (`__pycache__`, `node_modules`,
+  `venv`, `site-packages`), non-text extensions, and `*.bak-*` backups;
+  results sort by path relative to the scanned folder so the tree reads
+  naturally. The **Preview Batch Fix** dialog is now a two-pane layout: a
+  folder tree on the left (root = folder name, children = fixable files by
+  relative path with fix counts) and a rule-labeled diff pane on the right
+  showing the selected file (first file preselected); unfixable warnings
+  listed beneath. Apply/Cancel semantics unchanged (all-or-nothing, backups
+  kept, per-file status-panel lines with relative paths). 4 module tests +
+  2 GUI tests; full suite 799 passing.
+
 - **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
   own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`
   pre-flight. `analyze_input_file` flags a structurally-valid SubRip file

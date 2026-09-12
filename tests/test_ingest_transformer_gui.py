@@ -404,6 +404,9 @@ def test_batch_fix_scans_previews_and_applies(qt_app, monkeypatch, tmp_path) -> 
     (folder / "messy.txt").write_text("A - Hello there.\n", encoding="utf-8")
     (folder / "brackets.md").write_text("[A]: Greetings.\n", encoding="utf-8")
     (folder / "clean.txt").write_text("A: All good here.\n", encoding="utf-8")
+    sub = folder / "sub"
+    sub.mkdir()
+    (sub / "nested.txt").write_text("B - Deep.\n", encoding="utf-8")
 
     monkeypatch.setattr(
         app_gui.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder))
@@ -413,18 +416,20 @@ def test_batch_fix_scans_previews_and_applies(qt_app, monkeypatch, tmp_path) -> 
 
     class _BatchDialog(real_qdialog):
         def exec(self):  # noqa: D102 - test double: user accepts the batch preview
-            from PySide6.QtWidgets import QPlainTextEdit
+            from PySide6.QtWidgets import QPlainTextEdit, QTreeWidget
 
+            trees = self.findChildren(QTreeWidget)
+            assert trees, "batch preview has no folder tree"
+            tree = trees[0]
+            labels = [tree.topLevelItem(0).child(i).text(0) for i in range(tree.topLevelItem(0).childCount())]
+            # Tree lists every fixable file by path relative to the folder,
+            # including the subfolder file (recursive scan).
+            assert sorted(labels) == ["brackets.md", "messy.txt", "sub/nested.txt"]
             views = self.findChildren(QPlainTextEdit)
             assert views, "batch preview has no diff view"
-            text = views[0].toPlainText()
-            # Both files' diffs are in the one combined view, under headers,
-            # with each rewritten line labeled by its fix rule.
-            assert "=== messy.txt" in text
-            assert "=== brackets.md" in text
-            assert "-A - Hello there." in text
-            assert "+ [dash/pipe separator] A: Hello there." in text
-            assert "+ [bracketed label] A: Greetings." in text
+            diff = views[0].toPlainText()
+            # The preselected first file's rule-labeled diff is shown.
+            assert "+ [bracketed label] A: Greetings." in diff
             return real_qdialog.DialogCode.Accepted
 
     information_calls: list[str] = []
@@ -441,13 +446,15 @@ def test_batch_fix_scans_previews_and_applies(qt_app, monkeypatch, tmp_path) -> 
     assert (folder / "messy.txt").read_text(encoding="utf-8") == "A: Hello there.\n"
     assert (folder / "brackets.md").read_text(encoding="utf-8") == "A: Greetings.\n"
     assert (folder / "clean.txt").read_text(encoding="utf-8") == "A: All good here.\n"
-    backups = list(folder.glob("*.bak-*"))
-    assert len(backups) == 2
-    # Status panel reports the batch and each file.
+    assert (sub / "nested.txt").read_text(encoding="utf-8") == "B: Deep.\n"
+    backups = list(folder.rglob("*.bak-*"))
+    assert len(backups) == 3
+    # Status panel reports the batch and each file (with subfolder paths).
     panel = window.error_panel.toPlainText()
-    assert "Batch fix: corrected 2 formatting problem(s) across 2 file(s)" in panel
+    assert "Batch fix: corrected 3 formatting problem(s) across 3 file(s)" in panel
     assert "messy.txt: 1 fix(es)" in panel
     assert "brackets.md: 1 fix(es)" in panel
+    assert "nested.txt: 1 fix(es)" in panel
 
 
 def test_batch_fix_cancel_changes_nothing(qt_app, monkeypatch, tmp_path) -> None:
@@ -646,3 +653,45 @@ def test_trust_persists_across_windows(qt_app, monkeypatch, tmp_path) -> None:
 
     reloaded = load_app_settings()
     assert str(target.resolve()) in reloaded.get("trusted_format_files", [])
+
+
+def test_batch_tree_selection_switches_diff(qt_app, monkeypatch, tmp_path) -> None:
+    """Selecting another file in the tree shows that file's labeled diff."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    import the_oracle.app_gui as app_gui
+
+    folder = tmp_path / "inputs"
+    folder.mkdir()
+    (folder / "dash.txt").write_text("A - Hello.\n", encoding="utf-8")
+    (folder / "brackets.md").write_text("[A]: Greetings.\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        app_gui.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder))
+    )
+
+    real_qdialog = app_gui.QDialog
+    seen: dict = {}
+
+    class _BatchDialog(real_qdialog):
+        def exec(self):  # noqa: D102 - select each tree entry, capture diffs
+            from PySide6.QtWidgets import QPlainTextEdit, QTreeWidget
+
+            tree = self.findChildren(QTreeWidget)[0]
+            view = self.findChildren(QPlainTextEdit)[0]
+            root = tree.topLevelItem(0)
+            for i in range(root.childCount()):
+                child = root.child(i)
+                tree.setCurrentItem(child)
+                seen[child.text(0)] = view.toPlainText()
+            return real_qdialog.DialogCode.Accepted
+
+    monkeypatch.setattr(app_gui, "QDialog", _BatchDialog)
+    assert window._show_batch_fix_preview_dialog(str(folder), *_fixes_and_warnings(folder)) is True
+    assert "dash/pipe separator" in seen["dash.txt"]
+    assert "bracketed label" in seen["brackets.md"]
+
+
+def _fixes_and_warnings(folder):
+    from the_oracle.ingest_transformer import preview_folder_fixes
+
+    return preview_folder_fixes(folder)
