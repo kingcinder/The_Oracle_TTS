@@ -876,3 +876,39 @@ def test_preview_dialog_remembers_geometry_between_sessions(qt_app, monkeypatch,
     # Second "session": a fresh dialog restoring the stored blob picks up the size.
     fresh = real_dialog()
     assert fresh.restoreGeometry(decoded) is True
+
+
+def test_batch_rule_filter_excludes_rule_from_apply(qt_app, monkeypatch, tmp_path) -> None:
+    """Unticking a rule checkbox applies only the remaining rules' fixes."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    import the_oracle.app_gui as app_gui
+
+    folder = tmp_path / "inputs"
+    folder.mkdir()
+    (folder / "a.txt").write_text("[A]: Hello.\n[2024-01-01 10:00] B: Hi.\n", encoding="utf-8")
+    (folder / "b.txt").write_text("C. Period style.\n", encoding="utf-8")
+    monkeypatch.setattr(
+        app_gui.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder))
+    )
+
+    real_dialog = app_gui.QDialog
+    from PySide6.QtWidgets import QCheckBox, QPushButton
+
+    class _BatchDialog(real_dialog):
+        def exec(self):  # noqa: D102 - untick every rule except timestamp
+            boxes = [b for b in self.findChildren(QCheckBox) if b.text() and b.text() != "Remember this choice and fix this file automatically in the future"]
+            texts = {b.text() for b in boxes}
+            assert "bracketed label" in texts and "chat-export timestamp" in texts and "period separator" in texts
+            for box in boxes:
+                if box.text() != "chat-export timestamp":
+                    box.setChecked(False)
+            apply_button = self.findChildren(QPushButton)[0]
+            assert "1 of 2" in apply_button.text()  # b.txt fully filtered out
+            return real_dialog.DialogCode.Accepted
+
+    monkeypatch.setattr(app_gui, "QDialog", _BatchDialog)
+    accepted = window._show_batch_fix_preview_dialog(str(folder), *_fixes_and_warnings(folder))
+    assert [fix.path.name for fix in accepted] == ["a.txt"]
+    assert [lf.rule for lf in accepted[0].line_fixes] == ["timestamp"]
+    # The excluded rule's line survives untouched in the rewrite.
+    assert "[A]: Hello." in accepted[0].fixed_text

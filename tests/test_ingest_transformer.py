@@ -11,6 +11,7 @@ from the_oracle.ingest_transformer import (
     analyze_text,
     fix_input_file,
     transform_text,
+    transform_text_detailed,
 )
 from the_oracle.text_ingest import TextIngestor
 
@@ -382,3 +383,44 @@ def test_analyze_folder_includes_vtt(tmp_path) -> None:
     written = apply_folder_fixes(fixes)
     assert len(written) == 1
     assert Path(written[0][0]).name == "a.vtt.txt"
+
+
+# ------------- rule filtering (exclude_rules) -------------
+
+
+def test_transform_exclude_rules_leaves_matching_lines_unchanged() -> None:
+    text = "[A]: Hello.\n[2024-01-01 10:00] B: Hi.\nC. Period style.\n"
+    fixed, fixes = transform_text_detailed(
+        text, exclude_rules={"bracket", "period", "orphan", "bullet", "dash", "srt", "encoding"}
+    )
+    assert [fix.rule for fix in fixes] == ["timestamp"]
+    # The excluded rules' lines pass through byte-identical.
+    assert "[A]: Hello." in fixed
+    assert "C. Period style." in fixed
+    # The included rule still applied.
+    assert "B: Hi." in fixed
+
+
+def test_transform_exclude_nothing_matches_default() -> None:
+    text = "[A]: Hello.\n"
+    baseline_fixed, baseline_fixes = transform_text_detailed(text)
+    filtered_fixed, filtered_fixes = transform_text_detailed(text, exclude_rules=set())
+    assert baseline_fixed == filtered_fixed
+    assert [f.rule for f in baseline_fixes] == [f.rule for f in filtered_fixes]
+
+
+def test_preview_folder_fixes_honors_exclude_rules(tmp_path) -> None:
+    from the_oracle.ingest_transformer import preview_folder_fixes
+
+    (tmp_path / "a.txt").write_text("[A]: Hello.\n[2024-01-01 10:00] B: Hi.\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("C. Period style.\n", encoding="utf-8")
+    everything, _warn = preview_folder_fixes(tmp_path)
+    assert len(everything) == 2
+    # Excluding bracket+period drops b.txt (period-only) from the batch and
+    # leaves a.txt's bracketed line untouched.
+    timestamps_only, _warn = preview_folder_fixes(
+        tmp_path, exclude_rules={"bracket", "period", "orphan", "bullet", "dash", "srt", "encoding"}
+    )
+    assert [fix.path.name for fix in timestamps_only] == ["a.txt"]
+    assert [lf.rule for lf in timestamps_only[0].line_fixes] == ["timestamp"]
+    assert "[A]: Hello." in timestamps_only[0].fixed_text
