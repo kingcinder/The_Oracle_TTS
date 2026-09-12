@@ -52,6 +52,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="One-shot automatic setup for the Vulkan (GPU) backend: build audiocpp_cli and download the Chatterbox model if missing.",
     )
 
+    check_input = subparsers.add_parser(
+        "check-input",
+        help="Lint a dialogue file's formatting without rendering: report speaker turns the engine would misread and, with --fix, correct them in place.",
+    )
+    check_input.add_argument("file", help="Path to the .txt or .md dialogue file to check.")
+    check_input.add_argument(
+        "--fix",
+        action="store_true",
+        help="Correct fixable issues in place (timestamped backup kept) instead of only reporting them.",
+    )
+
     render = subparsers.add_parser("render", help="Batch render a dialogue file.")
     render.add_argument("--project", help="Load a saved project manifest.")
     render.add_argument("--save-project", dest="save_project", help="Write the current project manifest after preparation/render.")
@@ -148,6 +159,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     render.add_argument("--title", default="", help="Override exported title metadata.")
     render.add_argument("--srt", action="store_true", help="Also write an SRT subtitle file next to the rendered FLAC.")
+    render.add_argument(
+        "--fix-input",
+        action="store_true",
+        help="Check the input file with the ingestion transformer and automatically correct "
+        "fixable formatting issues in place before rendering (dash/pipe separators, "
+        "bracketed labels, bulleted turns, orphan labels, chat-export timestamps, "
+        "non-UTF-8 encodings). A timestamped backup of the original is kept next to "
+        "the file. Without this flag the check still runs and reports issues on "
+        "stderr, but never modifies the file. Requires --input.",
+    )
+    render.add_argument(
+        "--fix-input-interactive",
+        action="store_true",
+        help="Like --fix-input, but review first: show the formatting summary and a "
+        "rule-labeled diff of the exact rewrite, then prompt yes/no before writing "
+        "(a timestamped backup is kept). Answering no aborts the render with the "
+        "file untouched. Requires a terminal; refuses silently in non-interactive "
+        "runs (pipes/CI) so automation never blocks on a prompt. Requires --input.",
+    )
+    render.add_argument(
+        "--check-input-json",
+        action="store_true",
+        help="Emit the input-formatting report as a single JSON document on stdout "
+        "(issues list, fixable/warning counts, speaker-voice suggestions, and with "
+        "--fix-input the applied fix count and backup path) instead of "
+        "human-readable stderr text. Requires --input.",
+    )
     return parser
 
 
@@ -163,6 +201,373 @@ def _voice_settings_from_args(args: argparse.Namespace) -> VoiceSettings:
         min_p=args.min_p,
         top_p=args.top_p,
     )
+
+
+def _srt_script_if_converted(input_path: str) -> str:
+    """Return the converted ``.srt.txt`` script when a fix produced one."""
+    file_path = Path(input_path)
+    if file_path.suffix.lower() == ".srt":
+        script = file_path.with_suffix(".srt.txt")
+        if script.is_file():
+            return str(script)
+    return input_path
+
+
+def _maybe_convert_srt(input_path: str) -> str:
+    """Convert an ``.srt`` input to a dialogue script, returning the input to use.
+
+    Subtitle files cannot be ingested directly (every cue degrades into
+    narration), so a valid SubRip input is converted to a sibling
+    ``<name>.srt.txt`` script and that script is rendered instead — the
+    subtitle file itself is never modified. Anything that is not a valid
+    SRT (including a missing or unreadable file) is returned unchanged so
+    the ordinary error paths report it.
+    """
+    from the_oracle.srt_ingest import convert_srt_file, looks_like_srt
+
+    file_path = Path(input_path)
+    if file_path.suffix.lower() != ".srt" or not file_path.is_file():
+        return input_path
+    try:
+        text = file_path.read_bytes().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = file_path.read_bytes().decode("cp1252", errors="replace")
+    except OSError:
+        return input_path
+    if not looks_like_srt(text):
+        return input_path
+    try:
+        script_path, cue_count, speaker_count = convert_srt_file(file_path)
+    except FileExistsError:
+        # A previous conversion already produced the script; reuse it.
+        script_path = file_path.with_suffix(".srt.txt")
+        print(
+            f"SRT input: reusing previously converted script {script_path}",
+            file=sys.stderr,
+        )
+        return str(script_path)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"SRT conversion failed: {exc}") from exc
+    print(
+        f"SRT input: converted {cue_count} cue(s) from {file_path.name} into "
+        f"{script_path.name} ({speaker_count} speaker(s)); rendering the script.",
+        file=sys.stderr,
+    )
+    return str(script_path)
+
+
+def _speaker_ref_report(file_path: Path, post_fix_text: str | None) -> tuple[list[dict], list[str]]:
+    """Compute --speaker-ref suggestions for a script's cast.
+
+    Returns ``(refs, rejected)``: one dict per speaker (``speaker``,
+    ``voice_key``, ``flag``, ``new``) plus distinct labels that fail speaker
+    validation entirely (no reference audio can attribute those). When
+    ``post_fix_text`` is None the file is read and its post-transform text
+    is computed on the fly, so a suggested cast always matches what a render
+    would see after a fix.
+    """
+    from the_oracle.ingest_transformer import (
+        _decode_best_effort,
+        rejected_labels,
+        suggest_speaker_refs,
+        transform_text,
+    )
+
+    if post_fix_text is None:
+        try:
+            raw = file_path.read_bytes()
+        except OSError:
+            return [], []
+        post_fix_text = transform_text(_decode_best_effort(raw))[0]
+    refs = [
+        {
+            "speaker": s.speaker,
+            "voice_key": s.voice_key,
+            "flag": s.flag,
+            "new": s.is_new,
+        }
+        for s in suggest_speaker_refs(post_fix_text)
+    ]
+    return refs, rejected_labels(post_fix_text)
+
+
+def _check_input_formatting(input_path: str, fix: bool, json_output: bool = False) -> None:
+    """Run the ingestion transformer over the CLI render's input file.
+
+    Detected issues are always reported: human-readable on stderr, or as a
+    JSON document on stdout when ``json_output`` is set (so pipelines can
+    parse it; stdout keeps the report separate from render logs on stderr).
+    With ``fix=True`` the fixable issues are corrected in place (timestamped
+    backup kept) before the render proceeds. Never raises for
+    missing/unreadable files: those are reported (as JSON in json mode) and
+    ``prepare_plan`` reports them with its own clear error.
+    """
+    import json
+
+    from the_oracle.ingest_transformer import analyze_input_file, fix_input_file
+
+    def _issue_json(issue, *, fixable: bool) -> dict:
+        return {
+            "line": issue.line_number,
+            "snippet": issue.snippet,
+            "fixable": fixable,
+            "description": issue.fix_description if fixable else issue.description,
+        }
+
+    def _report(
+        analysis,
+        *,
+        error: str | None = None,
+        fixed_count: int | None = None,
+        backup: str | None = None,
+        speaker_refs: list[dict] | None = None,
+        rejected: list[str] | None = None,
+    ) -> None:
+        document: dict = {"file": input_path}
+        if error is not None:
+            document["error"] = error
+            document["fixable_count"] = 0
+            document["warning_count"] = 0
+            document["issues"] = []
+        else:
+            document["fixable_count"] = len(analysis.fixable_issues)
+            document["warning_count"] = len(analysis.warning_issues)
+            document["issues"] = [
+                _issue_json(issue, fixable=True) for issue in analysis.fixable_issues
+            ] + [
+                _issue_json(issue, fixable=False) for issue in analysis.warning_issues
+            ]
+        if fixed_count is not None:
+            document["fixed_count"] = fixed_count
+        if backup is not None:
+            document["backup"] = backup
+        # Always present so consumers can rely on a stable schema.
+        document["speaker_refs"] = speaker_refs or []
+        document["rejected_labels"] = rejected or []
+        print(json.dumps(document, ensure_ascii=False))
+
+    if json_output:
+        if not Path(input_path).is_file():
+            _report(None, error="file not found")
+            return
+        try:
+            analysis = analyze_input_file(input_path)
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            _report(None, error=f"unreadable: {exc}")
+            return
+        # Speaker-voice suggestions come from the post-fix text so a cast
+        # member only visible after a transform is still suggested.
+        refs, rejected = _speaker_ref_report(Path(input_path), None)
+        if not analysis.has_issues or not fix or not analysis.fixable_issues:
+            # Exactly one JSON document per run, so a consumer can always
+            # parse stdout as a single object.
+            _report(analysis, speaker_refs=refs, rejected=rejected)
+            return
+        try:
+            _text, fix_count, backup_path = fix_input_file(input_path)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"--fix-input failed: {exc}") from exc
+        # One document: the pre-fix issue list plus what was applied, so
+        # consumers see both what was wrong and that the file changed on disk.
+        _report(analysis, fixed_count=fix_count, backup=backup_path, speaker_refs=refs, rejected=rejected)
+        return
+
+    try:
+        analysis = analyze_input_file(input_path)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return
+    if not analysis.has_issues:
+        return
+    fixable = analysis.fixable_issues
+    warnings = analysis.warning_issues
+    print(
+        f"Input formatting: {len(fixable)} fixable issue(s), "
+        f"{len(warnings)} warning(s) in {input_path}",
+        file=sys.stderr,
+    )
+    for issue in fixable[:5]:
+        where = f"line {issue.line_number}" if issue.line_number else "file"
+        print(f"  - {where}: {issue.fix_description}", file=sys.stderr)
+    for issue in warnings[:5]:
+        where = f"line {issue.line_number}" if issue.line_number else "file"
+        print(f"  - {where}: {issue.description}", file=sys.stderr)
+    if len(fixable) > 5 or len(warnings) > 5:
+        print("  - ... (see the GUI's Preview Fixed Text dialog for the full list)", file=sys.stderr)
+    if not fix:
+        if fixable:
+            print(
+                "Re-run with --fix-input to correct the fixable issues automatically.",
+                file=sys.stderr,
+            )
+        return
+    if not fixable:
+        print("--fix-input: no fixable issues; the file was left unchanged.", file=sys.stderr)
+        return
+    try:
+        _text, fix_count, backup_path = fix_input_file(input_path)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"--fix-input failed: {exc}") from exc
+    print(f"--fix-input: corrected {fix_count} issue(s) in {input_path}", file=sys.stderr)
+    if backup_path:
+        print(f"    backup: {backup_path}", file=sys.stderr)
+
+
+def _check_input_formatting_interactive(input_path: str, *, prompt=input) -> bool:
+    """Interactive review-before-fix: the terminal version of the GUI popup.
+
+    Shows the issue summary and a rule-labeled diff of the exact rewrite,
+    then asks before writing. Returns True when the render should proceed
+    (no issues, or fix applied); False when the user declined the fix. The
+    ``prompt`` parameter is injectable so tests can script the answer.
+    """
+    from the_oracle.ingest_transformer import (
+        _decode_best_effort,
+        analyze_input_file,
+        fix_input_file,
+        labeled_fixed_diff,
+        transform_text_detailed,
+    )
+
+    file_path = Path(input_path)
+    try:
+        analysis = analyze_input_file(file_path)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return True  # ordinary error paths report this
+    if not analysis.has_issues:
+        return True
+
+    fixable = analysis.fixable_issues
+    warnings = analysis.warning_issues
+    print(f"Input formatting review for {file_path}", file=sys.stderr)
+    if fixable:
+        print(f"  {len(fixable)} fixable issue(s) can be corrected automatically:", file=sys.stderr)
+        for issue in fixable[:8]:
+            where = f"line {issue.line_number}" if issue.line_number else "file"
+            print(f"    - {where}: {issue.fix_description}", file=sys.stderr)
+        if len(fixable) > 8:
+            print(f"    ... and {len(fixable) - 8} more", file=sys.stderr)
+    if warnings:
+        print(f"  {len(warnings)} warning(s) that cannot be fixed automatically:", file=sys.stderr)
+        for issue in warnings[:8]:
+            where = f"line {issue.line_number}" if issue.line_number else "file"
+            print(f"    ! {where}: {issue.description}", file=sys.stderr)
+
+    if not fixable:
+        # Warnings only: nothing to review or write.
+        return True
+
+    try:
+        raw = file_path.read_bytes()
+    except OSError:
+        return True
+    original = (
+        analysis.encoding_fixed_text
+        if analysis.encoding_fixed_text is not None
+        else _decode_best_effort(raw)
+    )
+    fixed_text, line_fixes = transform_text_detailed(original)
+    print(file=sys.stderr)
+    print(labeled_fixed_diff(original, fixed_text, line_fixes), file=sys.stderr)
+
+    try:
+        answer = prompt("Apply these fixes before rendering? [y/N]: ")
+    except EOFError:
+        answer = None
+    if not answer or answer.strip().lower() not in ("y", "yes"):
+        print("Fix declined: the input file was left unchanged; aborting render.", file=sys.stderr)
+        return False
+    try:
+        _text, fix_count, backup_path = fix_input_file(file_path)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"--fix-input-interactive failed: {exc}") from exc
+    print(f"--fix-input-interactive: corrected {fix_count} issue(s) in {input_path}", file=sys.stderr)
+    if backup_path:
+        print(f"    backup: {backup_path}", file=sys.stderr)
+    return True
+
+
+def _print_speaker_ref_hints(input_path: str) -> None:
+    """Print the exact --speaker-ref flags for the script's cast (stderr)."""
+    refs, rejected = _speaker_ref_report(Path(input_path), None)
+    if refs:
+        print("Speaker voices to provide (in first-appearance order):", file=sys.stderr)
+        for ref in refs:
+            marker = "add" if ref["new"] else "use"
+            print(f"  - {ref['speaker']} -> voice {ref['voice_key']}: {marker} {ref['flag']}", file=sys.stderr)
+    for label in rejected:
+        print(
+            f"  ! '{label}' is not accepted as a speaker label; no reference audio can "
+            "attribute it — edit the label in the file (e.g. to a name or 'Speaker X').",
+            file=sys.stderr,
+        )
+
+
+def handle_check_input(args: argparse.Namespace) -> int:
+    """Lint a dialogue file's formatting without loading the render pipeline.
+
+    Exit code 0 = no issues (or fixed with --fix); 1 = issues found (or
+    warnings remain after --fix); 2 = file could not be read. Nothing is
+    written unless --fix is given, and --fix never rewrites warnings.
+    """
+    from the_oracle.ingest_transformer import analyze_input_file, fix_input_file
+
+    file_path = Path(args.file)
+    if not file_path.is_file():
+        print(f"check-input: file not found: {file_path}", file=sys.stderr)
+        return 2
+    try:
+        analysis = analyze_input_file(file_path)
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        print(f"check-input: the file could not be read: {exc}", file=sys.stderr)
+        return 2
+
+    if not analysis.has_issues:
+        print(f"{file_path}: no formatting issues found.")
+        _print_speaker_ref_hints(str(file_path))
+        return 0
+
+    fixable = analysis.fixable_issues
+    warnings = analysis.warning_issues
+
+    if args.fix and fixable:
+        try:
+            _text, fix_count, backup_path = fix_input_file(file_path)
+        except (OSError, ValueError) as exc:
+            print(f"check-input: the file could not be corrected: {exc}", file=sys.stderr)
+            return 2
+        print(f"check-input: corrected {fix_count} issue(s) in {file_path}")
+        if backup_path:
+            print(f"    backup: {backup_path}")
+        # Re-analyze the corrected file so the exit code reflects what is
+        # left, not what was there.
+        try:
+            analysis = analyze_input_file(file_path)
+        except (OSError, ValueError, UnicodeDecodeError):
+            return 0
+        if not analysis.has_issues:
+            print(f"{file_path}: no formatting issues remain.")
+            _print_speaker_ref_hints(str(file_path))
+            return 0
+        fixable = analysis.fixable_issues
+        warnings = analysis.warning_issues
+
+    if fixable:
+        print(f"{file_path}: {len(fixable)} fixable formatting issue(s), {len(warnings)} warning(s):")
+    else:
+        print(f"{file_path}: {len(warnings)} formatting warning(s):")
+    for issue in fixable[:10]:
+        where = f"line {issue.line_number}" if issue.line_number else "file"
+        print(f"  - {where}: {issue.fix_description}")
+    for issue in warnings[:10]:
+        where = f"line {issue.line_number}" if issue.line_number else "file"
+        print(f"  ! {where}: {issue.description}")
+    if len(fixable) > 10 or len(warnings) > 10:
+        print("  - ... (truncated)")
+    if fixable:
+        hint = "remain (never rewritten automatically)" if args.fix else "corrected automatically"
+        print(f"Re-run with --fix to have the fixable issues {hint}.")
+    _print_speaker_ref_hints(str(file_path))
+    return 1
 
 
 def handle_render(args: argparse.Namespace) -> int:
@@ -222,6 +627,34 @@ def handle_render(args: argparse.Namespace) -> int:
             )
         if not speaker_b_ref:
             speaker_b_ref = speaker_a_ref
+
+        # SRT auto-detection: an .srt input is converted to a canonical
+        # dialogue script before any analysis, because subtitles ingested
+        # raw degrade into narration.
+        args.input = _maybe_convert_srt(args.input)
+
+        # Ingestion transformer: report input-formatting issues before the
+        # (expensive) pipeline load; with --fix-input, correct them in place,
+        # or with --fix-input-interactive show the review + prompt first.
+        # A declined fix aborts here, before the pipeline loads anything.
+        if args.fix_input_interactive:
+            if not sys.stdin.isatty():
+                print(
+                    "--fix-input-interactive requires a terminal; continuing without "
+                    "the review prompt (the file is not modified).",
+                    file=sys.stderr,
+                )
+                _check_input_formatting(args.input, fix=False, json_output=bool(args.check_input_json))
+            elif not _check_input_formatting_interactive(args.input):
+                return 2
+            else:
+                # An interactive fix may have converted an .srt input to a
+                # script; render the corrected file.
+                args.input = _srt_script_if_converted(args.input)
+        else:
+            _check_input_formatting(args.input, fix=bool(args.fix_input), json_output=bool(args.check_input_json))
+            if args.fix_input:
+                args.input = _srt_script_if_converted(args.input)
 
         settings = RenderSettings(
             correction_mode=args.correction_mode,
@@ -353,6 +786,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "render":
         return handle_render(args)
+    if args.command == "check-input":
+        return handle_check_input(args)
     if args.command == "setup-vulkan":
         return handle_setup_vulkan()
     parser.error("Unknown command.")
