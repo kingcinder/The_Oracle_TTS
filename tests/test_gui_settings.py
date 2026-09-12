@@ -386,3 +386,29 @@ def test_gui_settings_coerce_invalid_audio_cpp_knobs(tmp_path: Path) -> None:
     assert loaded2["project"]["audio_cpp_threads"] is None
     assert loaded2["project"]["audio_cpp_timeout"] is None
     assert loaded2["project"]["audio_cpp_max_batch"] is None
+
+
+# ------------- load_gui_settings raises GUISettingsError on IO/parse errors -------------
+
+
+def test_load_gui_settings_missing_file_raises_gui_settings_error(tmp_path: Path) -> None:
+    """A vanished file must surface as GUISettingsError, not raw FileNotFoundError.
+
+    Regression: the template-menu click handler catches GUISettingsError;
+    a raw OSError escaped it and crashed the click with an unhandled
+    traceback instead of showing the error dialog.
+    """
+    with pytest.raises(GUISettingsError, match="could not be read"):
+        load_gui_settings(tmp_path / "missing.json")
+
+
+def test_load_gui_settings_corrupt_json_raises_gui_settings_error(tmp_path: Path) -> None:
+    path = tmp_path / "broken.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(GUISettingsError, match="not valid JSON"):
+        load_gui_settings(path)
+
+
+def test_load_template_missing_raises_gui_settings_error() -> None:
+    with pytest.raises(GUISettingsError):
+        load_template("no_such_template_anywhere")

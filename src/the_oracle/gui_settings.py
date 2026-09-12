@@ -49,7 +49,16 @@ def save_gui_settings(path: str | Path, payload: dict[str, Any]) -> Path:
 
 def load_gui_settings(path: str | Path) -> dict[str, Any]:
     source = Path(path)
-    payload = json.loads(source.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except OSError as exc:
+        # A vanished/renamed file (or unreadable path) must surface as the
+        # same error type the GUI handlers catch — raw FileNotFoundError
+        # escaped the template-menu click handler and crashed with an
+        # unhandled traceback instead of a message box.
+        raise GUISettingsError(f"Settings file could not be read: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise GUISettingsError(f"Settings file is not valid JSON: {source}\n{exc}") from exc
     return _normalize_payload(payload)
 
 
