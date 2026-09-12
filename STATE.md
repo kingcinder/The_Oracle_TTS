@@ -136,7 +136,12 @@ rewritten by the loop).
   non-interactive runs (piped stdin, CI) the flag degrades to a report-only
   check with a stderr notice, so automation never blocks on a prompt.
   Prompt function is injectable for tests. 7 tests in `tests/test_cli.py`;
-  full suite 785 passing.
+  full suite 785 passing. Combining it with `--fix-input` is now an
+  **explicit error** (helpful two-line explanation of each flag's
+  behavior), checked first in `handle_render`'s fast-fail validation —
+  before missing-`--input`/`--outdir` and speaker-ref checks — instead of
+  silently favoring the interactive review. 2 more tests; full suite 824
+  passing.
 
 - **Rule-labeled preview diffs (2026-09-11, this campaign)**:
   `transform_text_detailed(text)` returns per-fix provenance (`LineFix`:
