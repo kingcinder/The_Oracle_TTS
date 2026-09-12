@@ -5284,6 +5284,9 @@ class MainWindow(QMainWindow):
                 lines.append(f"  \u2022 {where}: {issue.description}")
             if len(warnings) > 5:
                 lines.append(f"  \u2026 and {len(warnings) - 5} more.")
+        # Cast suggestions are meaningful even pre-fix: they come from the
+        # transformed text, so a subtitle conversion's cast is included.
+        lines.extend(self._speaker_ref_hint_lines(input_file))
 
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
@@ -5321,6 +5324,9 @@ class MainWindow(QMainWindow):
             message = f"Corrected {fix_count} formatting problem(s) in {Path(input_file).name}."
             if backup_path:
                 message += f"\n\nA backup of the original was saved to:\n{backup_path}"
+            hint_lines = self._speaker_ref_hint_lines(input_file)
+            if hint_lines:
+                message += "\n\n" + "\n".join(hint_lines)
             QMessageBox.information(self, "File Corrected", message)
             self.error_panel.append(
                 f"Input formatting: corrected {fix_count} problem(s) in "
@@ -5328,12 +5334,39 @@ class MainWindow(QMainWindow):
                 + (f" (backup: {backup_path})" if backup_path else "")
                 + " \u2014 re-analyzing the corrected file now."
             )
+            for hint in self._speaker_ref_hint_lines(input_file):
+                self.error_panel.append(f"  {hint}")
             return True
         # standardButton() maps the clicked widget back to its role; a bare
         # `is` comparison against the enum can never be true for a button.
         if box.standardButton(clicked) == QMessageBox.StandardButton.Cancel:
             return False
         return True  # Ignore (or any non-fix button) proceeds without a fix
+
+    def _speaker_ref_hint_lines(self, input_file: str) -> list[str]:
+        """Human-readable --speaker-ref suggestions for a script's cast.
+
+        Computed from the *post-transform* text, so a cast only visible
+        after a fix (or a subtitle conversion) is still suggested.
+        """
+        from the_oracle.cli import _speaker_ref_report
+
+        try:
+            refs, rejected = _speaker_ref_report(Path(input_file), None)
+        except Exception:
+            return []
+        lines: list[str] = []
+        if refs:
+            lines.append("Speaker voices to provide (in first-appearance order):")
+            for ref in refs:
+                marker = "add" if ref["new"] else "use"
+                lines.append(f"  \u2022 {ref['speaker']} -> voice {ref['voice_key']}: {marker} {ref['flag']}")
+        for label in rejected:
+            lines.append(
+                f"  \u2022 '{label}' is not accepted as a speaker label; no reference audio "
+                "can attribute it \u2014 edit the label in the file."
+            )
+        return lines
 
     def _input_file_is_trusted(self, input_file: str) -> bool:
         """True when the user pre-approved auto-fixes for this exact file."""

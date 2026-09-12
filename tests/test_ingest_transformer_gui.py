@@ -745,3 +745,53 @@ def test_batch_tree_checkboxes_exclude_files_from_apply(qt_app, monkeypatch, tmp
     accepted = window._show_batch_fix_preview_dialog(str(folder), *_fixes_and_warnings(folder))
     included_names = {fix.path.name for fix in accepted}
     assert included_names == {"dash.txt", "period.txt"}  # brackets.md excluded
+
+
+def test_popup_and_panel_surface_speaker_ref_hints(qt_app, monkeypatch, tmp_path) -> None:
+    """The fix flow suggests the exact voice flags for the (post-fix) cast."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    import the_oracle.app_gui as app_gui
+
+    target = tmp_path / "messy.txt"
+    target.write_text("[Winston]: The plans are ready.\nJulia: Agreed.\n", encoding="utf-8")
+    window.input_path.setText(str(target))
+
+    seen: dict = {}
+    real_exec = app_gui.QMessageBox.exec
+
+    def fake_exec(self):  # noqa: ANN001 - capture the popup, pick Fix
+        seen.setdefault("popup", self)
+        fix_button = next(
+            (b for b in self.buttons() if b.text() == "Fix File Automatically"), None
+        )
+        if fix_button is not None:
+            # Store the chosen button for clickedButton() to report.
+            self._chosen = fix_button
+        return 0
+
+    def fake_clicked(self):  # noqa: ANN001
+        return getattr(self, "_chosen", None)
+
+    monkeypatch.setattr(app_gui.QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(app_gui.QMessageBox, "clickedButton", fake_clicked)
+
+    real_dialog = app_gui.QDialog
+
+    class _PreviewDialog(real_dialog):
+        def exec(self):  # noqa: D102 - accept the fix
+            return real_dialog.DialogCode.Accepted
+
+    monkeypatch.setattr(app_gui, "QDialog", _PreviewDialog)
+
+    def fake_information(parent, title, text):  # noqa: ANN001
+        seen["corrected"] = text
+
+    monkeypatch.setattr(app_gui.QMessageBox, "information", staticmethod(fake_information))
+    assert window._run_ingest_transformer_check() is True
+    corrected_text = seen.get("corrected", "")
+    assert "Speaker voices to provide" in corrected_text
+    assert "winston -> voice A" in corrected_text
+    assert "julia -> voice B" in corrected_text
+    # The status panel mirrors the hints.
+    panel = window.error_panel.toPlainText()
+    assert "winston -> voice A" in panel

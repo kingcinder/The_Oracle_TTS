@@ -262,6 +262,7 @@ def _maybe_convert_srt(input_path: str) -> str:
             f"SRT input: reusing previously converted script {script_path}",
             file=sys.stderr,
         )
+        _print_speaker_ref_hints(str(script_path))
         return str(script_path)
     except (OSError, ValueError) as exc:
         raise SystemExit(f"SRT conversion failed: {exc}") from exc
@@ -270,6 +271,9 @@ def _maybe_convert_srt(input_path: str) -> str:
         f"{script_path.name} ({speaker_count} speaker(s)); rendering the script.",
         file=sys.stderr,
     )
+    # The converted script names a cast; tell the user which voice flags to
+    # provide so the render can attribute every speaker.
+    _print_speaker_ref_hints(str(script_path))
     return str(script_path)
 
 
@@ -426,6 +430,7 @@ def _check_input_formatting(input_path: str, fix: bool, json_output: bool = Fals
     except (OSError, ValueError, UnicodeDecodeError):
         return
     if not analysis.has_issues:
+        _print_speaker_ref_hints(input_path)
         return
     fixable = analysis.fixable_issues
     warnings = analysis.warning_issues
@@ -442,6 +447,9 @@ def _check_input_formatting(input_path: str, fix: bool, json_output: bool = Fals
         print(f"  - {where}: {issue.description}", file=sys.stderr)
     if len(fixable) > 5 or len(warnings) > 5:
         print("  - ... (see the GUI's Preview Fixed Text dialog for the full list)", file=sys.stderr)
+    # The post-fix cast can be suggested even before the user fixes the
+    # file — the suggestions come from the transformed text.
+    _print_speaker_ref_hints(input_path)
     if not fix:
         if fixable:
             print(
@@ -459,6 +467,7 @@ def _check_input_formatting(input_path: str, fix: bool, json_output: bool = Fals
     print(f"--fix-input: corrected {fix_count} issue(s) in {input_path}", file=sys.stderr)
     if backup_path:
         print(f"    backup: {backup_path}", file=sys.stderr)
+    _print_speaker_ref_hints(input_path)
 
 
 def _check_input_formatting_interactive(input_path: str, *, prompt=input) -> bool:
