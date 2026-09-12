@@ -971,3 +971,43 @@ def test_check_input_json_reuses_render_path_schema(tmp_path, capsys) -> None:
         "file", "fixable_count", "warning_count", "issues",
         "speaker_refs", "rejected_labels",
     }
+
+
+# ------------- WebVTT (.vtt) pre-flight conversion -------------
+
+_VTT = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Winston>The party is tonight.\n"
+
+
+def test_maybe_convert_srt_handles_vtt(tmp_path, capsys) -> None:
+    from the_oracle.cli import _maybe_convert_srt
+
+    vtt = tmp_path / "episode.vtt"
+    vtt.write_text(_VTT, encoding="utf-8")
+    result = _maybe_convert_srt(str(vtt))
+    assert result == str(tmp_path / "episode.vtt.txt")
+    assert (tmp_path / "episode.vtt.txt").read_text(encoding="utf-8").startswith("winston:")
+    assert "converted" in capsys.readouterr().err
+    # The subtitle file itself is untouched.
+    assert vtt.read_text(encoding="utf-8") == _VTT
+
+
+def test_maybe_convert_srt_reuses_existing_vtt_script(tmp_path, capsys) -> None:
+    from the_oracle.cli import _maybe_convert_srt
+
+    vtt = tmp_path / "episode.vtt"
+    vtt.write_text(_VTT, encoding="utf-8")
+    (tmp_path / "episode.vtt.txt").write_text("winston: reused.\n", encoding="utf-8")
+    result = _maybe_convert_srt(str(vtt))
+    assert result == str(tmp_path / "episode.vtt.txt")
+    # The pre-existing script is reused, not clobbered.
+    assert (tmp_path / "episode.vtt.txt").read_text(encoding="utf-8") == "winston: reused.\n"
+    assert "reusing" in capsys.readouterr().err
+
+
+def test_srt_script_if_converted_handles_vtt(tmp_path) -> None:
+    from the_oracle.cli import _srt_script_if_converted
+
+    vtt = tmp_path / "episode.vtt"
+    assert _srt_script_if_converted(str(vtt)) == str(vtt)  # no script yet
+    (tmp_path / "episode.vtt.txt").write_text("winston: x.\n", encoding="utf-8")
+    assert _srt_script_if_converted(str(vtt)) == str(tmp_path / "episode.vtt.txt")

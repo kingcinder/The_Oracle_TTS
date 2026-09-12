@@ -402,7 +402,7 @@ def analyze_input_file(path: str | Path) -> FileAnalysis:
             FormatIssue(
                 line_number=0,
                 description=(
-                    "This file is SubRip subtitles; ingested directly, every cue "
+                    "This file is SubRip/WebVTT subtitles; ingested directly, every cue "
                     "would be read as narration instead of attributed dialogue."
                 ),
                 snippet=file_path.name,
@@ -443,7 +443,7 @@ RULE_LABELS: dict[str, str] = {
     "orphan": "orphan label line",
     "bullet": "list/quote marker",
     "encoding": "text encoding",
-    "srt": "SRT subtitle",
+    "srt": "SRT/WebVTT subtitle",
 }
 
 
@@ -463,7 +463,7 @@ def transform_text(text: str) -> tuple[str, int]:
 
 
 def _is_srt_text(text: str) -> bool:
-    """True when *text* parses as SubRip subtitles.
+    """True when *text* parses as SubRip or WebVTT subtitles.
 
     The import is lazy so the transformer stays importable in slim contexts
     (and to avoid any import-order coupling with the SRT module).
@@ -494,7 +494,7 @@ def transform_text_detailed(text: str) -> tuple[str, list[LineFix]]:
                 LineFix(output_line=len(out), rule=rule, original=original if original is not None else "")
             )
 
-    # SRT subtitles: the whole document is one structural rewrite — cues,
+    # Subtitle files: the whole document is one structural rewrite — cues,
     # timestamps, and markup become canonical ``Label: dialogue`` lines.
     # Checked first because nothing else in a subtitle file is a text line.
     if _is_srt_text(text):
@@ -694,7 +694,7 @@ class FolderFix:
 # should catch (the transform converts them to ``.txt`` scripts).
 # Timestamped fix backups are excluded by name so re-running the batch
 # never re-reads its own backups.
-_BATCH_EXTENSIONS = {".txt", ".md", ".srt"}
+_BATCH_EXTENSIONS = {".txt", ".md", ".srt", ".vtt"}
 
 # Directory names the recursive batch scan never descends into (besides
 # hidden ones): version control, Python environments, and caches.
@@ -775,7 +775,10 @@ def apply_folder_fixes(fixes: list[FolderFix], *, backup: bool = True) -> list[t
 
     Each file gets a timestamped backup of its original (unless ``backup``
     is False). Returns one ``(path, fix_count, backup_path)`` triple per
-    file, in the same order as *fixes*.
+    file, in the same order as *fixes*. Subtitle conversions follow the
+    convert-not-overwrite contract: the script is written to the sibling
+    ``.srt.txt``/``.vtt.txt`` path and the subtitle file itself is never
+    modified (the returned path is the script in that case).
     """
     written: list[tuple[str, int, str | None]] = []
     for fix in fixes:
@@ -785,8 +788,16 @@ def apply_folder_fixes(fixes: list[FolderFix], *, backup: bool = True) -> list[t
             backup_file = fix.path.with_name(f"{fix.path.name}.bak-{stamp}")
             backup_file.write_text(fix.original_text, encoding="utf-8")
             backup_path = str(backup_file)
-        fix.path.write_text(fix.fixed_text, encoding="utf-8")
-        written.append((str(fix.path), fix.fix_count, backup_path))
+        is_subtitle = fix.path.suffix.lower() in (".srt", ".vtt") and any(
+            line_fix.rule == "srt" for line_fix in fix.line_fixes
+        )
+        if is_subtitle:
+            stem_tail = ".srt.txt" if fix.path.suffix.lower() == ".srt" else ".vtt.txt"
+            target = fix.path.with_name(fix.path.stem + stem_tail)
+        else:
+            target = fix.path
+        target.write_text(fix.fixed_text, encoding="utf-8")
+        written.append((str(target), fix.fix_count, backup_path))
     return written
 
 
@@ -939,11 +950,11 @@ def fix_input_file(path: str | Path, *, backup: bool = True) -> tuple[Path, int,
     Raises :class:`ValueError` when the file has no fixable issues, so a
     caller can never silently "fix" a healthy file.
 
-    SubRip inputs are the one non-in-place case: the conversion is written
-    to a sibling ``<name>.srt.txt`` script (the subtitle file is backed up
-    but never modified), so the render pipeline ingests the script. The
-    returned path is the converted script in that case, and the original
-    file for every in-place rewrite.
+    SubRip/WebVTT inputs are the one non-in-place case: the conversion is
+    written to a sibling ``<name>.srt.txt``/``<name>.vtt.txt`` script (the
+    subtitle file is backed up but never modified), so the render pipeline
+    ingests the script. The returned path is the converted script in that
+    case, and the original file for every in-place rewrite.
     """
     file_path = Path(path)
     analysis = analyze_input_file(file_path)
@@ -956,7 +967,7 @@ def fix_input_file(path: str | Path, *, backup: bool = True) -> tuple[Path, int,
         if analysis.encoding_fixed_text is not None
         else _decode_best_effort(file_path.read_bytes())
     )
-    is_srt = any(issue.fixable and issue.line_number == 0 and issue.snippet == file_path.name and "SubRip" in issue.description for issue in analysis.issues)
+    is_srt = any(issue.fixable and issue.line_number == 0 and issue.snippet == file_path.name and "subtitles" in issue.description for issue in analysis.issues)
     fixed_text, fix_count = transform_text(original)
     if analysis.encoding_fixed_text is not None:
         fix_count += 1  # the transcode itself is a fix the user should hear about
@@ -968,8 +979,11 @@ def fix_input_file(path: str | Path, *, backup: bool = True) -> tuple[Path, int,
         backup_file.write_text(original, encoding="utf-8")
         backup_path = str(backup_file)
 
-    if is_srt and file_path.suffix.lower() == ".srt":
-        written_path = file_path.with_suffix(".srt.txt")
+    if is_srt and file_path.suffix.lower() in (".srt", ".vtt"):
+        # with_suffix cannot build compound names like ".vtt.txt" (it
+        # replaces the whole suffix), so the name is assembled from the stem.
+        stem_suffix = ".srt.txt" if file_path.suffix.lower() == ".srt" else ".vtt.txt"
+        written_path = file_path.with_name(file_path.stem + stem_suffix)
         written_path.write_text(fixed_text, encoding="utf-8")
         return written_path, fix_count, backup_path
 
