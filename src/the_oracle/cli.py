@@ -72,6 +72,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit a JSON array of {label, path} instead of human-readable text.",
     )
+    fix_folder = subparsers.add_parser(
+        "fix-folder",
+        help="Batch-find and fix formatting issues across every text file in a folder (recursing into subfolders), with per-file backups and a combined report.",
+    )
+    fix_folder.add_argument("folder", help="Folder to scan (recursed into subfolders; hidden/backup/VCS files skipped).")
+    fix_folder.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the report as a single JSON document on stdout (per-file issue/fix lists, "
+        "applied rewrites) instead of human-readable text, so scripts can parse it.",
+    )
+    fix_folder.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be fixed without writing anything (default without --fix semantics).",
+    )
+    fix_folder.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="Skip the timestamped per-file backups kept next to each corrected file.",
+    )
     check_input.add_argument(
         "--json",
         action="store_true",
@@ -988,6 +1009,143 @@ def handle_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_fix_folder(args: argparse.Namespace) -> int:
+    """Batch-scan a folder and (optionally) apply every fixable rewrite.
+
+    Exit code 0 = nothing to fix or fixes applied cleanly; 1 = warnings
+    remain somewhere in the folder (fixable issues are always fixed when
+    applying); 2 = the folder could not be scanned. Nothing is written in
+    ``--dry-run`` mode or in ``--json`` mode without ``--fix`` semantics —
+    here ``--dry-run`` is the only preview switch, since a folder scan that
+    rewrites files is destructive and must be requested explicitly.
+    """
+    from the_oracle.ingest_transformer import apply_folder_fixes, preview_folder_fixes
+
+    folder = Path(args.folder)
+    json_mode = bool(getattr(args, "json", False))
+    dry_run = bool(getattr(args, "dry_run", False))
+    keep_backup = not bool(getattr(args, "no_backup", False))
+    if not folder.is_dir():
+        if json_mode:
+            print(json.dumps(_folder_json_document(str(folder), error="folder not found"), ensure_ascii=False))
+        else:
+            print(f"fix-folder: folder not found: {folder}", file=sys.stderr)
+        return 2
+    try:
+        fixable, warnings_only = preview_folder_fixes(folder)
+    except ValueError as exc:
+        if "No fixable" in str(exc):
+            # Nothing fixable anywhere — a clean scan, not a failure.
+            if json_mode:
+                print(json.dumps(_folder_json_document(str(folder), dry_run=dry_run), ensure_ascii=False))
+            else:
+                print(f"fix-folder: {exc}")
+            return 0
+        if json_mode:  # pragma: no cover - defensive
+            print(json.dumps(_folder_json_document(str(folder), error=f"scan failed: {exc}"), ensure_ascii=False))
+        else:  # pragma: no cover - defensive
+            print(f"fix-folder: the folder could not be scanned: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        if json_mode:
+            print(json.dumps(_folder_json_document(str(folder), error=f"scan failed: {exc}"), ensure_ascii=False))
+        else:
+            print(f"fix-folder: the folder could not be scanned: {exc}", file=sys.stderr)
+        return 2
+
+    applied: list[dict] = []
+    if not dry_run:
+        try:
+            written = apply_folder_fixes(fixable, backup=keep_backup)
+        except OSError as exc:
+            if json_mode:
+                print(json.dumps(_folder_json_document(str(folder), error=f"apply failed: {exc}"), ensure_ascii=False))
+            else:
+                print(f"fix-folder: corrections could not be written: {exc}", file=sys.stderr)
+            return 2
+        for target, fix_count, backup_path in written:
+            applied.append({"file": target, "fixed_count": fix_count, "backup": backup_path})
+
+    if json_mode:
+        document = _folder_json_document(
+            str(folder),
+            fixable=fixable,
+            warnings_only=warnings_only,
+            applied=applied,
+            dry_run=dry_run,
+        )
+        print(json.dumps(document, ensure_ascii=False))
+        return 1 if warnings_only else 0
+
+    if dry_run:
+        print(f"fix-folder: {len(fixable)} file(s) would be corrected, {len(warnings_only)} warning-only file(s):")
+    else:
+        print(f"fix-folder: corrected {len(fixable)} file(s), {len(warnings_only)} warning-only file(s):")
+    for fix in fixable:
+        print(f"  - {fix.path.relative_to(folder)}: {fix.fix_count} fix(es)")
+    for analysis in warnings_only:
+        print(f"  ! {Path(analysis.path).relative_to(folder)}: {len(analysis.warning_issues)} warning(s) (never rewritten)")
+    if dry_run:
+        print("Dry run: nothing written. Re-run without --dry-run to apply.")
+    elif applied:
+        total_backups = sum(1 for entry in applied if entry["backup"])
+        if total_backups:
+            print(f"    backups kept: {total_backups}")
+    if warnings_only:
+        print("Warnings remain (never rewritten automatically); review them with check-input.")
+        return 1
+    return 0
+
+
+def _folder_json_document(
+    folder_path: str,
+    *,
+    fixable: list | None = None,
+    warnings_only: list | None = None,
+    applied: list[dict] | None = None,
+    dry_run: bool = False,
+    error: str | None = None,
+) -> dict:
+    """Build the fix-folder JSON report (one document per run).
+
+    Keys follow the stable-schema convention: ``fixes``, ``warnings`` and
+    ``applied`` are always present (empty lists when nothing applies), so
+    scripts can index them unconditionally.
+    """
+    document: dict = {"folder": folder_path}
+    if error is not None:
+        document["error"] = error
+        document["fixes"] = []
+        document["warnings"] = []
+        document["applied"] = []
+        return document
+    document["dry_run"] = dry_run
+    fixes_json: list[dict] = []
+    for fix in fixable or []:
+        fixes_json.append(
+            {
+                "file": str(fix.path),
+                "fix_count": fix.fix_count,
+                "line_fixes": [
+                    {"line": lf.output_line, "rule": lf.rule, "original": lf.original}
+                    for lf in fix.line_fixes
+                ],
+            }
+        )
+    document["fixes"] = fixes_json
+    document["warnings"] = [
+        {
+            "file": analysis.path,
+            "issues": [
+                _input_issue_json(issue, fixable=False) for issue in analysis.warning_issues
+            ],
+        }
+        for analysis in warnings_only or []
+    ]
+    document["applied"] = applied or []
+    return document
+
+
 def handle_setup_vulkan() -> int:
     """One-shot automatic setup for the Vulkan (GPU) backend.
 
@@ -1033,6 +1191,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_check_input(args)
     if args.command == "voices":
         return handle_voices(args)
+    if args.command == "fix-folder":
+        return handle_fix_folder(args)
     if args.command == "setup-vulkan":
         return handle_setup_vulkan()
     parser.error("Unknown command.")

@@ -19,6 +19,7 @@ from the_oracle.cli import (
     _speaker_ref_report,
     build_parser,
     handle_check_input,
+    handle_fix_folder,
     handle_render,
     handle_voices,
 )
@@ -1222,3 +1223,95 @@ def test_check_input_without_check_refs_omits_checked_refs(tmp_path: Path, capsy
     # not passed; the list is simply empty and nothing was validated.
     assert document["checked_refs"] == []
     assert document["refs_ok"] is True
+
+
+# ------------- fix-folder subcommand -------------
+
+
+def test_fix_folder_dry_run_writes_nothing(tmp_path: Path, capsys) -> None:
+    dirty = tmp_path / "dirty.txt"
+    dirty.write_text("[A]: Hello.\n", encoding="utf-8")
+    args = build_parser().parse_args(["fix-folder", str(tmp_path), "--dry-run"])
+    assert handle_fix_folder(args) == 0
+    assert dirty.read_text(encoding="utf-8") == "[A]: Hello.\n"  # untouched
+    out = capsys.readouterr().out
+    assert "would be corrected" in out and "Dry run" in out
+
+
+def test_fix_folder_applies_with_backups(tmp_path: Path, capsys) -> None:
+    dirty = tmp_path / "dirty.txt"
+    dirty.write_text("[A]: Hello.\n", encoding="utf-8")
+    args = build_parser().parse_args(["fix-folder", str(tmp_path)])
+    assert handle_fix_folder(args) == 0
+    assert "A: Hello." in dirty.read_text(encoding="utf-8")
+    backups = list(tmp_path.glob("dirty.txt.bak-*"))
+    assert len(backups) == 1
+    assert "[A]: Hello." in backups[0].read_text(encoding="utf-8")
+    out = capsys.readouterr().out
+    assert "corrected 1 file(s)" in out and "backups kept: 1" in out
+
+
+def test_fix_folder_json_dry_run_schema(tmp_path: Path, capsys) -> None:
+    (tmp_path / "a.txt").write_text("[A]: Hello.\n", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.md").write_text(
+        "[2024-01-01 10:00] Alice: note\n", encoding="utf-8"
+    )
+    args = build_parser().parse_args(["fix-folder", str(tmp_path), "--json", "--dry-run"])
+    assert handle_fix_folder(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["dry_run"] is True
+    assert document["applied"] == []
+    assert {Path(f["file"]).name for f in document["fixes"]} == {"a.txt", "b.md"}
+    a_fix = next(f for f in document["fixes"] if Path(f["file"]).name == "a.txt")
+    assert a_fix["fix_count"] == 1
+    assert a_fix["line_fixes"][0]["rule"] == "bracket"
+    # Nothing written in dry-run, so no backups exist.
+    assert not list(tmp_path.rglob("*.bak-*"))
+
+
+def test_fix_folder_json_apply_reports_backups(tmp_path: Path, capsys) -> None:
+    (tmp_path / "a.txt").write_text("[A]: Hello.\n", encoding="utf-8")
+    args = build_parser().parse_args(["fix-folder", str(tmp_path), "--json"])
+    assert handle_fix_folder(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["dry_run"] is False
+    assert len(document["applied"]) == 1
+    entry = document["applied"][0]
+    assert Path(entry["file"]).name == "a.txt"
+    assert entry["fixed_count"] == 1
+    assert entry["backup"] and Path(entry["backup"]).is_file()
+    # Idempotent: a second scan finds nothing.
+    args2 = build_parser().parse_args(["fix-folder", str(tmp_path), "--json"])
+    assert handle_fix_folder(args2) == 0
+    document2 = json.loads(capsys.readouterr().out)
+    assert document2["fixes"] == [] and document2["applied"] == []
+
+
+def test_fix_folder_missing_folder_exit_two(tmp_path: Path, capsys) -> None:
+    args = build_parser().parse_args(["fix-folder", str(tmp_path / "nope"), "--json"])
+    assert handle_fix_folder(args) == 2
+    document = json.loads(capsys.readouterr().out)
+    assert document["error"] == "folder not found"
+    assert document["fixes"] == [] and document["applied"] == []
+
+
+def test_fix_folder_clean_folder_exits_zero(tmp_path: Path, capsys) -> None:
+    (tmp_path / "ok.txt").write_text("A: clean.\n", encoding="utf-8")
+    args = build_parser().parse_args(["fix-folder", str(tmp_path)])
+    assert handle_fix_folder(args) == 0
+    assert "No fixable" in capsys.readouterr().out
+
+
+def test_fix_folder_subtitle_writes_sibling_script(tmp_path: Path, capsys) -> None:
+    srt = tmp_path / "ep.srt"
+    srt.write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\n[A]: Hi.\n",
+        encoding="utf-8",
+    )
+    args = build_parser().parse_args(["fix-folder", str(tmp_path), "--json"])
+    assert handle_fix_folder(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    targets = {Path(entry["file"]).name for entry in document["applied"]}
+    assert targets == {"ep.srt.txt"}  # convert-not-overwrite
+    assert srt.read_text(encoding="utf-8").startswith("1\n")  # subtitle untouched

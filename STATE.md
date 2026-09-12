@@ -315,6 +315,21 @@ rewritten by the loop).
   disagree about what counts as a usable reference. 5 tests; full suite
   845 passing.
 
+- **fix-folder subcommand (2026-09-12, this campaign)**: the batch folder
+  fixer is now scriptable from the CLI: `the-oracle fix-folder FOLDER`
+  scans recursively (same skip rules as the GUI batch: hidden, backups,
+  VCS/dependency dirs) and applies every fixable rewrite with per-file
+  timestamped backups (`--no-backup` to skip). `--dry-run` previews
+  without writing; `--json` emits one stable-schema document (`fixes`
+  with per-line rule/original detail, `warnings`, `applied` with backup
+  paths, `dry_run` flag) so pipelines can parse folder scans. Exit codes:
+  0 clean/applied, 1 warnings remain, 2 folder unreadable. Subtitle files
+  follow the convert-not-overwrite contract (sibling `.srt.txt`/`.vtt.txt`
+  written, subtitle untouched). Backed by the same `preview_folder_fixes`/
+  `apply_folder_fixes` the GUI batch dialog uses — rule filter
+  (`exclude_rules`) is GUI-only for now, logged for later. 7 tests; full
+  suite 852 passing.
+
 - **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
   own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`
   pre-flight. `analyze_input_file` flags a structurally-valid SubRip file
