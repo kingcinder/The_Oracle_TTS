@@ -188,7 +188,14 @@ rewritten by the loop).
   fixable issue, `fix_input_file` writes the sibling `<name>.vtt.txt`
   script (subtitle never modified), the CLI pre-flight accepts `.vtt`
   (converting or reusing the script), and the batch scan includes `.vtt`
-  files. Applying a batch now honors the contract for **both** formats:
+  files. The conversion moment now also **suggests the cast's voice
+  flags**: the CLI pre-flight prints `_print_speaker_ref_hints` for the
+  converted script (both convert and reuse paths), the render path's
+  human report includes the hints (clean files too — the cast is the
+  useful content there), and the GUI fix flow adds them to the post-fix
+  "File Corrected" popup and the status panel, computed from the
+  post-transform text so a subtitle conversion's cast is suggested even
+  before the user accepts the fix. Full suite 820 passing. Applying a batch now honors the contract for **both** formats:
   a latent pre-existing bug had `apply_folder_fixes` writing the
   converted script *into* the subtitle file; it now redirects to the
   sibling script and reports that path. 6 converter tests + 3

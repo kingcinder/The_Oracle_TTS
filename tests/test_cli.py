@@ -363,6 +363,9 @@ def test_fix_input_silent_on_clean_and_missing_files(tmp_path: Path, capsys) -> 
     clean = tmp_path / "clean.txt"
     clean.write_text("A: Hello there.\nB: Hi back.\n", encoding="utf-8")
     _check_input_formatting(str(clean), fix=False)
+    # A clean file is still reported on: the cast's --speaker-ref hints
+    # are the useful content of the report in that case.
+    assert "Speaker voices to provide" in capsys.readouterr().err
     _check_input_formatting(str(tmp_path / "does-not-exist.txt"), fix=True)
     assert capsys.readouterr().err == ""
 
@@ -1011,3 +1014,33 @@ def test_srt_script_if_converted_handles_vtt(tmp_path) -> None:
     assert _srt_script_if_converted(str(vtt)) == str(vtt)  # no script yet
     (tmp_path / "episode.vtt.txt").write_text("winston: x.\n", encoding="utf-8")
     assert _srt_script_if_converted(str(vtt)) == str(tmp_path / "episode.vtt.txt")
+
+
+# ------------- speaker-ref hints at the subtitle-conversion moment -------------
+
+_VTT_HINTS = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Winston>The party is tonight.\n\n00:00:04.500 --> 00:00:06.000\nJulia: Agreed.\n"
+
+
+def test_maybe_convert_srt_prints_speaker_ref_hints(tmp_path, capsys) -> None:
+    from the_oracle.cli import _maybe_convert_srt
+
+    vtt = tmp_path / "episode.vtt"
+    vtt.write_text(_VTT_HINTS, encoding="utf-8")
+    _maybe_convert_srt(str(vtt))
+    err = capsys.readouterr().err
+    assert "converted 2 cue(s)" in err
+    assert "Speaker voices to provide" in err
+    assert "winston -> voice A: use --speakerA-ref PATH" in err
+    assert "julia -> voice B: use --speakerB-ref PATH" in err
+
+
+def test_maybe_convert_srt_reuse_also_prints_hints(tmp_path, capsys) -> None:
+    from the_oracle.cli import _maybe_convert_srt
+
+    vtt = tmp_path / "episode.vtt"
+    vtt.write_text(_VTT_HINTS, encoding="utf-8")
+    (tmp_path / "episode.vtt.txt").write_text("winston: reused.\n", encoding="utf-8")
+    _maybe_convert_srt(str(vtt))
+    err = capsys.readouterr().err
+    assert "reusing previously converted script" in err
+    assert "Speaker voices to provide" in err
