@@ -63,6 +63,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Correct fixable issues in place (timestamped backup kept) instead of only reporting them.",
     )
+    voices = subparsers.add_parser(
+        "voices",
+        help="List the default Seashells reference clips usable in --speaker-ref flags.",
+    )
+    voices.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a JSON array of {label, path} instead of human-readable text.",
+    )
     check_input.add_argument(
         "--json",
         action="store_true",
@@ -669,6 +678,31 @@ def handle_check_input(args: argparse.Namespace) -> int:
     return 1
 
 
+def handle_voices(args: argparse.Namespace) -> int:
+    """List the default Seashells reference clips (the render fallbacks).
+
+    Human output is one ``label -> path`` line per clip, ordered as the
+    render path picks them (first line = Speaker A's default, second =
+    Speaker B's); ``--json`` emits an array of ``{label, path}`` so
+    scripts can wire the paths into ``--speaker-ref`` flags
+    programmatically. Exit code 1 (no crash) when no clips exist at all.
+    """
+    from the_oracle.voice_catalog import default_voice_choices
+
+    repo_root = Path(__file__).resolve().parents[2]
+    choices = default_voice_choices(repo_root)
+    if args.json:
+        print(json.dumps([{"label": c.label, "path": c.path} for c in choices], ensure_ascii=False, indent=2))
+    else:
+        if not choices:
+            print("No default Seashells reference clips were found.", file=sys.stderr)
+            return 1
+        for index, choice in enumerate(choices):
+            marker = "" if index >= 2 else f" (default Speaker {'A' if index == 0 else 'B'})"
+            print(f"{choice.label} -> {choice.path}{marker}")
+    return 0
+
+
 def handle_render(args: argparse.Namespace) -> int:
     if args.project:
         saved = load_project_manifest(args.project)
@@ -897,6 +931,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_render(args)
     if args.command == "check-input":
         return handle_check_input(args)
+    if args.command == "voices":
+        return handle_voices(args)
     if args.command == "setup-vulkan":
         return handle_setup_vulkan()
     parser.error("Unknown command.")

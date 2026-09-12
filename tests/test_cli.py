@@ -20,6 +20,7 @@ from the_oracle.cli import (
     build_parser,
     handle_check_input,
     handle_render,
+    handle_voices,
 )
 from the_oracle.ingest_transformer import analyze_input_file
 
@@ -1104,3 +1105,27 @@ def test_check_input_json_includes_rule_field(tmp_path, capsys) -> None:
     assert handle_check_input(args) == 1
     document = json.loads(capsys.readouterr().out)
     assert document["issues"][0]["rule"] == "srt"
+
+
+# ------------- voices subcommand -------------
+
+
+def test_voices_lists_default_clips_human(capsys) -> None:
+    args = build_parser().parse_args(["voices"])
+    assert handle_voices(args) == 0
+    out = capsys.readouterr().out
+    assert "->" in out
+    assert "(default Speaker A)" in out
+    assert "(default Speaker B)" in out
+    # Paths point at real files (the repo bundles Seashells/generic).
+    first_path = Path(out.split("->", 1)[1].split(" (default")[0].strip())
+    assert first_path.is_file()
+
+
+def test_voices_json_is_parseable_array(capsys) -> None:
+    args = build_parser().parse_args(["voices", "--json"])
+    assert handle_voices(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert isinstance(document, list) and document
+    assert {"label", "path"} <= set(document[0])
+    assert Path(document[0]["path"]).is_file()
