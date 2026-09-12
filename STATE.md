@@ -222,7 +222,23 @@ rewritten by the loop).
   corrupt blob fails `restoreGeometry` harmlessly. Schema hygiene added
   in `_normalize_app_settings` (non-string/empty values dropped). 1 GUI
   test (save → settings key → fresh-dialog restore); full suite 822
-  passing. Applying a batch now honors the contract for **both** formats:
+  passing.
+
+- **Rule filter in the batch preview (2026-09-11, this campaign)**:
+  `transform_text_detailed` gained ``exclude_rules`` — lines a matching
+  rule would rewrite pass through byte-identical (and record no
+  ``LineFix``); the whole-document ``srt`` rule can be excluded too.
+  `preview_folder_fixes` forwards the filter and drops files whose fixes
+  are all excluded (their rewrite would be a no-op — writing the file
+  with its own content plus a pointless backup). The **Preview Batch Fix**
+  dialog gained a checkbox row of the batch's present rules with human
+  labels and per-rule occurrence tooltips; unticking rules live-updates
+  the apply-button count/enablement, and Apply **recomputes** the batch
+  against the filter (the precomputed rewrites include every rule, so
+  applying them as-is would ignore the filter) intersected with the
+  per-file checkboxes. Example: untick everything but ``chat-export
+  timestamp`` to accept only timestamp fixes. 3 module tests + 1 GUI
+  test; full suite 828 passing. Applying a batch now honors the contract for **both** formats:
   a latent pre-existing bug had `apply_folder_fixes` writing the
   converted script *into* the subtitle file; it now redirects to the
   sibling script and reports that path. 6 converter tests + 3

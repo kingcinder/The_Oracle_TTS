@@ -473,14 +473,23 @@ def _is_srt_text(text: str) -> bool:
     return looks_like_srt(text)
 
 
-def transform_text_detailed(text: str) -> tuple[str, list[LineFix]]:
+def transform_text_detailed(
+    text: str, *, exclude_rules: frozenset[str] | set[str] | None = None
+) -> tuple[str, list[LineFix]]:
     """Transform with per-fix provenance: which rule rewrote which line.
 
     Returns ``(fixed_text, fixes)`` where each :class:`LineFix` records the
     1-based line number in the *output* text and the name of the rule that
     produced it. The transform is idempotent: the output of a transform has
     no remaining fixable issues.
+
+    ``exclude_rules`` names rules the caller does not want applied: lines a
+    matching rule would rewrite pass through unchanged (and no ``LineFix``
+    is recorded for them), so the result contains only the remaining
+    rules' fixes. The ``srt`` rule is whole-document: excluding it leaves a
+    subtitle file untouched.
     """
+    excluded = exclude_rules or frozenset()
     lines = text.splitlines()
     out: list[str] = []
     fixes: list[LineFix] = []
@@ -488,6 +497,10 @@ def transform_text_detailed(text: str) -> tuple[str, list[LineFix]]:
     dash_document = _is_dash_dialogue_document(lines)
 
     def _emit(text_line: str, rule: str | None = None, original: str | None = None) -> None:
+        if rule is not None and rule in excluded:
+            # The rule is filtered out: keep the original line, unchanged.
+            out.append(original if original is not None else text_line)
+            return
         out.append(text_line)
         if rule is not None:
             fixes.append(
@@ -497,7 +510,7 @@ def transform_text_detailed(text: str) -> tuple[str, list[LineFix]]:
     # Subtitle files: the whole document is one structural rewrite — cues,
     # timestamps, and markup become canonical ``Label: dialogue`` lines.
     # Checked first because nothing else in a subtitle file is a text line.
-    if _is_srt_text(text):
+    if "srt" not in excluded and _is_srt_text(text):
         from the_oracle.srt_ingest import srt_to_dialogue_text
 
         script, _cues, _speakers = srt_to_dialogue_text(text)
@@ -732,13 +745,20 @@ def analyze_folder(folder: str | Path) -> list[FileAnalysis]:
     return results
 
 
-def preview_folder_fixes(folder: str | Path) -> tuple[list[FolderFix], list[FileAnalysis]]:
+def preview_folder_fixes(
+    folder: str | Path, *, exclude_rules: frozenset[str] | set[str] | None = None
+) -> tuple[list[FolderFix], list[FileAnalysis]]:
     """Compute rewrites for every fixable file in *folder* without writing.
 
     Returns ``(fixable, warnings_only)``: the :class:`FolderFix` list for a
     combined preview dialog, plus the analyses whose issues are all warnings
     (reported to the user, never rewritten). Raises :class:`ValueError` when
     the folder contains no fixable files at all.
+
+    ``exclude_rules`` forwards to the transform (see
+    :func:`transform_text_detailed`): lines a matching rule would rewrite
+    are left unchanged, so a file whose only fixes are excluded drops out
+    of the batch entirely.
     """
     analyses = analyze_folder(folder)
     fixable: list[FolderFix] = []
@@ -752,7 +772,12 @@ def preview_folder_fixes(folder: str | Path) -> tuple[list[FolderFix], list[File
             if analysis.encoding_fixed_text is not None
             else _decode_best_effort(analysis.path and Path(analysis.path).read_bytes())
         )
-        fixed_text, line_fixes = transform_text_detailed(original)
+        fixed_text, line_fixes = transform_text_detailed(original, exclude_rules=exclude_rules)
+        if not line_fixes:
+            # Every fixable issue in this file was filtered out by
+            # ``exclude_rules``: the rewrite would be a no-op, so the file
+            # drops out of the batch entirely (no rewrite, no backup).
+            continue
         fix_count = len(line_fixes)
         if analysis.encoding_fixed_text is not None:
             fix_count += 1

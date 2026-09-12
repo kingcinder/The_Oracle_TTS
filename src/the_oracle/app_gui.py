@@ -5100,11 +5100,14 @@ class MainWindow(QMainWindow):
         A tree on the left lists every fixable file under the chosen folder
         (recursed, shown as paths relative to the folder) with its fix
         count and an include-checkbox (all ticked by default); selecting
-        one shows its rule-labeled diff on the right. Unfixable warnings
-        are listed beneath the tree. Returns the list of user-included
-        fixes on Apply (empty when cancelled or nothing ticked).
+        one shows its rule-labeled diff on the right. A rule-filter row of
+        checkboxes unticks whole fix rules (e.g. keep only timestamp
+        fixes). Unfixable warnings are listed beneath the tree. Returns
+        the list of fixes to apply on Accept — recomputed against the rule
+        filter and limited to the ticked files (empty when cancelled,
+        nothing ticked, or every fix filtered out).
         """
-        from the_oracle.ingest_transformer import labeled_fixed_diff
+        from the_oracle.ingest_transformer import labeled_fixed_diff, rule_label
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Preview Batch Fix")
@@ -5123,6 +5126,37 @@ class MainWindow(QMainWindow):
         layout.addWidget(summary)
 
         body = QHBoxLayout()
+
+        # Rule filter: unticking a fix rule leaves those lines untouched
+        # everywhere in the batch (e.g. accept only timestamp fixes). The
+        # Apply is recomputed against the filter, so a file whose fixes are
+        # all filtered out is skipped entirely.
+        present_rules: list[str] = []
+        for fix in fixes:
+            for line_fix in fix.line_fixes:
+                if line_fix.rule not in present_rules:
+                    present_rules.append(line_fix.rule)
+        filter_row = QHBoxLayout()
+        filter_label = QLabel("Fix rules to apply:")
+        filter_row.addWidget(filter_label)
+        rule_checkboxes: dict[str, QCheckBox] = {}
+        for rule in present_rules:
+            box = QCheckBox(rule_label(rule))
+            box.setChecked(True)
+            occurrences = sum(1 for fix in fixes for line_fix in fix.line_fixes if line_fix.rule == rule)
+            box.setToolTip(
+                f"{occurrences} fix(es) of this rule in the batch. Untick to "
+                "leave every line this rule would rewrite unchanged."
+            )
+            filter_row.addWidget(box)
+            rule_checkboxes[rule] = box
+
+        def _excluded_rules() -> set[str]:
+            return {rule for rule, box in rule_checkboxes.items() if not box.isChecked()}
+
+        if rule_checkboxes:
+            filter_row.addStretch(1)
+            layout.addLayout(filter_row)
 
         tree_column = QVBoxLayout()
         tree_header = QLabel("Files to fix (folder tree)")
@@ -5152,15 +5186,21 @@ class MainWindow(QMainWindow):
             ]
 
         def _update_counts() -> None:
-            checked = _checked_fixes()
+            excluded = _excluded_rules()
+            checked = [fix for fix in _checked_fixes() if any(lf.rule not in excluded for lf in fix.line_fixes)]
             count = len(checked)
-            fix_total = sum(fix.fix_count for fix in checked)
+            fix_total = sum(
+                sum(1 for lf in fix.line_fixes if lf.rule not in excluded)
+                for fix in checked
+            )
             accept.setText(
                 f"Apply Fixes to {count} of {len(fixes)} File(s) ({fix_total} fix(es))"
             )
             accept.setEnabled(bool(checked))
 
         tree.itemChanged.connect(lambda _item, _column: _update_counts())
+        for box in rule_checkboxes.values():
+            box.toggled.connect(lambda _checked: _update_counts())
 
         diff_column = QVBoxLayout()
         diff_header = QLabel("Diff (selected file)")
@@ -5225,7 +5265,30 @@ class MainWindow(QMainWindow):
         cancel.clicked.connect(dialog.reject)
         # After the button exists, so the label/enablement can be computed.
         _update_counts()
-        return dialog.exec() == QDialog.DialogCode.Accepted and _checked_fixes()
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        if not accepted:
+            return []
+        checked_relatives = {
+            root_item.child(i).text(0)
+            for i in range(root_item.childCount())
+            if root_item.child(i).checkState(0) == Qt.Checked
+        }
+        excluded = _excluded_rules()
+        if not checked_relatives:
+            return []
+        # Recompute the batch against the rule filter: the precomputed
+        # rewrites include every rule, so applying them as-is would ignore
+        # the filter. A file whose fixes are all excluded drops out here.
+        from the_oracle.ingest_transformer import preview_folder_fixes
+
+        try:
+            refixes, _warnings = preview_folder_fixes(folder, exclude_rules=excluded or None)
+        except ValueError:
+            return []  # every fix was filtered out
+        return [
+            fix for fix in refixes
+            if str(fix.path.relative_to(Path(folder))) in checked_relatives
+        ]
 
     def _run_ingest_transformer_check(self) -> bool:
         """Check the input file's formatting with the ingestion transformer.
