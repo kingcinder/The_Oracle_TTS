@@ -371,6 +371,20 @@ rewritten by the loop).
 
 ## Noticed, not yet actioned
 
+- **Enum-vs-widget identity audit (2026-09-11, prompted by the Cancel-button
+  bug)**: the full GUI was swept for the `clickedButton() is
+  StandardButton.X` bug family — no further instances. Verified correct:
+  the two `result == StandardButton.Cancel` checks after `exec()` (exec
+  returns the enum, so that comparison is valid), `QMessageBox.question`
+  result checks, `_confirm_delete`'s `result == QMessageBox.Ok`, the
+  `clicked is fix_button` widget-vs-widget comparison (valid — both are
+  the same QPushButton instance), `checkState(0) == Qt.Checked`, the
+  `EndOfMedia` `getattr(status, "EndOfMedia")` pattern in both playback
+  handlers, and the wizards' signal-based button wiring (no identity
+  comparisons at all). One fragile pattern exists only in tests
+  (`buttons()[0]` positional indexing in four transformer GUI tests —
+  brittle if Qt reorders buttons, but test-only).
+
 - **`tests/test_grammar_language_tool.py` leaks temp dirs (found
   2026-09-11 during the orphan sweep)**: each test creates its cache via
   `tempfile.mkdtemp(prefix="oracle_lt_cache_")` and never removes it —
