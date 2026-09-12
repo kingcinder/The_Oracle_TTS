@@ -211,30 +211,39 @@ def _voice_settings_from_args(args: argparse.Namespace) -> VoiceSettings:
     )
 
 
+def _subtitle_script_target(file_path: Path) -> Path:
+    """The sibling script path a subtitle conversion writes to."""
+    suffix = file_path.suffix.lower()
+    tail = ".srt.txt" if suffix == ".srt" else ".vtt.txt" if suffix == ".vtt" else ".txt"
+    # with_suffix cannot build compound names like ".vtt.txt" (it replaces
+    # the whole suffix), so the name is assembled from the stem.
+    return file_path.with_name(file_path.stem + tail)
+
+
 def _srt_script_if_converted(input_path: str) -> str:
-    """Return the converted ``.srt.txt`` script when a fix produced one."""
+    """Return the converted subtitle script when a fix produced one."""
     file_path = Path(input_path)
-    if file_path.suffix.lower() == ".srt":
-        script = file_path.with_suffix(".srt.txt")
+    if file_path.suffix.lower() in (".srt", ".vtt"):
+        script = _subtitle_script_target(file_path)
         if script.is_file():
             return str(script)
     return input_path
 
 
 def _maybe_convert_srt(input_path: str) -> str:
-    """Convert an ``.srt`` input to a dialogue script, returning the input to use.
+    """Convert a subtitle input (``.srt``/``.vtt``) to a script, returning the input to use.
 
     Subtitle files cannot be ingested directly (every cue degrades into
-    narration), so a valid SubRip input is converted to a sibling
-    ``<name>.srt.txt`` script and that script is rendered instead — the
-    subtitle file itself is never modified. Anything that is not a valid
-    SRT (including a missing or unreadable file) is returned unchanged so
-    the ordinary error paths report it.
+    narration), so a valid SubRip or WebVTT input is converted to a sibling
+    ``<name>.srt.txt``/``<name>.vtt.txt`` script and that script is rendered
+    instead — the subtitle file itself is never modified. Anything that is
+    not a valid subtitle file (including a missing or unreadable file) is
+    returned unchanged so the ordinary error paths report it.
     """
     from the_oracle.srt_ingest import convert_srt_file, looks_like_srt
 
     file_path = Path(input_path)
-    if file_path.suffix.lower() != ".srt" or not file_path.is_file():
+    if file_path.suffix.lower() not in (".srt", ".vtt") or not file_path.is_file():
         return input_path
     try:
         text = file_path.read_bytes().decode("utf-8-sig")
@@ -248,7 +257,7 @@ def _maybe_convert_srt(input_path: str) -> str:
         script_path, cue_count, speaker_count = convert_srt_file(file_path)
     except FileExistsError:
         # A previous conversion already produced the script; reuse it.
-        script_path = file_path.with_suffix(".srt.txt")
+        script_path = _subtitle_script_target(file_path)
         print(
             f"SRT input: reusing previously converted script {script_path}",
             file=sys.stderr,

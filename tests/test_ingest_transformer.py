@@ -337,3 +337,48 @@ def test_batch_folder_includes_srt_files(tmp_path: Path) -> None:
     fixes, _warnings = preview_folder_fixes(tmp_path)
     assert [fix.path.name for fix in fixes] == ["movie.srt"]
     assert fixes[0].line_fixes[0].rule == "srt"
+
+
+# ---------------------------------------------------------------------------
+# WebVTT through the transformer + batch scan
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_input_file_flags_webvtt(tmp_path) -> None:
+    file_path = tmp_path / "episode.vtt"
+    file_path.write_text(
+        "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Winston>The party is tonight.\n",
+        encoding="utf-8",
+    )
+    analysis = analyze_input_file(file_path)
+    assert analysis.has_issues
+    assert analysis.fixable_issues[0].description.startswith("This file is SubRip/WebVTT subtitles")
+
+
+def test_fix_input_file_writes_vtt_txt_script(tmp_path) -> None:
+    file_path = tmp_path / "episode.vtt"
+    file_path.write_text(
+        "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Winston>The party is tonight.\n",
+        encoding="utf-8",
+    )
+    written_path, _fix_count, _backup = fix_input_file(file_path)
+    assert written_path == tmp_path / "episode.vtt.txt"
+    assert "winston: The party is tonight." in written_path.read_text(encoding="utf-8")
+    # The subtitle file itself is untouched (still has the WEBVTT header).
+    assert file_path.read_text(encoding="utf-8").startswith("WEBVTT")
+
+
+def test_analyze_folder_includes_vtt(tmp_path) -> None:
+    from the_oracle.ingest_transformer import apply_folder_fixes, preview_folder_fixes
+    (tmp_path / "a.vtt").write_text(
+        "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Winston>The party is tonight.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "clean.txt").write_text("A: already fine.\n", encoding="utf-8")
+    fixes, warnings = preview_folder_fixes(tmp_path)
+    assert [Path(fix.path).name for fix in fixes] == ["a.vtt"]
+    assert warnings == []
+    # Rule label mentions subtitles so the preview explains the rewrite.
+    written = apply_folder_fixes(fixes)
+    assert len(written) == 1
+    assert Path(written[0][0]).name == "a.vtt.txt"

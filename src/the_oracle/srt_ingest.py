@@ -1,10 +1,11 @@
-"""SRT subtitle ingestion: detect, parse, and convert to dialogue scripts.
+"""Subtitle ingestion: detect, parse, and convert to dialogue scripts.
 
 Subtitle files are a common source of "dialogue" material, but their format
 (numbered cue blocks with clock timestamps) is nothing like the ``Label:
 dialogue`` scripts the ingester understands — ingested directly, every cue
-degrades into narration. This module converts a valid SubRip (``.srt``)
-file into a canonical dialogue script before analysis/rendering:
+degrades into narration. This module converts a valid subtitle file —
+SubRip (``.srt``) or WebVTT (``.vtt``) — into a canonical dialogue script
+before analysis/rendering:
 
 * Timestamps, cue indexes, HTML markup (``<i>``, ``<font>``), and ASS-style
   overrides (``{\\an8}``) are stripped.
@@ -27,17 +28,29 @@ from pathlib import Path
 
 from the_oracle.speaker_attribution.heuristics import canonical_speaker_label
 
-# A cue clock line: "00:00:01,000 --> 00:00:04,000" (comma or dot millis).
+# A cue clock line: "00:00:01,000 --> 00:00:04,000" (SubRip, comma or dot
+# millis) or "01:02.500 --> 01:05.000" (WebVTT: optional hours, dot millis,
+# optional cue settings after the end time).
 _SRT_TIME_RE = re.compile(
-    r"^\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*"
-    r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*$"
+    r"^\s*(?:(?P<h1>\d{1,2}):)?(?P<m1>\d{1,2}):(?P<s1>\d{2})[,.](?P<ms1>\d{1,3})\s*-->\s*"
+    r"(?:(?P<h2>\d{1,2}):)?(?P<m2>\d{1,2}):(?P<s2>\d{2})[,.](?P<ms2>\d{1,3})"
+    r"(?P<settings>\s.*)?$"
 )
 
 # A numbered cue index line.
 _SRT_INDEX_RE = re.compile(r"^\s*\d+\s*$")
 
-# HTML/font markup and ASS override blocks inside cue text.
+# HTML/font markup, WebVTT timestamps tags (<00:00:01.000> karaoke),
+# WebVTT class/voice spans, and ASS override blocks inside cue text.
 _SRT_MARKUP_RE = re.compile(r"<[^>]+>|\{\\[^}]*\}")
+
+# WebVTT voice spans: ``<v Winston>`` names the cue's speaker. Lifted to a
+# ``Winston:`` prefix *before* generic markup stripping, so the name is not
+# deleted along with the tags.
+_VTT_VOICE_SPAN_RE = re.compile(r"<v\s+([^>]+)>")
+
+# WebVTT metadata blocks that carry no dialogue.
+_VTT_BLOCK_RE = re.compile(r"^\s*(NOTE|STYLE|REGION)\b")
 
 # A dashed subtitle line: "- Hello there." (two-speaker convention).
 _SRT_DASH_RE = re.compile(r"^\s*[-\u2013\u2014]\s+")
@@ -60,21 +73,23 @@ class SrtCue:
 
 
 def looks_like_srt(text: str) -> bool:
-    """True when *text* parses as SubRip subtitles.
-
-    Requires at least one complete cue (index, clock line, and text), so
-    ordinary prose or dialogue scripts never match — an arrow-like string
-    inside prose is not enough.
+    """True when *text* parses as SubRip or WebVTT subtitles.    Requires at least one complete cue (clock line and text), so ordinary
+    prose or dialogue scripts never match — an arrow-like string inside
+    prose is not enough.
     """
     return len(parse_srt(text)) >= 1
 
 
 def parse_srt(text: str) -> list[SrtCue]:
-    """Parse SubRip cues from *text*, tolerating missing index lines.
+    """Parse SubRip/WebVTT cues from *text*, tolerating missing index lines.
 
-    Raises :class:`ValueError` when the text contains cue-looking blocks
-    whose clock lines are malformed — that indicates a corrupt subtitle
-    file rather than a non-SRT document.
+    WebVTT specifics handled: the ``WEBVTT`` header line, ``NOTE``/``STYLE``
+    /``REGION`` metadata blocks (skipped, no dialogue there), cue
+    identifiers (skipped), cue settings after the end time (dropped), and
+    ``MM:SS.mmm`` clocks without an hours component. Raises
+    :class:`ValueError` when the text contains cue-looking blocks whose
+    clock lines are malformed — that indicates a corrupt subtitle file
+    rather than a non-subtitle document.
     """
     blocks: list[tuple[list[str], int]] = []  # (raw lines, block start line no)
     current: list[str] = []
@@ -90,9 +105,20 @@ def parse_srt(text: str) -> list[SrtCue]:
     if current:
         blocks.append((current, start_line))
 
+    # WebVTT header: a lone first block containing just the magic line.
+    if blocks and len(blocks[0][0]) == 1 and blocks[0][0][0].strip().startswith("WEBVTT"):
+        blocks = blocks[1:]
+
     cues: list[SrtCue] = []
     for raw_lines, block_start in blocks:
         lines = list(raw_lines)
+        # WebVTT metadata blocks (NOTE/STYLE/REGION) carry no dialogue.
+        if lines and _VTT_BLOCK_RE.match(lines[0]):
+            continue
+        # WebVTT cue identifiers: an optional line before the clock that is
+        # neither an index number nor a clock line.
+        if len(lines) >= 2 and not _SRT_INDEX_RE.match(lines[0]) and not _SRT_TIME_RE.match(lines[0]) and _SRT_TIME_RE.match(lines[1]):
+            lines = lines[1:]
         if lines and _SRT_INDEX_RE.match(lines[0]):
             lines = lines[1:]
         if not lines:
@@ -100,10 +126,20 @@ def parse_srt(text: str) -> list[SrtCue]:
         clock = _SRT_TIME_RE.match(lines[0])
         if not clock:
             continue  # not a cue block (trailing credits text, stray numbers)
-        hours_a, min_a, sec_a, ms_a, hours_b, min_b, sec_b, ms_b = (int(g) for g in clock.groups())
+        hours_a = int(clock.group("h1") or 0)
+        min_a = int(clock.group("m1"))
+        sec_a = int(clock.group("s1"))
+        ms_a = int(clock.group("ms1"))
+        hours_b = int(clock.group("h2") or 0)
+        min_b = int(clock.group("m2"))
+        sec_b = int(clock.group("s2"))
+        ms_b = int(clock.group("ms2"))
         start = hours_a * 3600 + min_a * 60 + sec_a + ms_a / 1000
         end = hours_b * 3600 + min_b * 60 + sec_b + ms_b / 1000
-        text_lines = [_SRT_MARKUP_RE.sub("", line).strip() for line in lines[1:]]
+        text_lines = [
+            _SRT_MARKUP_RE.sub("", _VTT_VOICE_SPAN_RE.sub(r"\1: ", line)).strip()
+            for line in lines[1:]
+        ]
         text_lines = [line for line in text_lines if line]
         if not text_lines:
             continue  # an empty cue carries no dialogue
@@ -224,8 +260,10 @@ def convert_srt_file(path: str | Path, *, overwrite: bool = False) -> tuple[Path
     script, cue_count, speaker_count = srt_to_dialogue_text(text)
     if not script:
         raise ValueError(f"No valid SubRip cues found in {file_path}")
-    suffix = ".srt.txt" if file_path.suffix.lower() == ".srt" else ".txt"
-    target = file_path.with_suffix(suffix)
+    stem_tail = ".srt.txt" if file_path.suffix.lower() == ".srt" else ".vtt.txt" if file_path.suffix.lower() == ".vtt" else ".txt"
+    # with_suffix cannot build compound names like ".vtt.txt" (it replaces
+    # the whole suffix), so the target is assembled from the stem.
+    target = file_path.with_name(file_path.stem + stem_tail)
     if target.exists() and not overwrite:
         raise FileExistsError(f"Converted script already exists: {target}")
     target.write_text(script, encoding="utf-8")

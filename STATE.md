@@ -176,6 +176,24 @@ rewritten by the loop).
   test (exclusion end-to-end, default-all-ticked, live label/enable);
   full suite 805 passing.
 
+- **WebVTT (.vtt) support (2026-09-11, this campaign)**: the subtitle
+  converter now accepts WebVTT alongside SubRip — same module
+  (`srt_ingest.py`), same convert-not-overwrite contract. Parser additions:
+  `WEBVTT` header, `MM:SS.mmm` clocks without hours, cue settings after
+  the end time, cue identifiers, and `NOTE`/`STYLE`/`REGION` metadata
+  blocks (skipped). **WebVTT voice spans** (`<v Winston>`) are lifted to
+  `Winston:` prefixes before generic markup stripping — the demo caught
+  them being deleted as tags, silencing the speaker. Detection is by
+  content everywhere: `analyze_input_file` flags a valid `.vtt` as one
+  fixable issue, `fix_input_file` writes the sibling `<name>.vtt.txt`
+  script (subtitle never modified), the CLI pre-flight accepts `.vtt`
+  (converting or reusing the script), and the batch scan includes `.vtt`
+  files. Applying a batch now honors the contract for **both** formats:
+  a latent pre-existing bug had `apply_folder_fixes` writing the
+  converted script *into* the subtitle file; it now redirects to the
+  sibling script and reports that path. 6 converter tests + 3
+  transformer/batch tests + 3 CLI tests; full suite 817 passing.
+
 - **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
   own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`
   pre-flight. `analyze_input_file` flags a structurally-valid SubRip file

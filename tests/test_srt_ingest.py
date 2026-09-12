@@ -156,3 +156,75 @@ def test_convert_srt_file_refuses_overwrite(tmp_path: Path) -> None:
         convert_srt_file(source)
     # overwrite=True is allowed for regeneration.
     _target, _cues, _speakers = convert_srt_file(source, overwrite=True)
+
+
+# ---------------------------------------------------------------------------
+# WebVTT (.vtt)
+# ---------------------------------------------------------------------------
+
+VTT_SAMPLE = """WEBVTT
+
+NOTE This is a comment block
+spanning two lines.
+
+STYLE
+::cue { color: white }
+
+crackers
+00:01.000 --> 00:04.000 align:start position:0%
+- What gives?
+
+00:00:07.000 --> 00:00:09.000
+<v Winston>The party <i>is</i> tonight.
+
+00:00:09.500 --> 00:00:12.000
+Julia: Do they suspect anything?
+"""
+
+
+def test_looks_like_srt_accepts_webvtt() -> None:
+    assert looks_like_srt(VTT_SAMPLE) is True
+
+
+def test_looks_like_srt_rejects_prose_with_vtt_marker() -> None:
+    # A WEBVTT mention alone is not a subtitle file.
+    assert looks_like_srt("WEBVTT was mentioned in the letter.\n") is False
+
+
+def test_webvtt_parse_skips_metadata_and_identifiers() -> None:
+    cues = parse_srt(VTT_SAMPLE)
+    assert len(cues) == 3
+    # MM:SS.mmm clocks parse (no hours component).
+    assert cues[0].start_seconds == pytest.approx(1.0)
+    assert cues[0].end_seconds == pytest.approx(4.0)
+    # Cue settings after the end time are dropped.
+    assert cues[0].lines == ["- What gives?"]
+
+
+def test_webvtt_voice_span_becomes_speaker() -> None:
+    """<v Winston> is WebVTT's speaker convention; it must survive markup stripping."""
+    script, cue_count, speaker_count = srt_to_dialogue_text(VTT_SAMPLE)
+    assert cue_count == 3
+    assert "winston: The party is tonight." in script
+    assert "julia: Do they suspect anything?" in script
+    assert speaker_count == 3  # Narrator fallback + winston + julia
+
+
+def test_webvtt_conversion_writes_vtt_txt_script(tmp_path) -> None:
+    vtt_path = tmp_path / "episode.vtt"
+    vtt_path.write_text(VTT_SAMPLE, encoding="utf-8")
+    target, cue_count, speaker_count = convert_srt_file(vtt_path)
+    assert target == tmp_path / "episode.vtt.txt"
+    assert target.read_text(encoding="utf-8").startswith("Narrator: What gives?")
+    assert cue_count == 3
+    # The subtitle file itself is never modified.
+    assert "WEBVTT" in vtt_path.read_text(encoding="utf-8")
+
+
+def test_webvtt_cast_round_trips_through_ingester(tmp_path) -> None:
+    vtt_path = tmp_path / "episode.vtt"
+    vtt_path.write_text(VTT_SAMPLE, encoding="utf-8")
+    target, _cues, _speakers = convert_srt_file(vtt_path)
+    document = TextIngestor().ingest(target)
+    speakers = {segment.explicit_speaker for segment in document.segments}
+    assert {"narrator", "winston", "julia"} <= {s.lower() for s in speakers}
