@@ -961,3 +961,71 @@ def test_preview_dialog_colors_rule_labels(qt_app, monkeypatch, tmp_path) -> Non
     assert expected <= {rgb_from_hex(c) for c in seen["colors"]}
     # The left pane's row backgrounds are pure backgrounds (no text tint).
     assert seen["left_brushless"] is True, seen["left_details"]
+
+
+# ------------- subtitle conversion in the GUI picker and analyze path -------------
+
+
+_VTT_GUI = "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Winston>The party is tonight.\n"
+
+
+def test_input_picker_converts_subtitle_to_script(qt_app, monkeypatch, tmp_path) -> None:
+    """Picking a subtitle file fills the field with the converted script."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    import the_oracle.app_gui as app_gui
+
+    vtt = tmp_path / "episode.vtt"
+    vtt.write_text(_VTT_GUI, encoding="utf-8")
+    monkeypatch.setattr(
+        app_gui.QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(vtt), "Subtitles (*.srt *.vtt)")),
+    )
+    window._pick_input()
+    assert window.input_path.text() == str(tmp_path / "episode.vtt.txt")
+    assert (tmp_path / "episode.vtt.txt").read_text(encoding="utf-8").startswith("winston:")
+    assert vtt.read_text(encoding="utf-8") == _VTT_GUI  # subtitle untouched
+    assert "Converted" in window.error_panel.toPlainText()
+
+
+def test_analyze_path_converts_typed_subtitle_path(qt_app, monkeypatch, tmp_path) -> None:
+    """A subtitle path typed into the field is converted before analysis."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    vtt = tmp_path / "episode.vtt"
+    vtt.write_text(_VTT_GUI, encoding="utf-8")
+    window.input_path.setText(str(vtt))
+
+    # Stop the real analysis right after the conversion step: patch the
+    # transformer check to observe the (already re-pointed) field.
+    seen: dict = {}
+    import the_oracle.app_gui as app_gui
+    monkeypatch.setattr(
+        type(window),
+        "_run_ingest_transformer_check",
+        lambda self: seen.setdefault("input", self.input_path.text()) or True,
+    )
+    def _fail_pipeline(self):
+        raise AssertionError("no pipeline")
+
+    monkeypatch.setattr(type(window), "_pipeline", _fail_pipeline)
+    # The exception path opens a modal QMessageBox; stub it so the test
+    # never blocks.
+    monkeypatch.setattr(
+        app_gui.QMessageBox, "critical", staticmethod(lambda *a, **k: None)
+    )
+    # _ensure_outdir_exists would create dirs; patch to avoid FS work.
+    monkeypatch.setattr(
+        type(window), "_ensure_outdir_exists", lambda self, p: tmp_path / "out"
+    )
+    window.prepare_project()
+    assert seen["input"] == str(tmp_path / "episode.vtt.txt")
+    assert window.input_path.text() == str(tmp_path / "episode.vtt.txt")
+    assert "Converted" in window.error_panel.toPlainText()
+
+
+def test_analyze_path_leaves_non_subtitle_alone(qt_app, monkeypatch, tmp_path) -> None:
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    plain = tmp_path / "script.txt"
+    plain.write_text("A: Hello.\n", encoding="utf-8")
+    window.input_path.setText(str(plain))
+    assert window._convert_subtitle_input(str(plain)) == str(plain)

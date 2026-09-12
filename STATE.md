@@ -276,7 +276,19 @@ rewritten by the loop).
   source). The directives flow through the pipeline's existing
   `parse_directives`/`apply_directives` path (verified end-to-end:
   stripped from spoken text, applied after punctuation scaling, pause_ms
-  lands on the utterance). 2 tests; full suite 835 passing. Applying a batch now honors the contract for **both** formats:
+  lands on the utterance). 2 tests; full suite 835 passing.
+
+- **Subtitle conversion in the GUI (2026-09-11, this campaign)**: the
+  input file picker now offers ``*.srt``/``*.vtt`` alongside txt/md, and
+  picking a subtitle converts it immediately (sibling script via the
+  CLI's `_maybe_convert_srt`, subtitle untouched, reuse of an existing
+  script) and puts the **script** in the input field. The Analyze path
+  (`prepare_project`) applies the same conversion to a subtitle path
+  that was typed, remembered, or loaded from a project — before the
+  transformer check — and re-points the field for the run. Both paths
+  log the conversion to the status panel; an unreadable file reports
+  and aborts instead of loading something unusable. 3 GUI tests; full
+  suite 838 passing. Applying a batch now honors the contract for **both** formats:
   a latent pre-existing bug had `apply_folder_fixes` writing the
   converted script *into* the subtitle file; it now redirects to the
   sibling script and reports that path. 6 converter tests + 3

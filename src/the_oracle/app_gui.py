@@ -3216,14 +3216,60 @@ class MainWindow(QMainWindow):
         else:
             current_input = Path(current_text).expanduser()
             start_dir = current_input.parent if current_input.exists() else self._default_input_dir
-        path, _ = QFileDialog.getOpenFileName(self, "Choose Input", str(start_dir), "Text Files (*.txt *.md)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose Input",
+            str(start_dir),
+            "Dialogue Scripts (*.txt *.md);;Subtitles (*.srt *.vtt);;All Files (*)",
+        )
         if path:
+            # A picked subtitle file is converted up front (sibling script,
+            # subtitle untouched) and the *script* goes into the field, so
+            # everything downstream sees canonical dialogue.
+            path = self._convert_subtitle_input(path)
+            if not path:
+                return
             self.input_path.setText(path)
             # A picked file becomes the remembered default for future sessions
             # (settled before setText's textChanged side effects finish).
             self._app_settings["last_input_file"] = path.strip()
             if self._app_settings_ready:
                 self._persist_workspace_layout()
+
+    def _convert_subtitle_input(self, path: str) -> str | None:
+        """Convert a picked ``.srt``/``.vtt`` file to its dialogue script.
+
+        Non-subtitle paths pass through unchanged. On success the sibling
+        script's path is returned and a status line explains the
+        conversion; an existing script from a previous run is reused. A
+        failed conversion reports to the status panel and returns None so
+        the picker does not silently load an unusable file.
+        """
+        from the_oracle.cli import _maybe_convert_srt
+
+        file_path = Path(path)
+        if file_path.suffix.lower() not in (".srt", ".vtt"):
+            return path
+        try:
+            text = file_path.read_bytes().decode("utf-8-sig")
+            from the_oracle.srt_ingest import looks_like_srt
+
+            if not looks_like_srt(text):
+                self.error_panel.append(
+                    f"{file_path.name} does not contain valid subtitle cues; "
+                    "loading it as-is."
+                )
+                return path
+        except (OSError, UnicodeDecodeError):
+            self.error_panel.append(f"Could not read {file_path.name}.")
+            return None
+        script_path = _maybe_convert_srt(path)
+        if script_path != path:
+            self.error_panel.append(
+                f"Converted {file_path.name} into {Path(script_path).name}; "
+                "the subtitle file itself was not modified."
+            )
+        return script_path
 
     def _handle_outdir_changed(self) -> None:
         # Typing in the output-folder field must not touch the filesystem:
@@ -5665,6 +5711,14 @@ class MainWindow(QMainWindow):
                 return
         analyze_click_wall = time()
         self._log_action_timing("analyze_click", analyze_click_wall)
+        # A subtitle path (typed, remembered, or loaded from a project) is
+        # converted before the transformer check, mirroring the file
+        # picker; the field is re-pointed at the script for this run.
+        converted = self._convert_subtitle_input(self.input_path.text().strip())
+        if converted is None:
+            return
+        if converted != self.input_path.text().strip():
+            self.input_path.setText(converted)
         if not self._run_ingest_transformer_check():
             self.error_panel.append("Analysis cancelled: fix the input file formatting and try again.")
             return
