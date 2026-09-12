@@ -16,7 +16,7 @@ import threading
 from typing import Callable
 
 from PySide6.QtCore import QThread, Qt, QUrl, Signal, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QColor, QTextCharFormat, QAction
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QInputDialog,
     QPlainTextEdit,
+    QTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -5471,6 +5472,45 @@ class MainWindow(QMainWindow):
                 right_lines.append(f"+ {row.right}{label}")
         left_view.setPlainText("\n".join(left_lines))
         right_view.setPlainText("\n".join(right_lines))
+
+        # Color-code the changed rows: soft red on the original pane, soft
+        # green on the corrected pane, so rewrites scan at a glance. Extra
+        # selections give full-width per-line backgrounds without rich text.
+        # Softened so the text stays readable in both light and dark themes.
+        removed_format = QTextCharFormat()
+        removed_format.setBackground(QColor(255, 106, 106, 70))
+        added_format = QTextCharFormat()
+        added_format.setBackground(QColor(108, 220, 108, 70))
+        left_selections: list[QTextEdit.ExtraSelection] = []
+        right_selections: list[QTextEdit.ExtraSelection] = []
+        cursor = left_view.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        for line_index, row in enumerate(rows):
+            block = left_view.document().findBlockByLineNumber(line_index)
+            if not block.isValid():
+                break
+            cursor.setPosition(block.position())
+            cursor.movePosition(cursor.MoveOperation.EndOfBlock, cursor.MoveMode.KeepAnchor)
+            if row.kind == "changed" or row.kind == "removed":
+                selection = QTextEdit.ExtraSelection()
+                selection.cursor = cursor
+                selection.format = removed_format
+                left_selections.append(selection)
+        cursor = right_view.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        for line_index, row in enumerate(rows):
+            block = right_view.document().findBlockByLineNumber(line_index)
+            if not block.isValid():
+                break
+            cursor.setPosition(block.position())
+            cursor.movePosition(cursor.MoveOperation.EndOfBlock, cursor.MoveMode.KeepAnchor)
+            if row.kind == "changed" or row.kind == "added":
+                selection = QTextEdit.ExtraSelection()
+                selection.cursor = cursor
+                selection.format = added_format
+                right_selections.append(selection)
+        left_view.setExtraSelections(left_selections)
+        right_view.setExtraSelections(right_selections)
 
         # Synchronized scrolling: either pane's scroll drives the other.
         left_bar = left_view.verticalScrollBar()
