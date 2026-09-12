@@ -155,6 +155,32 @@ def _normalize_app_settings(payload: dict[str, Any] | None) -> dict[str, Any]:
     # values are dropped, a corrupt blob fails restoreGeometry harmlessly.
     if isinstance(data.get("preview_dialog_geometry"), str) and data["preview_dialog_geometry"]:
         normalized["preview_dialog_geometry"] = data["preview_dialog_geometry"]
+    # Recent input-file fix backups (most recent first). Each entry is a
+    # small record: the fixed file, its backup, and when the fix ran. Light
+    # hygiene only — the reader tolerates anything malformed.
+    if isinstance(data.get("recent_format_backups"), list):
+        records: list[dict[str, str]] = []
+        for entry in data["recent_format_backups"]:
+            if not isinstance(entry, dict):
+                continue
+            file_value = entry.get("file")
+            backup_value = entry.get("backup")
+            stamp_value = entry.get("stamp")
+            if (
+                isinstance(file_value, str)
+                and file_value.strip()
+                and isinstance(backup_value, str)
+                and backup_value.strip()
+            ):
+                records.append(
+                    {
+                        "file": file_value,
+                        "backup": backup_value,
+                        "stamp": stamp_value if isinstance(stamp_value, str) else "",
+                    }
+                )
+        if records:
+            normalized["recent_format_backups"] = records
     if isinstance(data.get("recording_settings"), dict):
         recording = dict(data["recording_settings"])
         for key in ("input_file", "output_dir", "output_filename"):

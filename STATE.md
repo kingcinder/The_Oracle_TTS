@@ -345,6 +345,20 @@ rewritten by the loop).
   path's report, and the GUI warning/post-fix popups + status panel via
   `_speaker_ref_hint_lines`. 3 tests; full suite 855 passing.
 
+- **Settings: restore most recent input-file backup (2026-09-12, this
+  campaign)**: a fix regretted can now be undone from Settings → "Restore
+  most recent input-file backup". Every single-file fix (preview-accepted
+  and trusted auto-fix) records `{file, backup, stamp}` into a persisted
+  `recent_format_backups` list (most recent first, capped at 20; schema
+  hygiene in gui_settings tolerates malformed entries). The restore action
+  confirms, copies the backup text back over the corrected file, consumes
+  the record, re-points the input field when the restored file is the
+  current/remembered input, and logs to the status panel. Missing backup
+  files are pruned with a clear error; declining leaves everything
+  untouched. Scope: single-file fixes only — the batch folder fixer's
+  per-file backups are not (yet) recorded here, logged for later. 5 GUI
+  tests; full suite 860 passing.
+
 - **SRT-aware transformer (2026-09-11, this campaign)**: the transformer's
   own APIs now convert subtitles, complementing the CLI's `_maybe_convert_srt`
   pre-flight. `analyze_input_file` flags a structurally-valid SubRip file

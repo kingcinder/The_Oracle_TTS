@@ -1033,3 +1033,92 @@ def test_analyze_path_leaves_non_subtitle_alone(qt_app, monkeypatch, tmp_path) -
     plain.write_text("A: Hello.\n", encoding="utf-8")
     window.input_path.setText(str(plain))
     assert window._convert_subtitle_input(str(plain)) == str(plain)
+
+
+# ------------- Settings: restore most recent input-file backup -------------
+
+
+def test_fix_records_backup_for_restore(qt_app, monkeypatch, tmp_path) -> None:
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    script = tmp_path / "script.txt"
+    script.write_text("[A]: Hello.\n", encoding="utf-8")
+    backup = script.with_name(script.name + ".bak-20260912-000000")
+    backup.write_text("[A]: Hello.\n", encoding="utf-8")
+    window._remember_format_backup(str(script), str(backup))
+    records = window._app_settings["recent_format_backups"]
+    assert records and records[0]["file"] == str(script.resolve())
+    assert records[0]["backup"] == str(backup.resolve())
+    assert records[0]["stamp"]
+
+
+def test_restore_most_recent_backup_undoes_fix(qt_app, monkeypatch, tmp_path) -> None:
+    import the_oracle.app_gui as app_gui
+    from unittest.mock import patch
+
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\n", encoding="utf-8")  # the corrected version
+    backup = script.with_name(script.name + ".bak-20260912-000000")
+    backup.write_text("[A]: Hello.\n", encoding="utf-8")  # the original
+    window._app_settings["recent_format_backups"] = [
+        {"file": str(script), "backup": str(backup), "stamp": "2026-09-12 00:00:00"}
+    ]
+    window.input_path.setText(str(script))
+    with patch.object(app_gui.QMessageBox, "question", return_value=app_gui.QMessageBox.StandardButton.Yes), \
+         patch.object(app_gui.QMessageBox, "information") as info:
+        window._restore_most_recent_format_backup()
+    assert script.read_text(encoding="utf-8") == "[A]: Hello.\n"  # original back
+    assert window._app_settings["recent_format_backups"] == []  # consumed
+    # The input field was re-pointed at the restored file.
+    assert Path(window.input_path.text()).resolve() == script.resolve()
+    assert info.called
+    assert "Restored" in window.error_panel.toPlainText()
+
+
+def test_restore_declined_leaves_file_alone(qt_app, monkeypatch, tmp_path) -> None:
+    import the_oracle.app_gui as app_gui
+    from unittest.mock import patch
+
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\n", encoding="utf-8")
+    backup = script.with_name(script.name + ".bak-1")
+    backup.write_text("[A]: Hello.\n", encoding="utf-8")
+    window._app_settings["recent_format_backups"] = [
+        {"file": str(script), "backup": str(backup), "stamp": "x"}
+    ]
+    with patch.object(app_gui.QMessageBox, "question", return_value=app_gui.QMessageBox.StandardButton.No):
+        window._restore_most_recent_format_backup()
+    assert script.read_text(encoding="utf-8") == "A: Hello.\n"  # untouched
+    # The record survives so the user can restore later.
+    assert window._app_settings["recent_format_backups"]
+
+
+def test_restore_with_no_records_shows_hint(qt_app, monkeypatch, tmp_path) -> None:
+    import the_oracle.app_gui as app_gui
+    from unittest.mock import patch
+
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    window._app_settings["recent_format_backups"] = []
+    with patch.object(app_gui.QMessageBox, "information") as info:
+        window._restore_most_recent_format_backup()
+    assert info.called
+    text = info.call_args[0][2]
+    assert "No input-file backups" in text
+
+
+def test_restore_missing_backup_prunes_record(qt_app, monkeypatch, tmp_path) -> None:
+    import the_oracle.app_gui as app_gui
+    from unittest.mock import patch
+
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\n", encoding="utf-8")
+    window._app_settings["recent_format_backups"] = [
+        {"file": str(script), "backup": str(tmp_path / "gone.bak"), "stamp": "x"}
+    ]
+    with patch.object(app_gui.QMessageBox, "critical") as crit:
+        window._restore_most_recent_format_backup()
+    assert crit.called
+    assert window._app_settings["recent_format_backups"] == []
+    assert script.read_text(encoding="utf-8") == "A: Hello.\n"  # untouched
