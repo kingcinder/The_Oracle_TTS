@@ -15,7 +15,7 @@ import subprocess
 import threading
 from typing import Callable
 
-from PySide6.QtCore import QThread, Qt, QUrl, Signal, QTimer
+from PySide6.QtCore import QByteArray, QThread, Qt, QUrl, Signal, QTimer
 from PySide6.QtGui import QColor, QTextCharFormat, QAction
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -5422,6 +5422,12 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle("Preview Fixed Text")
         dialog.setModal(True)
         dialog.resize(900, 560)
+        # Restore the size/position remembered from the last session, so the
+        # dialog reopens the way the user left it (multi-monitor safe: the
+        # blob encodes position relative to the OS's virtual desktop).
+        saved_geometry = self._app_settings.get("preview_dialog_geometry")
+        if isinstance(saved_geometry, str) and saved_geometry:
+            dialog.restoreGeometry(QByteArray.fromBase64(saved_geometry.encode("ascii")))
         layout = QVBoxLayout(dialog)
 
         summary = QLabel(
@@ -5539,6 +5545,16 @@ class MainWindow(QMainWindow):
         accept.clicked.connect(dialog.accept)
         cancel.clicked.connect(dialog.reject)
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        # Remember the dialog's size and position for the next session
+        # (persists through the app-settings file alongside the workspace).
+        if self._app_settings_ready:
+            geometry = dialog.saveGeometry()
+            if not geometry.isNull():
+                self._app_settings["preview_dialog_geometry"] = bytes(geometry.toBase64()).decode("ascii")
+                try:
+                    save_app_settings(self._app_settings)
+                except Exception as exc:
+                    self.error_panel.append(f"Could not persist preview dialog geometry: {exc}")
         if accepted and remember is not None and remember.isChecked() and input_file:
             self._remember_trusted_input_file(input_file)
         return accepted
