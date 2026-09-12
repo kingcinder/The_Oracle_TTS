@@ -399,6 +399,7 @@ def _speaker_ref_report(file_path: Path, post_fix_text: str | None) -> tuple[lis
     from the_oracle.ingest_transformer import (
         _decode_best_effort,
         rejected_labels,
+        suggest_rejected_label_refs,
         suggest_speaker_refs,
         transform_text,
     )
@@ -418,7 +419,16 @@ def _speaker_ref_report(file_path: Path, post_fix_text: str | None) -> tuple[lis
         }
         for s in suggest_speaker_refs(post_fix_text)
     ]
-    return refs, rejected_labels(post_fix_text)
+    rejected = rejected_labels(post_fix_text)
+    try:
+        rename_flags = {
+            s.speaker: s.flag for s in suggest_rejected_label_refs(post_fix_text)
+        }
+    except (OSError, ValueError):
+        rename_flags = {}
+    return refs, [
+        {"label": label, "rename_flag": rename_flags.get(label)} for label in rejected
+    ]
 
 
 def _check_input_formatting(input_path: str, fix: bool, json_output: bool = False) -> None:
@@ -613,12 +623,25 @@ def _print_speaker_ref_hints(input_path: str) -> None:
         for ref in refs:
             marker = "add" if ref["new"] else "use"
             print(f"  - {ref['speaker']} -> voice {ref['voice_key']}: {marker} {ref['flag']}", file=sys.stderr)
-    for label in rejected:
-        print(
-            f"  ! '{label}' is not accepted as a speaker label; no reference audio can "
-            "attribute it — edit the label in the file (e.g. to a name or 'Speaker X').",
-            file=sys.stderr,
-        )
+    for entry in rejected:
+        label = entry["label"] if isinstance(entry, dict) else entry
+        rename_flag = entry.get("rename_flag") if isinstance(entry, dict) else None
+        if rename_flag:
+            print(
+                f"  ! '{label}' is not accepted as a speaker label; no reference audio can "
+                "attribute it as-is — rename the label in the file (e.g. to a name), then "
+                f"provide {rename_flag}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"  ! '{label}' is not accepted as a speaker label; no reference audio can "
+                "attribute it — edit the label in the file (e.g. to a name or 'Speaker X').",
+                file=sys.stderr,
+            )
+
+
+
 
 
 def _validate_speaker_ref_paths(pairs: list[tuple[str, str | None]]) -> list[dict]:

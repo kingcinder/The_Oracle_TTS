@@ -1315,3 +1315,40 @@ def test_fix_folder_subtitle_writes_sibling_script(tmp_path: Path, capsys) -> No
     targets = {Path(entry["file"]).name for entry in document["applied"]}
     assert targets == {"ep.srt.txt"}  # convert-not-overwrite
     assert srt.read_text(encoding="utf-8").startswith("1\n")  # subtitle untouched
+
+
+# ------------- rejected-label rename hints -------------
+
+
+def test_rejected_label_hint_includes_rename_flag(tmp_path: Path, capsys) -> None:
+    script = tmp_path / "script.txt"
+    script.write_text(
+        "A: Hello there.\nNote: a footnote\nB: Hi.\n", encoding="utf-8"
+    )
+    args = build_parser().parse_args(["check-input", str(script)])
+    assert handle_check_input(args) == 1
+    err = capsys.readouterr().err
+    # The rename hint names the exact flag the renamed label would need.
+    assert "'Note'" in err
+    assert "rename the label" in err and "then provide" in err
+    assert "--speaker-ref C=PATH" in err or "--speakerB-ref PATH" in err
+
+
+def test_rejected_label_json_rename_flag(tmp_path: Path, capsys) -> None:
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\nNote: footnote\nB: Hi.\n", encoding="utf-8")
+    args = build_parser().parse_args(["check-input", str(script), "--json"])
+    assert handle_check_input(args) == 1
+    document = json.loads(capsys.readouterr().out)
+    entries = [e for e in document["rejected_labels"] if e["label"] == "Note"]
+    assert entries and entries[0]["rename_flag"]
+    assert entries[0]["rename_flag"].startswith("--speaker")
+
+
+def test_valid_labels_do_not_get_rename_hint(tmp_path: Path, capsys) -> None:
+    script = tmp_path / "script.txt"
+    script.write_text("A: Hello.\nB: Hi.\n", encoding="utf-8")
+    args = build_parser().parse_args(["check-input", str(script), "--json"])
+    assert handle_check_input(args) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert document["rejected_labels"] == []

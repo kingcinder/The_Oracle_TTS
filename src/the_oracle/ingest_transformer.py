@@ -730,6 +730,70 @@ def rejected_labels(text: str) -> list[str]:
     return seen
 
 
+def suggest_rejected_label_refs(text: str) -> list[SpeakerRefSuggestion]:
+    """Exact ``--speaker-ref`` flags for labels the engine currently rejects.
+
+    A rejected label (``Assistant:`` when it is not in the accepted set, a
+    two-word name, ...) reads as narration no matter what reference audio
+    is supplied — but it usually becomes a speaker the moment the label is
+    edited into a form the engine accepts. This computes the voice key each
+    rejected label *would* take: the whole cast (valid labels canonicalized,
+    rejected ones as lowercase rename candidates) is fed through the
+    pipeline's own voice mapper in first-appearance order, so the suggested
+    flag is exactly the one a render needs after the rename. Keys A/B use
+    the dedicated ``--speakerA-ref``/``--speakerB-ref`` forms.
+    """
+    from the_oracle.speaker_attribution.heuristics import canonical_speaker_label
+
+    fixed_text, _fix_count = transform_text(text)
+    # Walk the document once collecting every would-be cast member in
+    # first-appearance order: valid labels canonicalized (the render maps
+    # through the same form) and rejected labels as lowercase stand-ins for
+    # the rename ("Assistant:" -> "assistant"). The mapper is positional,
+    # so each rejected label's key comes out exactly where the render would
+    # place it once the label is edited into an accepted form.
+    cast: list[str] = []
+    rejected: list[str] = []
+    for raw in fixed_text.splitlines():
+        marker = _SPEAKER_RE.match(raw.strip())
+        if not marker:
+            continue
+        label = marker.group("label").strip()
+        canonical = canonical_speaker_label(label)
+        if canonical is not None:
+            if canonical not in cast:
+                cast.append(canonical)
+            continue
+        if label not in rejected and _label_resembles_name(label):
+            rejected.append(label)
+            cast.append(label.lower())
+    if not rejected:
+        return []
+    mapping = _voice_mapping_for(cast)
+    if not mapping:
+        return []
+    suggestions: list[SpeakerRefSuggestion] = []
+    for label in rejected:
+        key = mapping.get(label.lower())
+        if key is None:
+            continue
+        if key == "A":
+            flag = "--speakerA-ref PATH"
+        elif key == "B":
+            flag = "--speakerB-ref PATH"
+        else:
+            flag = f"--speaker-ref {key}=PATH"
+        suggestions.append(
+            SpeakerRefSuggestion(
+                speaker=label,
+                voice_key=key,
+                flag=flag,
+                is_new=key not in ("A", "B"),
+            )
+        )
+    return suggestions
+
+
 @dataclass(slots=True)
 class FolderFix:
     """One fixable file inside a folder batch, with its exact rewrite."""

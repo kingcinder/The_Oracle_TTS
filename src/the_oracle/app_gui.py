@@ -5500,11 +5500,23 @@ class MainWindow(QMainWindow):
             for ref in refs:
                 marker = "add" if ref["new"] else "use"
                 lines.append(f"  \u2022 {ref['speaker']} -> voice {ref['voice_key']}: {marker} {ref['flag']}")
-        for label in rejected:
-            lines.append(
-                f"  \u2022 '{label}' is not accepted as a speaker label; no reference audio "
-                "can attribute it \u2014 edit the label in the file."
-            )
+        for entry in rejected:
+            if isinstance(entry, dict):
+                label = entry["label"]
+                rename_flag = entry.get("rename_flag")
+            else:
+                label, rename_flag = entry, None
+            if rename_flag:
+                lines.append(
+                    f"  \u2022 '{label}' is not accepted as a speaker label; no reference audio "
+                    "can attribute it as-is \u2014 rename the label in the file (e.g. to a name), "
+                    f"then provide {rename_flag}"
+                )
+            else:
+                lines.append(
+                    f"  \u2022 '{label}' is not accepted as a speaker label; no reference audio "
+                    "can attribute it \u2014 edit the label in the file."
+                )
         return lines
 
     def _input_file_is_trusted(self, input_file: str) -> bool:
