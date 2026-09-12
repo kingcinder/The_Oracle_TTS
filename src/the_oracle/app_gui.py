@@ -5089,6 +5089,32 @@ class MainWindow(QMainWindow):
             "Backups of every original were saved next to the files.",
         )
 
+    def _color_rule_labels_in_view(self, view, rules: list[str]) -> None:
+        """Color every ``[rule label]`` occurrence in *view* by its rule.
+
+        Each fix rule gets its own stable hue (see ``rule_color``), so a
+        mixed batch reads as distinct colors rather than uniform text.
+        Uses extra selections appended after any existing ones (row
+        backgrounds), so both layers render.
+        """
+        from the_oracle.ingest_transformer import rule_color, rule_label
+
+        selections = list(view.extraSelections())
+        document = view.document()
+        for rule in dict.fromkeys(rules):  # unique, order-preserving
+            needle = f" [{rule_label(rule)}]"
+            fmt = QTextCharFormat()
+            red, green, blue = rule_color(rule)
+            fmt.setForeground(QColor(red, green, blue))
+            found = document.find(needle, 0)
+            while not found.isNull():
+                selection = QTextEdit.ExtraSelection()
+                selection.cursor = found
+                selection.format = fmt
+                selections.append(selection)
+                found = document.find(needle, found.selectionEnd())
+        view.setExtraSelections(selections)
+
     def _show_batch_fix_preview_dialog(
         self,
         folder: str,
@@ -5240,6 +5266,9 @@ class MainWindow(QMainWindow):
                 return
             diff_view.setPlainText(
                 labeled_fixed_diff(fix.original_text, fix.fixed_text, fix.line_fixes)
+            )
+            self._color_rule_labels_in_view(
+                diff_view, [line_fix.rule for line_fix in fix.line_fixes]
             )
 
         tree.itemSelectionChanged.connect(_show_diff)
@@ -5580,6 +5609,13 @@ class MainWindow(QMainWindow):
                 right_selections.append(selection)
         left_view.setExtraSelections(left_selections)
         right_view.setExtraSelections(right_selections)
+
+        # Tint each [rule label] by its rule's color so a mixed set of
+        # fixes reads as distinct hues, not uniform text. Must run after
+        # the row backgrounds above (setExtraSelections replaces the list;
+        # the helper appends to whatever exists).
+        present_rules = [row.rule for row in rows if row.rule]
+        self._color_rule_labels_in_view(right_view, present_rules)
 
         # Synchronized scrolling: either pane's scroll drives the other.
         left_bar = left_view.verticalScrollBar()

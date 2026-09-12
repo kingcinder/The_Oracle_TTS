@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from the_oracle.ingest_transformer import (
+    RULE_LABELS,
     analyze_input_file,
     analyze_text,
     fix_input_file,
@@ -424,3 +425,24 @@ def test_preview_folder_fixes_honors_exclude_rules(tmp_path) -> None:
     assert [fix.path.name for fix in timestamps_only] == ["a.txt"]
     assert [lf.rule for lf in timestamps_only[0].line_fixes] == ["timestamp"]
     assert "[A]: Hello." in timestamps_only[0].fixed_text
+
+
+# ------------- per-rule label colors -------------
+
+
+def test_rule_color_is_stable_and_distinct() -> None:
+    from the_oracle.ingest_transformer import rule_color
+
+    # Known rules have curated colors, stable across calls.
+    assert rule_color("dash") == rule_color("dash")
+    assert rule_color("dash") != rule_color("timestamp")
+    # Unknown rules get a deterministic fallback (never curated by accident).
+    assert rule_color("not_a_rule") == rule_color("not_a_rule")
+
+
+def test_rule_color_covers_every_labelled_rule() -> None:
+    from the_oracle.ingest_transformer import RULE_COLORS, rule_label
+
+    for rule in RULE_LABELS:
+        assert rule in RULE_COLORS, f"no curated color for rule '{rule}'"
+        assert rule_label(rule)  # and a human label

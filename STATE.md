@@ -250,7 +250,19 @@ rewritten by the loop).
   render path's `--check-input-json`, via the shared
   `_input_issue_json`) gained a stable ``rule`` key (`null` for
   warnings/file-level issues without a rule), so CI can filter or group
-  findings by rule. 2 tests; full suite 830 passing. Applying a batch now honors the contract for **both** formats:
+  findings by rule. 2 tests; full suite 830 passing.
+
+- **Color-coded rule labels (2026-09-11, this campaign)**: the ``[rule
+  label]`` text in both preview dialogs is tinted per rule — a curated
+  hue table (`RULE_COLORS`, exposed via `rule_color()`: dash green,
+  bracket blue, timestamp orange, orphan crimson, …) with a deterministic
+  FNV-1a fallback for future rules, so a mixed set of fixes reads as
+  distinct colors at a glance. A shared `_color_rule_labels_in_view`
+  helper appends foreground extra selections (must run **after** the row
+  backgrounds — `setExtraSelections` replaces the list); used by the
+  side-by-side dialog's right pane and the batch dialog's diff pane
+  (re-applied per file selection). 2 module tests + 1 GUI test; full
+  suite 833 passing. Applying a batch now honors the contract for **both** formats:
   a latent pre-existing bug had `apply_folder_fixes` writing the
   converted script *into* the subtitle file; it now redirects to the
   sibling script and reports that path. 6 converter tests + 3
