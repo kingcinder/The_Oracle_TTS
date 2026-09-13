@@ -504,11 +504,19 @@ silently.
 
 ## Repo Layout
 
-- `Input/` sample dialogue files
+- `Input/` sample dialogue files (place new dialogue sources here)
 - `Seashells/` repo-local reference voice clips
+- `Profiles/` voice profiles and saved blends (runtime-generated, gitignored)
+- `Output/` rendered audio, stems, and caches (runtime-generated, gitignored)
+- `user_settings/` GUI settings persistence (runtime-generated, gitignored)
+- `release_artifacts/` release-script output (generated, gitignored)
 - `scripts/` install, doctor, smoke, and model utility entrypoints
 - `src/the_oracle/` application code
 - `tests/` unit and integration-style coverage
+- `docs/` design specs and plans
+- `packaging/` Linux desktop install/uninstall assets
+- `bootstrap_oracle_tts.sh` / `.ps1` one-command setup (install, doctor,
+  run, uninstall wrappers follow the same `*_oracle_tts` naming)
 
 ## Sample Inputs
 
@@ -516,7 +524,11 @@ The portable sample inputs under `Input/` include:
 
 - `Read Aloud transcript.txt`
 - `What is, reality.txt`
+- `fransisco help.txt`
+- `stream_of_consciousness_dialogue_with_typos.txt` (intentionally messy —
+  exercises the input-formatting transformer)
 - `cli_short.txt`
+- `local_audio_test.txt`
 - `test.txt`
 
 ## Development
