@@ -8,6 +8,16 @@ rewritten by the loop).
 
 ## Done
 
+- **Repo cleanup (2026-09-12)**: pruned `NVR_research_backup/` (176 MB of
+  unrelated NVR-firmware research, was gitignored) and all stale runtime
+  output in `Output/` (191 MB, nothing newer than Sep 10), plus `build/` and
+  `.pytest_cache/` artifacts (~370 MB total freed). Filed the two previously
+  untracked dialogue samples (`fransisco help.txt`, the intentionally-messy
+  `stream_of_consciousness_dialogue_with_typos.txt` — a useful transformer
+  test case) and updated Input/README's sample list. .gitignore dropped the
+  dead NVR and legacy-backup rules. Full suite (867) and deterministic smoke
+  re-verified green after the prune; main pushed to origin through `fcb5745`.
+
 - **Whole-program debug session (2026-09-12)**: full-suite baseline (867
   passed), then live end-to-end exercise of every CLI subcommand through real
   dispatch — check-input (clean/messy/missing/JSON/`--check-refs` with real
