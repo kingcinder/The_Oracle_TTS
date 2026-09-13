@@ -74,6 +74,18 @@ _TIMESTAMP_INSIDE_RE = re.compile(r"^\d{1,4}[-/:. ]*\d{0,2}[-/:. ]*\d{0,2}[:\d ]
 
 _BRACKETED_PREFIX_RE = re.compile(r"^\s*\[\s*(?P<inside>[^\[\]]+)\s*\]\s*:?\s*(?P<rest>\S.*)$")
 
+# Unbracketed chat-export timestamp prefix: "2024-01-01 10:00 Alice: hi",
+# "10:00 AM Bob: hello", "12:30 Speaker A: hi". A date (d-m(-y)) with a
+# clock time, or a bare clock time, optionally with AM/PM. Like the
+# bracketed rule, the prefix is only dropped when the remainder is itself a
+# well-formed speaker turn (validated below), so prose that merely starts
+# with a time/date is untouched.
+_UNBRACKETED_TIMESTAMP_RE = re.compile(
+    r"^\s*(?P<stamp>\d{1,4}[-/.]\d{1,2}(?:[-/.]\d{2,4})?\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]\.?M\.?)?"
+    r"|\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]\.?M\.?)?)\s+(?P<rest>\S.*)$",
+    re.IGNORECASE,
+)
+
 # A label with nothing after the colon; the dialogue lives on the next line:
 #   A:
 #   Hello there.
@@ -257,6 +269,18 @@ def analyze_text(text: str) -> list[FormatIssue]:
             prefixed = _BRACKETED_PREFIX_RE.match(candidate)
             if prefixed and _TIMESTAMP_INSIDE_RE.match(prefixed.group("inside").strip()):
                 rest = prefixed.group("rest").strip()
+                rest_marker = _SPEAKER_RE.match(rest)
+                if rest_marker and _looks_like_speaker(rest_marker.group("label")):
+                    fix_description = (
+                        "A chat-export timestamp prefixes the line; drop it and keep "
+                        f"'{rest}'."
+                    )
+                    rule_name = "timestamp"
+
+        if not fix_description:
+            bare_stamp = _UNBRACKETED_TIMESTAMP_RE.match(candidate)
+            if bare_stamp:
+                rest = bare_stamp.group("rest").strip()
                 rest_marker = _SPEAKER_RE.match(rest)
                 if rest_marker and _looks_like_speaker(rest_marker.group("label")):
                     fix_description = (
@@ -588,9 +612,17 @@ def transform_text_detailed(
 
         marker = _SPEAKER_RE.match(working)
         if marker and _looks_like_speaker(marker.group("label")):
+            if not had_bullet:
+                # Already canonical: pass through byte-identical. Re-emitting
+                # the parsed label/text would silently re-space lines like
+                # "At 10:00 the bell rang" (label "At 10"), corrupting
+                # prose without recording any fix.
+                out.append(line)
+                index += 1
+                continue
             _emit(
                 f"{marker.group('label').strip()}: {marker.group('text').strip()}",
-                "bullet" if had_bullet else None,
+                "bullet",
                 stripped,
             )
             index += 1
@@ -625,6 +657,18 @@ def transform_text_detailed(
             rest_marker = _SPEAKER_RE.match(rest)
             if rest_marker and _looks_like_speaker(rest_marker.group("label")):
                 _emit(f"{rest_marker.group('label').strip()}: {rest_marker.group('text').strip()}", "timestamp", stripped)
+                index += 1
+                continue
+
+        bare_stamp = _UNBRACKETED_TIMESTAMP_RE.match(working)
+        if bare_stamp:
+            rest_marker = _SPEAKER_RE.match(bare_stamp.group("rest").strip())
+            if rest_marker and _looks_like_speaker(rest_marker.group("label")):
+                _emit(
+                    f"{rest_marker.group('label').strip()}: {rest_marker.group('text').strip()}",
+                    "timestamp",
+                    stripped,
+                )
                 index += 1
                 continue
 

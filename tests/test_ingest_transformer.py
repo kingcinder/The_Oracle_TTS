@@ -446,3 +446,57 @@ def test_rule_color_covers_every_labelled_rule() -> None:
     for rule in RULE_LABELS:
         assert rule in RULE_COLORS, f"no curated color for rule '{rule}'"
         assert rule_label(rule)  # and a human label
+
+
+# ------------- unbracketed chat-export timestamps -------------
+
+
+def test_unbracketed_timestamp_prefixes_are_fixed() -> None:
+    """Chat exports also use bare '2024-01-01 10:00 Speaker: text' lines."""
+    from the_oracle.ingest_transformer import transform_text_detailed
+
+    cases = [
+        "2024-01-01 10:00 Speaker A: Timestamped.\n",
+        "10:00 AM Speaker B: Time-only form.\n",
+        "2024-01-01 10:00 PM Speaker C: With meridiem.\n",
+        "12:30 Speaker A: no meridiem either.\n",
+    ]
+    for text in cases:
+        fixed, fixes = transform_text_detailed(text)
+        assert [fix.rule for fix in fixes] == ["timestamp"], text
+        assert "\n".join(fixed.splitlines()[1:]) == "", text
+        # The timestamp prefix is dropped; the canonical turn remains.
+        assert fixed.splitlines()[0].startswith("Speaker "), text
+        assert ":" in fixed.splitlines()[0], text
+
+
+def test_unbracketed_timestamp_prose_is_untouched() -> None:
+    """Prose that merely starts with a time or date is never rewritten."""
+    from the_oracle.ingest_transformer import transform_text_detailed
+
+    prose = [
+        "10:00 AM - The next morning was cold.\n",
+        "2024 was a strange year for everyone.\n",
+        "At 10:00 the bell rang and everyone looked up.\n",
+    ]
+    for text in prose:
+        fixed, fixes = transform_text_detailed(text)
+        assert fixes == [], text
+        assert fixed == text, text
+
+
+def test_unbracketed_timestamp_detected_by_analyze_and_fixable_via_cli_path() -> None:
+    """analyze_text must agree with transform_text on the unbracketed form,
+    so check-input/fix-folder surface the issue instead of silently
+    'fixing' it on render."""
+    from the_oracle.ingest_transformer import analyze_text, transform_text_detailed
+
+    text = "2024-01-01 10:00 Speaker A: Timestamped turn.\n10:00 AM Speaker B: Bare time turn.\n"
+    issues = analyze_text(text)
+    assert [issue.rule for issue in issues] == ["timestamp", "timestamp"]
+    assert all(issue.fixable for issue in issues)
+
+    fixed, fixes = transform_text_detailed(text)
+    assert [fix.rule for fix in fixes] == ["timestamp", "timestamp"]
+    assert fixed.splitlines()[0] == "Speaker A: Timestamped turn."
+    assert fixed.splitlines()[1] == "Speaker B: Bare time turn."

@@ -526,7 +526,7 @@ The portable sample inputs under `Input/` include:
 - `What is, reality.txt`
 - `fransisco help.txt`
 - `stream_of_consciousness_dialogue_with_typos.txt` (intentionally messy —
-  exercises the input-formatting transformer)
+  exercises the text-repair/correction modes)
 - `cli_short.txt`
 - `local_audio_test.txt`
 - `test.txt`

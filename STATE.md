@@ -8,6 +8,24 @@ rewritten by the loop).
 
 ## Done
 
+- **Systematic-debugging pass on the transformer timestamps (2026-09-13,
+  from the four-dimension audit)**: three root-caused and test-pinned fixes
+  in `ingest_transformer.py`. (1) Unbracketed chat-export timestamps
+  (`2024-01-01 10:00 Alice: hi`, `10:00 AM Bob: hello`) were never fixed —
+  the timestamp rule only matched the bracketed `[...]` form; a new
+  `_UNBRACKETED_TIMESTAMP_RE` branch (date+time / time-only, optional
+  AM/PM) now drops the prefix, with the bracketed rule's remainder-is-a-real
+  speaker-turn safety check, in both `analyze_text` and the transform loop.
+  (2) The transform loop re-emitted `_SPEAKER_RE`-matching prose lines via
+  parsed label/text, silently corrupting `At 10:00 the bell rang` →
+  `At 10: 00 ...` with no fix recorded; already-canonical lines now pass
+  through byte-identical unless a bullet was stripped. (3) analyze/transform
+  disagreement class: check-input/fix-folder initially reported the new
+  form clean because analyze lacked the branch — a regression test now pins
+  their agreement. 3 new tests; README/Input-README corrected (the messy
+  sample exercises text-repair, not the transformer). Full suite: 870
+  passed.
+
 - **Repo cleanup (2026-09-12)**: pruned `NVR_research_backup/` (176 MB of
   unrelated NVR-firmware research, was gitignored) and all stale runtime
   output in `Output/` (191 MB, nothing newer than Sep 10), plus `build/` and
