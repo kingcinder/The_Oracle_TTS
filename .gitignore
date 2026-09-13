@@ -33,13 +33,6 @@ tmp_gui_repo/
 # Temporary credentials
 gha-creds-*.json
 
-# Legacy/backup files
-README.md.bak.*
-The_Oracle_TTS.md
-
-# Local NVR research preserved during repo restore (not part of The Oracle)
-NVR_research_backup/
-
 # Freebuff client database
 .freebuff/
 
