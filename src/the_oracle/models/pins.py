@@ -48,7 +48,7 @@ CHATTERBOX_MULTILINGUAL_PATTERNS = [
     "conds.pt",
     "Cangjie5_TC.json",
 ]
-TURBO_ALLOW_PATTERNS = ["*.safetensors", "*.json", "*.txt", "*.pt", "*.model"]
+TURBO_ALLOW_PATTERNS = ["*.safetensors", "*.json", "*.txt", "*.pt", "*.model", "*.yaml"]
 
 
 def pin_for(repo_id: str) -> str:
