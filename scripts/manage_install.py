@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import shutil
@@ -30,6 +31,30 @@ PYTORCH_CPU_INDEX_URL = "https://download.pytorch.org/whl/cpu"
 PYTORCH_CUDA_INDEX_URL = "https://download.pytorch.org/whl/cu124"
 PYTORCH_INDEX_URL = PYTORCH_CPU_INDEX_URL  # backwards-compatible public constant
 CUDA_WHEEL_PYTHON = "CUDA 12.4"
+
+# Canonical package sets installed by install_dependencies(). The offline bundle
+# builder (scripts/build_offline_bundle.py) imports these so the wheel set it
+# downloads can never drift from what the installer installs.
+TORCH_PACKAGES = ("torch==2.6.0", "torchaudio==2.6.0", "torchvision==0.21.0")
+BOOTSTRAP_PACKAGES = ("pip", "setuptools<81", "wheel")
+CHATTERBOX_ENGINE_PACKAGES = (
+    "librosa==0.11.0",
+    "s3tokenizer",
+    "diffusers==0.29.0",
+    "resemble-perth==1.0.1",
+    "conformer==0.3.2",
+    "safetensors==0.5.3",
+    "spacy-pkuseg",
+    "pykakasi==2.3.0",
+    "pyloudnorm",
+    "omegaconf",
+)
+CHATTERBOX_TTS_PACKAGE = "chatterbox-tts==0.1.6"
+#: Marker file written into REPO_ROOT by an offline install. The managed
+#: wrapper exports HF_HUB_OFFLINE=1 when it exists, so every model loader
+#: (ours and third-party) resolves the pinned revisions from the seeded
+#: local HF cache instead of the network. Delete it to go back online.
+OFFLINE_MARKER_FILENAME = ".oracle_offline"
 MANAGED_WRAPPER_MARKER = "ORACLE_TTS_WRAPPER"
 LINUX_DESKTOP_MARKER = "ORACLE_TTS_DESKTOP"
 WINDOWS_START_MENU_MARKER = "ORACLE_TTS_START_MENU"
@@ -110,53 +135,53 @@ def resolve_pytorch_runtime(runtime: str) -> tuple[str, str]:
     return "CPU", PYTORCH_CPU_INDEX_URL
 
 
+def offline_wheels_dir(offline_bundle: Path) -> Path:
+    """Wheel directory inside the bundle for this OS (``wheels/linux`` etc.)."""
+    platform_dir = "windows" if is_windows() else "linux"
+    wheels = offline_bundle / "wheels" / platform_dir
+    if not wheels.is_dir():
+        raise SystemExit(
+            fail(
+                f"Offline bundle has no wheel set for this platform: {wheels} "
+                f"(bundle platforms: {sorted(p.name for p in (offline_bundle / 'wheels').iterdir()) if (offline_bundle / 'wheels').is_dir() else []}). "
+                "Rebuild the bundle with --platform both, or install online."
+            )
+        )
+    return wheels
+
+
+def _pip_base_args(offline_bundle: Path | None) -> list[str]:
+    if offline_bundle is None:
+        return []
+    return ["--no-index", "--find-links", str(offline_wheels_dir(offline_bundle))]
+
+
 def install_dependencies(
     venv_python: Path,
     *,
     include_dev: bool = False,
     pytorch_runtime: str = "auto",
+    offline_bundle: Path | None = None,
 ) -> None:
     runtime_label, pytorch_index_url = resolve_pytorch_runtime(pytorch_runtime)
-    info(f"Installing PyTorch runtime: {runtime_label}")
+    info(f"Installing PyTorch runtime: {runtime_label}" + (" (offline bundle)" if offline_bundle else ""))
     env = build_env()
-    run_command([str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools<81", "wheel"], env=env)
+    pip_base = _pip_base_args(offline_bundle)
+    run_command([str(venv_python), "-m", "pip", "install", *pip_base, "--upgrade", *BOOTSTRAP_PACKAGES], env=env)
 
-    run_command(
-        [
-            str(venv_python),
-            "-m",
-            "pip",
-            "install",
-            "--index-url",
-            pytorch_index_url,
-            "torch==2.6.0",
-            "torchaudio==2.6.0",
-            "torchvision==0.21.0",
-        ],
-        env=env,
-    )
+    torch_args = [str(venv_python), "-m", "pip", "install", *pip_base]
+    if offline_bundle is None:
+        torch_args += ["--index-url", pytorch_index_url]
+    torch_args += list(TORCH_PACKAGES)
+    run_command(torch_args, env=env)
+
     extras = ".[ml,dev]" if include_dev else ".[ml]"
-    run_command([str(venv_python), "-m", "pip", "install", "-e", extras], env=env)
+    run_command([str(venv_python), "-m", "pip", "install", *pip_base, "-e", extras], env=env)
     run_command(
-        [
-            str(venv_python),
-            "-m",
-            "pip",
-            "install",
-            "librosa==0.11.0",
-            "s3tokenizer",
-            "diffusers==0.29.0",
-            "resemble-perth==1.0.1",
-            "conformer==0.3.2",
-            "safetensors==0.5.3",
-            "spacy-pkuseg",
-            "pykakasi==2.3.0",
-            "pyloudnorm",
-            "omegaconf",
-        ],
+        [str(venv_python), "-m", "pip", "install", *pip_base, *CHATTERBOX_ENGINE_PACKAGES],
         env=env,
     )
-    run_command([str(venv_python), "-m", "pip", "install", "--no-deps", "chatterbox-tts==0.1.6"], env=env)
+    run_command([str(venv_python), "-m", "pip", "install", *pip_base, "--no-deps", CHATTERBOX_TTS_PACKAGE], env=env)
     passed("Installed The Oracle runtime bundle into the project venv")
 
 
@@ -168,6 +193,7 @@ def managed_wrapper_contents() -> str:
             f"REM {MANAGED_WRAPPER_MARKER}\r\n"
             f"set \"REPO_ROOT={REPO_ROOT}\"\r\n"
             f"set \"VENV_ENTRYPOINT={entrypoint}\"\r\n"
+            f"if exist \"%REPO_ROOT%\\{OFFLINE_MARKER_FILENAME}\" set \"HF_HUB_OFFLINE=1\"\r\n"
             "if not exist \"%VENV_ENTRYPOINT%\" (\r\n"
             "  echo the-oracle is not installed in %REPO_ROOT%\\.venv\r\n"
             f"  echo Run {repo_bootstrap_display()} first.\r\n"
@@ -183,7 +209,8 @@ def managed_wrapper_contents() -> str:
         f"# {MANAGED_WRAPPER_MARKER}\n"
         "set -Eeuo pipefail\n\n"
         f"REPO_ROOT={shlex.quote(str(REPO_ROOT))}\n"
-        f"VENV_ENTRYPOINT={shlex.quote(str(entrypoint))}\n\n"
+        f"VENV_ENTRYPOINT={shlex.quote(str(entrypoint))}\n"
+        f'if [[ -f "$REPO_ROOT/{OFFLINE_MARKER_FILENAME}" ]]; then export HF_HUB_OFFLINE=1; fi\n\n'
         'if [[ ! -x "$VENV_ENTRYPOINT" ]]; then\n'
         '  printf \'the-oracle is not installed in %s\\n\' "$REPO_ROOT/.venv" >&2\n'
         f'  printf \'Run {repo_bootstrap_display()} first.\\n\' >&2\n'
@@ -191,6 +218,58 @@ def managed_wrapper_contents() -> str:
         "fi\n\n"
         'exec "$VENV_ENTRYPOINT" "$@"\n'
     )
+
+
+def hf_hub_cache_dir() -> Path:
+    """Resolved Hugging Face hub cache (``~/.cache/huggingface/hub`` default)."""
+    override = os.environ.get("HF_HUB_CACHE")
+    if override:
+        return Path(override)
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def seed_offline_models(offline_bundle: Path) -> None:
+    """Copy the bundle's pre-downloaded model cache into the HF hub cache.
+
+    The bundle's ``hf_cache/`` is already in hub-cache layout
+    (``models--<org>--<name>/``). After copying, ``refs/main`` inside each
+    model dir is pointed at the pinned commit SHA, so every loader — ours
+    and third-party (transformers, deepmultilingualpunctuation, chatterbox)
+    — resolves ``main`` to the pinned revision. Combined with
+    ``HF_HUB_OFFLINE=1`` (set by the managed wrapper on offline installs),
+    no model fetch can ever touch the network.
+    """
+    from the_oracle.models.pins import MODEL_PINS  # noqa: E402
+
+    src_root = offline_bundle / "hf_cache"
+    if not src_root.is_dir():
+        raise SystemExit(fail(f"Offline bundle has no model cache: {src_root}"))
+    dest_root = hf_hub_cache_dir()
+    dest_root.mkdir(parents=True, exist_ok=True)
+    seeded: list[str] = []
+    for repo_id, sha in MODEL_PINS.items():
+        cache_dirname = "models--" + repo_id.replace("/", "--")
+        src = src_root / cache_dirname
+        if not src.is_dir():
+            raise SystemExit(fail(f"Offline bundle is missing model {repo_id} ({cache_dirname})"))
+        dest = dest_root / cache_dirname
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(src, dest, symlinks=True)
+        refs_dir = dest / "refs"
+        refs_dir.mkdir(exist_ok=True)
+        (refs_dir / "main").write_text(sha + "\n", encoding="utf-8")
+        seeded.append(repo_id)
+    passed(f"Seeded {len(seeded)} pinned models into the local HF cache ({dest_root})")
+
+
+def write_offline_marker(offline_bundle: Path) -> None:
+    """Record that this install is offline-capable (drives HF_HUB_OFFLINE)."""
+    manifest_src = offline_bundle / "manifest.json"
+    marker = REPO_ROOT / OFFLINE_MARKER_FILENAME
+    payload = {"offline_bundle_manifest": manifest_src.read_text(encoding="utf-8") if manifest_src.exists() else "{}"}
+    marker.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    passed(f"Wrote offline marker {marker} (delete it to re-enable network model fetches)")
 
 
 def install_managed_wrapper() -> Path:
@@ -388,11 +467,29 @@ def run_gui() -> int:
     return completed.returncode
 
 
-def bootstrap(skip_doctor: bool = False, *, include_dev: bool = False, pytorch_runtime: str = "auto") -> int:
+def _resolve_offline_bundle(raw: str | None) -> Path | None:
+    if not raw:
+        return None
+    bundle = Path(raw).expanduser().resolve()
+    if not (bundle / "manifest.json").is_file():
+        raise SystemExit(fail(f"--offline-bundle is not a bundle directory: {bundle} (no manifest.json)"))
+    return bundle
+
+
+def bootstrap(
+    skip_doctor: bool = False,
+    *,
+    include_dev: bool = False,
+    pytorch_runtime: str = "auto",
+    offline_bundle: Path | None = None,
+) -> int:
     ensure_supported_python()
     passed(f"Using Python {sys.version.split()[0]} from {sys.executable}")
     venv_python = ensure_venv()
-    install_dependencies(venv_python, include_dev=include_dev, pytorch_runtime=pytorch_runtime)
+    install_dependencies(venv_python, include_dev=include_dev, pytorch_runtime=pytorch_runtime, offline_bundle=offline_bundle)
+    if offline_bundle is not None:
+        seed_offline_models(offline_bundle)
+        write_offline_marker(offline_bundle)
     install_managed_wrapper()
     if str(managed_launcher_dir()) not in os.environ.get("PATH", "").split(os.pathsep):
         info(f"Note: {managed_launcher_dir()} is not on this shell PATH.")
@@ -406,8 +503,8 @@ def bootstrap(skip_doctor: bool = False, *, include_dev: bool = False, pytorch_r
     return 0
 
 
-def install(*, pytorch_runtime: str = "auto") -> int:
-    status = bootstrap(pytorch_runtime=pytorch_runtime)
+def install(*, pytorch_runtime: str = "auto", offline_bundle: Path | None = None) -> int:
+    status = bootstrap(pytorch_runtime=pytorch_runtime, offline_bundle=offline_bundle)
     if status != 0:
         return status
     install_desktop_launcher()
@@ -418,7 +515,7 @@ def install(*, pytorch_runtime: str = "auto") -> int:
     return 0
 
 
-def update(skip_doctor: bool = False, *, pytorch_runtime: str = "auto") -> int:
+def update(skip_doctor: bool = False, *, pytorch_runtime: str = "auto", offline_bundle: Path | None = None) -> int:
     """Refresh an existing install in place: reinstall dependencies (picking up
     pyproject changes) and rebuild the managed launchers. User data (Input/,
     Seashells/, Profiles/, Output/, and the app settings file) is untouched."""
@@ -429,7 +526,10 @@ def update(skip_doctor: bool = False, *, pytorch_runtime: str = "auto") -> int:
     ensure_supported_python()
     passed(f"Using Python {sys.version.split()[0]} from {sys.executable}")
     venv_python = ensure_venv()
-    install_dependencies(venv_python, pytorch_runtime=pytorch_runtime)
+    install_dependencies(venv_python, pytorch_runtime=pytorch_runtime, offline_bundle=offline_bundle)
+    if offline_bundle is not None:
+        seed_offline_models(offline_bundle)
+        write_offline_marker(offline_bundle)
     install_managed_wrapper()
     if not skip_doctor:
         doctor_status = run_doctor()
@@ -462,6 +562,11 @@ def main(argv: list[str] | None = None) -> int:
     bootstrap_parser.add_argument("--skip-doctor", action="store_true")
     bootstrap_parser.add_argument("--include-dev", action="store_true")
     bootstrap_parser.add_argument(
+        "--offline-bundle",
+        default=None,
+        help="Install from a pre-downloaded offline bundle directory (scripts/build_offline_bundle.py) with no network access.",
+    )
+    bootstrap_parser.add_argument(
         "--pytorch-runtime",
         choices=["auto", "cpu", "cuda"],
         default="auto",
@@ -469,9 +574,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     install_parser = subparsers.add_parser("install", help="Bootstrap and register desktop/start-menu launchers.")
     install_parser.add_argument("--pytorch-runtime", choices=["auto", "cpu", "cuda"], default="auto")
+    install_parser.add_argument(
+        "--offline-bundle",
+        default=None,
+        help="Install from a pre-downloaded offline bundle directory (scripts/build_offline_bundle.py) with no network access.",
+    )
     update_parser = subparsers.add_parser("update", help="Refresh dependencies and launchers in an existing install; user data is kept.")
     update_parser.add_argument("--skip-doctor", action="store_true", help="Skip the post-update diagnostics run.")
     update_parser.add_argument("--pytorch-runtime", choices=["auto", "cpu", "cuda"], default="auto")
+    update_parser.add_argument(
+        "--offline-bundle",
+        default=None,
+        help="Install from a pre-downloaded offline bundle directory (scripts/build_offline_bundle.py) with no network access.",
+    )
     doctor_parser = subparsers.add_parser("doctor", help="Run install diagnostics.")
     doctor_parser.add_argument("--skip-model-init", action="store_true")
     doctor_parser.add_argument("--ci", action="store_true")
@@ -480,11 +595,20 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "bootstrap":
-        return bootstrap(skip_doctor=args.skip_doctor, include_dev=args.include_dev, pytorch_runtime=args.pytorch_runtime)
+        return bootstrap(
+            skip_doctor=args.skip_doctor,
+            include_dev=args.include_dev,
+            pytorch_runtime=args.pytorch_runtime,
+            offline_bundle=_resolve_offline_bundle(args.offline_bundle),
+        )
     if args.command == "install":
-        return install(pytorch_runtime=args.pytorch_runtime)
+        return install(pytorch_runtime=args.pytorch_runtime, offline_bundle=_resolve_offline_bundle(args.offline_bundle))
     if args.command == "update":
-        return update(skip_doctor=args.skip_doctor, pytorch_runtime=args.pytorch_runtime)
+        return update(
+            skip_doctor=args.skip_doctor,
+            pytorch_runtime=args.pytorch_runtime,
+            offline_bundle=_resolve_offline_bundle(args.offline_bundle),
+        )
     if args.command == "doctor":
         return run_doctor(skip_model_init=args.skip_model_init, ci_mode=args.ci)
     if args.command == "run":
