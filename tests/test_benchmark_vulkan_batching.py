@@ -34,8 +34,9 @@ pytestmark = [
     ),
     pytest.mark.skipif(
         shutil.which("python3") is None,
-    reason="python3 is not installed (the report step requires it)",
-)
+        reason="python3 is not installed (the report step requires it)",
+    ),
+]
 
 
 def _run_script(
