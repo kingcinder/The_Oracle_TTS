@@ -24,14 +24,20 @@ except Exception:  # pragma: no cover - fallback for older huggingface_hub versi
     LocalTokenNotFoundError = tuple()  # type: ignore[assignment]
 
 from the_oracle.models.cache import CachedReference, ProjectCache
+from the_oracle.models.pins import (
+    TURBO_ALLOW_PATTERNS as _PINNED_TURBO_PATTERNS,
+    TURBO_REPO_ID as _PINNED_TURBO_REPO,
+    pin_for,
+)
 from the_oracle.models.project import VoiceSettings, strip_pain_point_markers
 from the_oracle.platform_support import repo_python_display
 from the_oracle.utils.hashing import hash_payload
 
 
 SUPPORTED_VARIANTS = ("standard", "multilingual", "turbo")
-TURBO_REPO_ID = "ResembleAI/chatterbox-turbo"
-TURBO_ALLOW_PATTERNS = ["*.safetensors", "*.json", "*.txt", "*.pt", "*.model"]
+TURBO_REPO_ID = _PINNED_TURBO_REPO
+TURBO_REVISION = pin_for(TURBO_REPO_ID)
+TURBO_ALLOW_PATTERNS = _PINNED_TURBO_PATTERNS
 
 
 class TurboModelError(RuntimeError):
@@ -77,6 +83,7 @@ def download_turbo_checkpoint(*, local_files_only: bool = False) -> Path:
     return Path(
         snapshot_download(
             repo_id=TURBO_REPO_ID,
+            revision=TURBO_REVISION,
             token=_hf_token(),
             local_files_only=local_files_only,
             allow_patterns=TURBO_ALLOW_PATTERNS,
