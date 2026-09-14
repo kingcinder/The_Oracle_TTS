@@ -158,6 +158,42 @@ Windows:
 .\.venv\Scripts\python.exe scripts\download_models.py --variant turbo --device cpu
 ```
 
+## Fully Offline Install
+
+Every model The Oracle uses is pinned to an exact Hugging Face commit
+(`src/the_oracle/models/pins.py`), and the installer can run with zero
+network access from a pre-built offline bundle. The bundle contains
+everything: the repo snapshot, every pinned model, and every wheel for the
+target platform(s).
+
+Build the bundle on a machine **with** internet:
+
+```bash
+python3 scripts/build_offline_bundle.py --output dist/oracle-offline-bundle
+# options: --platform linux|windows|both  --pytorch cpu|cuda  --python-version 3.12
+```
+
+Copy the bundle directory to the target machine (USB, drive, network share)
+and run the launcher at its root — no network needed:
+
+Linux:
+
+```bash
+./install.sh
+```
+
+Windows:
+
+```powershell
+.\install.bat
+```
+
+The offline installer creates the venv purely from the bundled wheels,
+seeds the local Hugging Face cache with the pinned models, and the managed
+launcher then runs with `HF_HUB_OFFLINE=1`, so no model fetch can ever touch
+the network. Delete the `.oracle_offline` file in the install directory to
+re-enable network model fetches.
+
 ## CLI Usage
 
 `--speakerA-ref`/`--speakerB-ref` are optional: when omitted they default to the
