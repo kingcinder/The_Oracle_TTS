@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from the_oracle.models.pins import GO_EMOTIONS_REPO
+
 
 # Every entry is matched as a whole word (\b boundaries), so inflected
 # forms must be listed explicitly to keep the lexical fallback effective:
@@ -48,7 +50,14 @@ class GoEmotionsClassifier:
         except Exception:
             return None
         try:
-            return pipeline("text-classification", model=model_name, top_k=1)
+            # Pin the known default model to its exact commit so behavior is
+            # deterministic (and offline installs resolve the seeded cache).
+            kwargs: dict = {}
+            if model_name == GO_EMOTIONS_REPO:
+                from the_oracle.models.pins import pin_for
+
+                kwargs["revision"] = pin_for(GO_EMOTIONS_REPO)
+            return pipeline("text-classification", model=model_name, top_k=1, **kwargs)
         except Exception:
             return None
 
