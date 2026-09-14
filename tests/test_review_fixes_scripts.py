@@ -180,6 +180,7 @@ def test_download_hf_model_default_revision_is_unpinned(download_models, tmp_pat
 # --- manage_install.py: wrapper shell quoting ----------------------------------
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash scripts require a POSIX shell")
 def test_unix_wrapper_shell_quotes_nasty_paths(manage_install, monkeypatch, tmp_path: Path) -> None:
     nasty = tmp_path / 'dir with spaces and "quotes" and $dollar `backtick`'
     monkeypatch.setattr(manage_install, "REPO_ROOT", nasty)
