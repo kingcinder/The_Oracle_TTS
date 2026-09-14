@@ -1,6 +1,6 @@
 # The Oracle — State (completeness manifest)
 
-**Current release: V1.11 (CUDA inference + complete guided onboarding persistence)**
+**Current release: V1.1.1 (CUDA inference + complete guided onboarding persistence)**
 
 This file is the repo's self-designated completeness record. It is the
 authoritative context for the Omega meta-skill loop (searched, never
