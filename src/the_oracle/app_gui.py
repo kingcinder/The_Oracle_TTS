@@ -3956,6 +3956,10 @@ class MainWindow(QMainWindow):
         if checked:
             self._persist_remembered_settings()
         else:
+            # Disabled = manual control: reset to the default backend so a
+            # stale in-memory selection (e.g. vulkan from construction) is
+            # not persisted as the "remembered" state.
+            self._app_settings["inference_backend"] = "pytorch"
             try:
                 save_app_settings(self._app_settings)
             except Exception as exc:
