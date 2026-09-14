@@ -481,7 +481,7 @@ class _FakePoolEngine:
         return np.zeros(2400, dtype=np.float32)
 
 
-_fork_context = multiprocessing.get_context("fork")
+_fork_context = multiprocessing.get_context("fork" if sys.platform != "win32" else "spawn")
 from multiprocessing.pool import Pool as _BasePool
 
 
