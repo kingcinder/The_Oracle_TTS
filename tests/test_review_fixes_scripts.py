@@ -271,6 +271,7 @@ def test_bash_oracle_start_still_maps_to_run(tmp_path: Path) -> None:
     assert argv == [f"{fakerepo}/scripts/manage_install.py", "run"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash scripts require a POSIX shell")
 def test_bash_oracle_rejects_unknown_action(tmp_path: Path) -> None:
     fakerepo, bindir, recorded = _build_fake_repo(tmp_path)
     completed = _run_oracle(fakerepo, bindir, recorded, "bogus")
