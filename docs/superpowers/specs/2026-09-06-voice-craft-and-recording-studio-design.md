@@ -1,5 +1,7 @@
 # Voice Craft + Recording Studio — Design
 
+> **Status (2026-09-14): SUPERSEDED — this plan was fully executed and merged to `main` (see STATE.md). The "no commits" / review-before-commit constraint above was a one-time 2026-09-06 instruction and no longer applies.**
+
 Date: 2026-09-06 · Branch: `feature/voice-craft-and-recording-studio` (uncommitted until review)
 
 This spec covers three related improvements to The Oracle's voice pipeline and GUI,
