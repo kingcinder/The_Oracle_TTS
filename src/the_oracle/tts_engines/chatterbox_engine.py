@@ -25,6 +25,9 @@ except Exception:  # pragma: no cover - fallback for older huggingface_hub versi
 
 from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.pins import (
+    CHATTERBOX_MULTILINGUAL_PATTERNS,
+    CHATTERBOX_REPO,
+    CHATTERBOX_STANDARD_PATTERNS,
     TURBO_ALLOW_PATTERNS as _PINNED_TURBO_PATTERNS,
     TURBO_REPO_ID as _PINNED_TURBO_REPO,
     pin_for,
@@ -76,6 +79,27 @@ def _format_turbo_error(exc: Exception, *, cached_only: bool = False) -> str:
     return (
         f"{prefix} Run {download_command} while online. "
         f"Original error: {type(exc).__name__}: {exc}"
+    )
+
+
+def download_chatterbox_repo(*, local_files_only: bool = False) -> Path:
+    """Pinned, offline-safe checkout of the ``ResembleAI/chatterbox`` repo.
+
+    chatterbox-tts 0.1.6's own ``from_pretrained`` loaders call
+    ``hf_hub_download()`` without a revision (standard) or explicitly request
+    ``revision="main"`` (multilingual), so they would fetch the moving tip of
+    the repo. We bypass them: download the pinned commit once, then load with
+    ``from_local()``. With ``HF_HUB_OFFLINE=1`` (set by the managed launcher
+    on offline installs) this resolves purely from the local cache.
+    """
+    return Path(
+        snapshot_download(
+            repo_id=CHATTERBOX_REPO,
+            revision=pin_for(CHATTERBOX_REPO),
+            token=_hf_token(),
+            local_files_only=local_files_only,
+            allow_patterns=sorted(set(CHATTERBOX_STANDARD_PATTERNS) | set(CHATTERBOX_MULTILINGUAL_PATTERNS)),
+        )
     )
 
 
@@ -185,7 +209,8 @@ class ChatterboxEngine:
         if self.variant == "multilingual":
             from chatterbox.mtl_tts import ChatterboxMultilingualTTS, Conditionals, SUPPORTED_LANGUAGES
 
-            return ChatterboxMultilingualTTS.from_pretrained(device=self.device), Conditionals, SUPPORTED_LANGUAGES
+            checkpoint_dir = download_chatterbox_repo()
+            return ChatterboxMultilingualTTS.from_local(checkpoint_dir, self.device), Conditionals, SUPPORTED_LANGUAGES
         if self.variant == "turbo":
             try:
                 from chatterbox.tts_turbo import ChatterboxTurboTTS, Conditionals
@@ -196,7 +221,8 @@ class ChatterboxEngine:
                 raise TurboModelError(_format_turbo_error(exc)) from exc
         from chatterbox.tts import ChatterboxTTS, Conditionals
 
-        return ChatterboxTTS.from_pretrained(device=self.device), Conditionals, {"en": "English"}
+        checkpoint_dir = download_chatterbox_repo()
+        return ChatterboxTTS.from_local(checkpoint_dir, self.device), Conditionals, {"en": "English"}
 
     def prepare_reference(self, project_cache: ProjectCache, speaker: str, reference_path: str) -> CachedReference:
         return project_cache.cache_reference_audio(reference_path, speaker, self.sample_rate)
