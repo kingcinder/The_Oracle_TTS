@@ -1,6 +1,6 @@
 # The Oracle
 
-**Release V1.11** — CUDA inference support, guided onboarding, and complete first-run workspace persistence.
+**Release V1.1.1** — CUDA inference support, guided onboarding, and complete first-run workspace persistence.
 
 The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The repository now ships with a cross-platform bootstrap/install surface for both Linux and Windows.
 
