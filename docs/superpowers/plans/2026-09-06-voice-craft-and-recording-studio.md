@@ -1,5 +1,7 @@
 # Voice Craft + Recording Studio — Implementation Plan
 
+> **Status (2026-09-14): SUPERSEDED — this plan was fully executed and merged to `main` (see STATE.md). The "no commits" / review-before-commit constraint above was a one-time 2026-09-06 instruction and no longer applies.**
+
 > **For agentic workers:** Steps use checkbox (`- [ ]`) syntax. This run is executed
 > inline with **no commits** — the user reviews the working tree before any commit/push.
 
