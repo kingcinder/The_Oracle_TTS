@@ -8,6 +8,17 @@ rewritten by the loop).
 
 ## Done
 
+- **Fully offline install (2026-09-14)**: every model pinned to an exact HF
+  commit SHA in `src/the_oracle/models/pins.py` (newest commits as of
+  2026-09-14); `scripts/build_offline_bundle.py` builds a self-contained
+  bundle (repo snapshot + pinned models in HF-cache layout + all wheels for
+  Linux/Windows); `install --offline-bundle <dir>` installs with zero
+  network (pip `--no-index --find-links`, seeded HF cache with `refs/main`
+  pointed at the pins); managed launchers export `HF_HUB_OFFLINE=1` on
+  offline installs so no model fetch can touch the network; delete
+  `.oracle_offline` in the install dir to go back online.
+  `scripts/download_models.py` now reads the same central pins.
+
 - **Systematic-debugging pass on the transformer timestamps (2026-09-13,
   from the four-dimension audit)**: three root-caused and test-pinned fixes
   in `ingest_transformer.py`. (1) Unbracketed chat-export timestamps
