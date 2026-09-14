@@ -24,10 +24,16 @@ SCRIPT = REPO_ROOT / "scripts" / "build_audio_cpp.sh"
 
 from tests.test_download_audio_cpp_model import FAKE_MANAGER  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("cmake") is None,
-    reason="cmake is not installed (the real build requires it)",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="bash scripts require a POSIX shell (WSL has no distributions on CI)",
+    ),
+    pytest.mark.skipif(
+        shutil.which("cmake") is None,
+        reason="cmake is not installed (the real build requires it)",
+    ),
+]
 
 FAKE_BUILD_LINUX = """#!/usr/bin/env bash
 # Minimal stand-in for audio.cpp's scripts/build_linux.sh: accepts the flags
