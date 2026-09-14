@@ -27,8 +27,13 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "benchmark_vulkan_batching.sh"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("python3") is None,
+pytestmark = [
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="bash scripts require a POSIX shell (WSL has no distributions on CI)",
+    ),
+    pytest.mark.skipif(
+        shutil.which("python3") is None,
     reason="python3 is not installed (the report step requires it)",
 )
 
