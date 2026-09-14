@@ -13,6 +13,11 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="bash scripts require a POSIX shell (WSL has no distributions on CI)",
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "download_audio_cpp_model.sh"
 
