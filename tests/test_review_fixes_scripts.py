@@ -192,6 +192,7 @@ def test_unix_wrapper_shell_quotes_nasty_paths(manage_install, monkeypatch, tmp_
     assert f'VENV_ENTRYPOINT="{manage_install.venv_entrypoint_path(nasty, "the-oracle")}"' not in contents
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash scripts require a POSIX shell")
 def test_unix_wrapper_is_valid_bash(manage_install, monkeypatch, tmp_path: Path) -> None:
     nasty = tmp_path / 'weird "dir" $x'
     monkeypatch.setattr(manage_install, "REPO_ROOT", nasty)
