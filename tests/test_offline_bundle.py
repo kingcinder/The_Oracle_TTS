@@ -238,6 +238,82 @@ def test_windows_wrapper_exports_hf_hub_offline_on_offline_install(
     assert manage_install.OFFLINE_MARKER_FILENAME in body
 
 
+# --- pinned chatterbox loaders ----------------------------------------------
+
+
+def _load_chatterbox_engine_module(monkeypatch):
+    """Load chatterbox_engine.py with heavy deps stubbed, as the real module."""
+    import unittest.mock as mock
+
+    _stub_chatterbox_engine_imports(monkeypatch)
+    monkeypatch.setitem(sys.modules, "numpy", mock.MagicMock())
+    hf_mod = types.ModuleType("huggingface_hub")
+    hf_mod.snapshot_download = mock.MagicMock(return_value="/tmp/fake-ckpt")
+    hf_errors = types.ModuleType("huggingface_hub.errors")
+    hf_errors.LocalEntryNotFoundError = type("LocalEntryNotFoundError", (Exception,), {})
+    hf_utils = types.ModuleType("huggingface_hub.utils")
+    hf_utils.LocalTokenNotFoundError = type("LocalTokenNotFoundError", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hf_mod)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.errors", hf_errors)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.utils", hf_utils)
+    spec = importlib.util.spec_from_file_location(
+        "oracle_test_chatterbox_engine",
+        REPO_ROOT / "src" / "the_oracle" / "tts_engines" / "chatterbox_engine.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _stub_chatterbox_variant(monkeypatch, dotted: str, cls_name: str, calls: list):
+    pkg = types.ModuleType("chatterbox")
+    pkg.__path__ = []  # type: ignore[attr-defined]
+    mod = types.ModuleType(dotted)
+
+    class FakeTTS:
+        @classmethod
+        def from_local(cls, ckpt_dir, device):
+            calls.append((dotted, str(ckpt_dir), device))
+            return f"<{cls_name} model>"
+
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):  # must NOT be called
+            raise AssertionError(f"{cls_name}.from_pretrained must not be used (offline!)")
+
+    mod.__dict__[cls_name] = FakeTTS
+    mod.Conditionals = object
+    if "mtl" in dotted:
+        mod.SUPPORTED_LANGUAGES = {"en": "English"}
+    monkeypatch.setitem(sys.modules, "chatterbox", pkg)
+    monkeypatch.setitem(sys.modules, dotted, mod)
+
+
+@pytest.mark.parametrize("variant,dotted,cls_name", [
+    ("standard", "chatterbox.tts", "ChatterboxTTS"),
+    ("multilingual", "chatterbox.mtl_tts", "ChatterboxMultilingualTTS"),
+])
+def test_chatterbox_variants_load_from_pinned_local_snapshot(monkeypatch, variant, dotted, cls_name) -> None:
+    from the_oracle.models.pins import CHATTERBOX_REPO, MODEL_PINS
+
+    engine_mod = _load_chatterbox_engine_module(monkeypatch)
+    calls: list = []
+    _stub_chatterbox_variant(monkeypatch, dotted, cls_name, calls)
+
+    engine = engine_mod.ChatterboxEngine(variant=variant, device="cpu")
+    engine.ensure_model_ready()
+
+    assert len(calls) == 1
+    _, ckpt_dir, device = calls[0]
+    assert ckpt_dir == "/tmp/fake-ckpt"
+    assert device == "cpu"
+    snap_kwargs = engine_mod.snapshot_download.call_args.kwargs
+    assert snap_kwargs["repo_id"] == CHATTERBOX_REPO
+    assert snap_kwargs["revision"] == MODEL_PINS[CHATTERBOX_REPO]
+    assert SHA_RE.match(snap_kwargs["revision"])
+
+
 # --- bundle launchers --------------------------------------------------------
 
 
