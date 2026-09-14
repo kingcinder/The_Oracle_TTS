@@ -252,6 +252,7 @@ def _run_oracle(fakerepo: Path, bindir: Path, recorded: Path, *args: str) -> sub
     )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash scripts require a POSIX shell")
 def test_bash_oracle_gui_is_wired_to_run(tmp_path: Path) -> None:
     fakerepo, bindir, recorded = _build_fake_repo(tmp_path)
     completed = _run_oracle(fakerepo, bindir, recorded, "gui", "--skip-model-init")
