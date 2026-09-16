@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers import isolate_user_config
+
 from the_oracle.gui_settings import (
     GUISettingsError,
     list_templates,
@@ -62,7 +64,7 @@ def test_gui_settings_round_trip(tmp_path: Path) -> None:
 
 
 def test_gui_template_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
     save_template("Oracle Template", _payload())
 
     assert list_templates() == ["Oracle_Template"]
@@ -78,7 +80,7 @@ def test_incomplete_gui_settings_fail_clearly(tmp_path: Path) -> None:
 
 
 def test_recent_reference_paths_are_mru_and_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
     for index in range(12):
         remember_recent_reference_path(f"/tmp/ref_{index}.wav")
 
@@ -122,7 +124,7 @@ def test_gui_settings_preserve_vulkan_inference_backend(tmp_path: Path) -> None:
 
 
 def test_app_settings_defaults_when_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
 
     settings = load_app_settings()
 
@@ -139,7 +141,7 @@ def test_app_settings_defaults_when_missing(tmp_path: Path, monkeypatch: pytest.
 
 
 def test_app_settings_round_trip_persists_backend_and_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
     payload = {
         "remember_backend": True,
         "inference_backend": "pytorch",
@@ -169,7 +171,7 @@ def test_app_settings_round_trip_persists_backend_and_paths(tmp_path: Path, monk
 
 
 def test_app_settings_round_trip_persists_workspace_defaults_and_output_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
     save_app_settings({
         "default_input_dir": " /custom/Input ",
         "default_output_dir": "/custom/Output",
@@ -184,7 +186,7 @@ def test_app_settings_round_trip_persists_workspace_defaults_and_output_warning(
 
 
 def test_app_settings_drops_malformed_workspace_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
     save_app_settings({
         "default_input_dir": 123,
         "default_output_dir": None,
@@ -199,7 +201,7 @@ def test_app_settings_drops_malformed_workspace_defaults(tmp_path: Path, monkeyp
 
 
 def test_app_settings_round_trip_persists_recording_preferences(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
     save_app_settings({
         "recording_wizard_completed": True,
         "recording_wizard_dismissed": False,
@@ -231,7 +233,7 @@ def test_app_settings_round_trip_persists_recording_preferences(tmp_path: Path, 
 
 
 def test_app_settings_drops_malformed_recording_preferences(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
     save_app_settings({
         "recording_settings": {
             "microphone_index": "not-an-index",
@@ -249,7 +251,7 @@ def test_app_settings_drops_malformed_recording_preferences(tmp_path: Path, monk
 
 
 def test_app_settings_round_trip_persists_inference_wizard_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
 
     save_app_settings({
         "inference_wizard_completed": True,
@@ -263,7 +265,7 @@ def test_app_settings_round_trip_persists_inference_wizard_state(tmp_path: Path,
 
 
 def test_app_settings_drops_malformed_inference_wizard_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
 
     save_app_settings({
         "inference_wizard_completed": "yes",
@@ -277,7 +279,7 @@ def test_app_settings_drops_malformed_inference_wizard_state(tmp_path: Path, mon
 
 
 def test_app_settings_robust_to_corrupt_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
     from the_oracle.gui_settings import app_settings_path
 
     app_settings_path().write_text("{not json", encoding="utf-8")
@@ -289,7 +291,7 @@ def test_app_settings_robust_to_corrupt_file(tmp_path: Path, monkeypatch: pytest
 
 
 def test_app_settings_normalizes_invalid_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    isolate_user_config(monkeypatch, tmp_path)
     save_app_settings({
         "remember_backend": False,
         "inference_backend": "cuda",  # unsupported -> pytorch

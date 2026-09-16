@@ -13,6 +13,7 @@ vulkan`` auto-runs the setup (unless ``--no-audio-cpp-setup``), and the
 
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
 
@@ -144,6 +145,10 @@ def _restore_env_after_setup(saved: dict[str, str | None]) -> None:
             os.environ[name] = value
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fake setup scripts need a POSIX bash; the Windows runner's bash.exe is the WSL stub with no distro installed",
+)
 def test_run_vulkan_setup_builds_and_downloads(monkeypatch, tmp_path: Path) -> None:
     import os
 
@@ -202,6 +207,10 @@ def test_run_vulkan_setup_skips_download_when_model_present(
     assert not any("Downloading the Chatterbox model" in line for line in progress)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fake setup scripts need a POSIX bash; the Windows runner's bash.exe is the WSL stub with no distro installed",
+)
 def test_run_vulkan_setup_build_failure(monkeypatch, tmp_path: Path) -> None:
     binary = tmp_path / "bin" / "audiocpp_cli"
     model = tmp_path / "models" / "chatterbox-q8_0.gguf"

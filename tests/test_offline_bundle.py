@@ -133,7 +133,9 @@ def test_pip_base_args_online_is_empty(manage_install) -> None:
 
 
 def test_pip_base_args_offline_uses_no_index_find_links(manage_install, tmp_path: Path) -> None:
-    wheels = tmp_path / "bundle" / "wheels" / "linux"
+    # The product looks for wheels/<platform> matching the *current* OS.
+    platform_dir = "windows" if sys.platform == "win32" else "linux"
+    wheels = tmp_path / "bundle" / "wheels" / platform_dir
     wheels.mkdir(parents=True)
     args = manage_install._pip_base_args(tmp_path / "bundle")
     assert args[:2] == ["--no-index", "--find-links"]
@@ -306,7 +308,8 @@ def test_chatterbox_variants_load_from_pinned_local_snapshot(monkeypatch, varian
 
     assert len(calls) == 1
     _, ckpt_dir, device = calls[0]
-    assert ckpt_dir == "/tmp/fake-ckpt"
+    # The engine normalizes through Path, so compare platform-normalized.
+    assert Path(ckpt_dir) == Path("/tmp/fake-ckpt")
     assert device == "cpu"
     snap_kwargs = engine_mod.snapshot_download.call_args.kwargs
     assert snap_kwargs["repo_id"] == CHATTERBOX_REPO

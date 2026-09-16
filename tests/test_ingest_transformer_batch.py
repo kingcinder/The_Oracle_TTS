@@ -64,7 +64,7 @@ def test_analyze_folder_sorts_by_relative_path(tmp_path: Path) -> None:
 
     analyses = analyze_folder(tmp_path)
 
-    assert [str(Path(a.path).relative_to(tmp_path)) for a in analyses] == [
+    assert [Path(a.path).relative_to(tmp_path).as_posix() for a in analyses] == [
         "b/c/a.txt",
         "z.txt",
     ]
