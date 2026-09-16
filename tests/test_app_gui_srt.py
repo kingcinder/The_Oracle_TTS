@@ -1,4 +1,5 @@
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -273,7 +274,12 @@ def test_render_worker_uses_a_new_process_session_for_native_children(
     )
     worker.run()
 
-    assert popen_kwargs["start_new_session"] is True
+    if os.name == "posix":
+        assert popen_kwargs["start_new_session"] is True
+    else:
+        # Windows has no POSIX sessions; CREATE_NEW_PROCESS_GROUP is the
+        # platform's process-tree isolation for the render/preview child.
+        assert popen_kwargs["creationflags"] == subprocess.CREATE_NEW_PROCESS_GROUP
 
 
 def test_render_worker_windows_cancel_kills_the_child_process_tree(
@@ -473,7 +479,12 @@ def test_preview_worker_runs_in_subprocess_and_never_inits_model_inline(
 
     assert completed == [str(tmp_path / "preview.wav")]
     assert "--preview" in popen_kwargs["command"]
-    assert popen_kwargs["start_new_session"] is True
+    if os.name == "posix":
+        assert popen_kwargs["start_new_session"] is True
+    else:
+        # Windows has no POSIX sessions; CREATE_NEW_PROCESS_GROUP is the
+        # platform's process-tree isolation for the render/preview child.
+        assert popen_kwargs["creationflags"] == subprocess.CREATE_NEW_PROCESS_GROUP
     job_payload = json.loads((tmp_path / "job.json").read_text(encoding="utf-8"))
     assert job_payload["utterance"]["repaired_text"] == "Hi."
     assert job_payload["profile"]["speaker"] == "A"

@@ -93,3 +93,23 @@ def normalise_speaker_label(label: str) -> str:
     if upper.endswith("B"):
         return "B"
     return upper
+
+
+def isolate_user_config(monkeypatch, config_dir) -> None:
+    """Point the platform config root at ``config_dir`` for one test.
+
+    ``XDG_CONFIG_HOME`` is only the POSIX config root: on Windows
+    :func:`the_oracle.platform_support.user_config_root` reads ``%APPDATA%``
+    instead. Patching just ``XDG_CONFIG_HOME`` therefore still lets Windows
+    tests read and *write* the developer's real ``%APPDATA%\\the_oracle``
+    settings — and leak state between test files (e.g. a remembered backend
+    flag written by one file breaking another file's defaults test). Patch
+    both roots so the suite is hermetic on every platform.
+    """
+    import os
+    import sys
+
+    config_dir = os.fspath(config_dir)
+    monkeypatch.setenv("XDG_CONFIG_HOME", config_dir)
+    if sys.platform == "win32":
+        monkeypatch.setenv("APPDATA", config_dir)

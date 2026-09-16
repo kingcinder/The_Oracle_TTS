@@ -203,6 +203,7 @@ def test_unix_wrapper_is_valid_bash(manage_install, monkeypatch, tmp_path: Path)
     assert completed.returncode == 0, completed.stderr
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="bash scripts require a POSIX shell")
 def test_unix_wrapper_still_execs_entrypoint(manage_install, tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(manage_install, "REPO_ROOT", tmp_path / "plain")
     contents = manage_install.managed_wrapper_contents()

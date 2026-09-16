@@ -7,6 +7,7 @@ script's functions are tested without executing its __main__ path.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -86,8 +87,10 @@ def test_install_desktop_launcher_writes_entry_and_shortcut(manage, tmp_path, mo
     shortcut_text = shortcut.read_text(encoding="utf-8")
     assert "Trusted=true" in shortcut_text
     assert manage.LINUX_DESKTOP_MARKER in shortcut_text
-    # Shortcut must be executable for GNOME to launch it.
-    assert shortcut.stat().st_mode & 0o111
+    # Shortcut must be executable for GNOME to launch it. POSIX-only check:
+    # Windows st_mode carries no exec bits even after chmod(0o755).
+    if sys.platform != "win32":
+        assert shortcut.stat().st_mode & 0o111
 
 
 def test_mark_desktop_shortcut_trusted_runs_gio_when_available(manage, tmp_path, monkeypatch) -> None:

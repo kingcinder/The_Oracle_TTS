@@ -958,7 +958,9 @@ def apply_folder_fixes(fixes: list[FolderFix], *, backup: bool = True) -> list[t
         if backup:
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             backup_file = fix.path.with_name(f"{fix.path.name}.bak-{stamp}")
-            backup_file.write_text(fix.original_text, encoding="utf-8")
+            # Byte-identical backup (see fix_input_file): write_text would
+            # corrupt newlines on Windows.
+            backup_file.write_bytes(fix.path.read_bytes())
             backup_path = str(backup_file)
         is_subtitle = fix.path.suffix.lower() in (".srt", ".vtt") and any(
             line_fix.rule == "srt" for line_fix in fix.line_fixes
@@ -1107,6 +1109,7 @@ def preview_fixed_text(path: str | Path) -> tuple[str, str, int, list[FormatIssu
         if analysis.encoding_fixed_text is not None
         else _decode_best_effort(file_path.read_bytes())
     )
+    is_srt = any(issue.fixable and issue.line_number == 0 and issue.snippet == file_path.name and "subtitles" in issue.description for issue in analysis.issues)
     fixed_text, line_fixes = transform_text_detailed(original)
     fix_count = len(line_fixes)
     if analysis.encoding_fixed_text is not None:
@@ -1134,10 +1137,11 @@ def fix_input_file(path: str | Path, *, backup: bool = True) -> tuple[Path, int,
     if not fixable:
         raise ValueError(f"No fixable formatting issues found in {file_path}")
 
+    raw = file_path.read_bytes()
     original = (
         analysis.encoding_fixed_text
         if analysis.encoding_fixed_text is not None
-        else _decode_best_effort(file_path.read_bytes())
+        else _decode_best_effort(raw)
     )
     is_srt = any(issue.fixable and issue.line_number == 0 and issue.snippet == file_path.name and "subtitles" in issue.description for issue in analysis.issues)
     fixed_text, fix_count = transform_text(original)
@@ -1148,7 +1152,11 @@ def fix_input_file(path: str | Path, *, backup: bool = True) -> tuple[Path, int,
     if backup:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         backup_file = file_path.with_name(f"{file_path.name}.bak-{stamp}")
-        backup_file.write_text(original, encoding="utf-8")
+        # Byte-identical backup: write_text would translate newlines on
+        # Windows (\n -> \r\n on write, and the str already holds \r\n from
+        # read_bytes), corrupting the backup with doubled line breaks. The
+        # backup must restore the original file exactly.
+        backup_file.write_bytes(raw)
         backup_path = str(backup_file)
 
     if is_srt and file_path.suffix.lower() in (".srt", ".vtt"):

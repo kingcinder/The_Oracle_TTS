@@ -26,6 +26,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -277,7 +278,9 @@ def test_load_recent_reference_paths_round_trip(tmp_path, monkeypatch):
 
     _point_recent_refs_at(tmp_path, monkeypatch)
     remember_recent_reference_path("/tmp/voice.wav")
-    assert load_recent_reference_paths() == ["/tmp/voice.wav"]
+    # The product normalizes through Path (expanduser), which renders
+    # "/tmp/..." with backslashes on Windows; compare normalized.
+    assert load_recent_reference_paths() == [str(Path("/tmp/voice.wav").expanduser())]
 
 
 # ---------------------------------------------------------------------------

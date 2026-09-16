@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers import isolate_user_config
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
@@ -515,7 +517,7 @@ def _build_main_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     model_file = tmp_path / "chatterbox-model"
     model_file.write_text("model", encoding="utf-8")
     monkeypatch.setenv("ORACLE_AUDIOCPP_MODEL", str(model_file))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    isolate_user_config(monkeypatch, tmp_path / "config")
     return app_gui.MainWindow(), paths
 
 

@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers import isolate_user_config
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
@@ -255,7 +257,7 @@ def _build_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("ORACLE_AUDIOCPP_MODEL", str(model_file))
     # Isolate the app-level settings file (remembered backend + audio.cpp
     # paths) so tests never read or write the developer's real config.
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    isolate_user_config(monkeypatch, tmp_path / "config")
     window = app_gui.MainWindow()
     return window, paths
 
@@ -1815,7 +1817,7 @@ def test_prewarm_thread_skips_heavy_backend_init(monkeypatch: pytest.MonkeyPatch
 def _prewrite_app_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, payload: dict) -> None:
     """Write the app-level settings file (remembered backend + audio.cpp paths)
     before the window is built, simulating a previous session's persisted state."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    isolate_user_config(monkeypatch, tmp_path / "config")
     save_app_settings(payload)
 
 

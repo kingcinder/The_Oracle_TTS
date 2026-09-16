@@ -314,8 +314,10 @@ class TestProjectCacheAtomicity:
 class TestPathConfinement:
     def test_absolute_path_rejected(self, tmp_path):
         cache = ProjectCache(tmp_path / "project")
+        # A genuinely absolute path on every platform: "/etc/..." is
+        # drive-relative, not absolute, on Windows.
         with pytest.raises(ValueError, match="relative"):
-            cache.save_json("/etc/passwd.json", {})
+            cache.save_json(str(tmp_path / "outside.json"), {})
 
     def test_parent_escape_rejected(self, tmp_path):
         cache = ProjectCache(tmp_path / "project")
@@ -736,6 +738,7 @@ class _SetupFakeProc:
 
 
 class TestVulkanSetupCancellation:
+    @pytest.mark.skipif(sys.platform == "win32", reason="os.killpg is POSIX-only; Windows cancellation uses taskkill/Popen.kill")
     def test_cancellation_not_masked_by_cleanup(self, monkeypatch):
         cancel = threading.Event()
         killpg_calls: list[tuple[int, int]] = []

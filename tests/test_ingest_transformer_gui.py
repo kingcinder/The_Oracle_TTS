@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers import isolate_user_config
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from the_oracle.ingest_transformer import preview_fixed_text
@@ -85,7 +87,7 @@ def _build_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     model_file.write_text("model", encoding="utf-8")
     monkeypatch.setattr(app_gui, "find_audiocpp_binary", lambda: tmp_path / "audiocpp_cli")
     monkeypatch.setenv("ORACLE_AUDIOCPP_MODEL", str(model_file))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    isolate_user_config(monkeypatch, tmp_path / "config")
     window = app_gui.MainWindow()
     return window, paths
 
@@ -424,7 +426,7 @@ def test_batch_fix_scans_previews_and_applies(qt_app, monkeypatch, tmp_path) -> 
             labels = [tree.topLevelItem(0).child(i).text(0) for i in range(tree.topLevelItem(0).childCount())]
             # Tree lists every fixable file by path relative to the folder,
             # including the subfolder file (recursive scan).
-            assert sorted(labels) == ["brackets.md", "messy.txt", "sub/nested.txt"]
+            assert sorted(labels) == ["brackets.md", "messy.txt", os.path.join("sub", "nested.txt")]
             views = self.findChildren(QPlainTextEdit)
             assert views, "batch preview has no diff view"
             diff = views[0].toPlainText()
