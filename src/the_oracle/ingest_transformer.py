@@ -1158,3 +1158,44 @@ def fix_input_file(path: str | Path, *, backup: bool = True) -> tuple[Path, int,
 
     file_path.write_text(fixed_text, encoding="utf-8")
     return file_path, fix_count, backup_path
+
+
+def speaker_ref_report_for_file(
+    file_path, post_fix_text: str | None = None
+) -> tuple[list[dict], list[dict]]:
+    """Compute ``--speaker-ref`` suggestions for a script file's cast.
+
+    The single owner of the suggestion data shared by the CLI report and the
+    GUI popups: one dict per speaker (``speaker``, ``voice_key``, ``flag``,
+    ``new``) plus one per rejected label (``label``, ``rename_flag``). When
+    ``post_fix_text`` is None the file is read and its post-transform text
+    computed on the fly, so a suggested cast always matches what a render
+    would see after a fix. Unreadable files yield empty lists rather than
+    raising — suggestions are advisory and must never block a run.
+
+    ``file_path`` accepts anything :class:`pathlib.Path` does.
+    """
+    from pathlib import Path
+
+    path = Path(file_path)
+    if post_fix_text is None:
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return [], []
+        post_fix_text = transform_text(_decode_best_effort(raw))[0]
+    refs = [
+        {
+            "speaker": s.speaker,
+            "voice_key": s.voice_key,
+            "flag": s.flag,
+            "new": s.is_new,
+        }
+        for s in suggest_speaker_refs(post_fix_text)
+    ]
+    rejected = rejected_labels(post_fix_text)
+    try:
+        rename_flags = {s.speaker: s.flag for s in suggest_rejected_label_refs(post_fix_text)}
+    except (OSError, ValueError):
+        rename_flags = {}
+    return refs, [{"label": label, "rename_flag": rename_flags.get(label)} for label in rejected]
