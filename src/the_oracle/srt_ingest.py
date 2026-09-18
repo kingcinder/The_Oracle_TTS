@@ -300,3 +300,44 @@ def convert_srt_file(path: str | Path, *, overwrite: bool = False) -> tuple[Path
         raise FileExistsError(f"Converted script already exists: {target}")
     target.write_text(script, encoding="utf-8")
     return target, cue_count, speaker_count
+
+def ensure_subtitle_script(path: str | Path) -> tuple[str, str | None]:
+    """Make sure a subtitle input has a dialogue script; return the path to use.
+
+    The single owner of the convert-not-overwrite policy shared by the CLI
+    and GUI render paths: a valid ``.srt``/``.vtt`` input is converted to a
+    sibling script (reusing one from a previous conversion); anything that
+    is not a valid subtitle file, including a missing or unreadable file,
+    is returned unchanged so the caller's ordinary error paths report it.
+
+    Returns ``(path_to_use, result)`` where *result* is ``None`` for a
+    pass-through/unchanged input, ``"reused"`` when a previous conversion's
+    script was reused, and ``("converted", cue_count, speaker_count)`` when
+    a fresh conversion was written. The caller renders that in its own
+    words; this module never prints and never exits.
+
+    The read uses the resilient decode chain the render path uses (UTF-8
+    with BOM, then CP1252 with replacement), so a legacy-encoded subtitle
+    converts instead of being rejected for its encoding.
+    """
+    file_path = Path(path)
+    if file_path.suffix.lower() not in (".srt", ".vtt") or not file_path.is_file():
+        return path, None
+    try:
+        raw = file_path.read_bytes()
+    except OSError:
+        return path, None
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252", errors="replace")
+    if not looks_like_srt(text):
+        return path, None
+    from the_oracle.subtitle_targets import converted_script_target
+
+    target = converted_script_target(file_path)
+    try:
+        script_path, cue_count, speaker_count = convert_srt_file(file_path)
+    except FileExistsError:
+        return str(target), "reused"
+    return str(script_path), ("converted", cue_count, speaker_count)
