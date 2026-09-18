@@ -8,6 +8,20 @@ rewritten by the loop).
 
 ## Done
 
+- **Install boundary pinned by tests (2026-09-18)**: the harness that drove a
+  whole install with `subprocess.run` intercepted and the user's
+  `HOME`/XDG/HF roots redirected into scratch — previously an uncommitted
+  scratch script — is now committed as `tests/install_recorder.py`, with
+  `tests/test_install_boundary.py` asserting the exact commands and files of
+  both install paths: the five pip installs, the desktop integration calls,
+  exactly one full (non-CI) doctor run last, the created-file set and its
+  contents, offline wheel args with no index URL or `https://` anywhere, the
+  seeded `refs/main` pins plus the `.oracle_offline` marker, `python -m venv`
+  first on a fresh repo, and the Windows Start Menu branch. Assertions were
+  verified load-bearing by mutation (a bumped package pin fails 5 of 9 tests;
+  dropping `--no-index` fails the offline network-proof test). 906 passed on
+  this tree, 905 passed + 1 skipped on a clean `git archive HEAD` copy.
+
 - **Install verifies once (2026-09-18, launch-readiness mission goal 2)**:
   `install()` used to verify twice — `bootstrap()` ran the doctor, then
   `install()` ran it again — and each doctor run constructs the Chatterbox
