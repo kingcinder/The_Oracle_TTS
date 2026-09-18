@@ -110,6 +110,18 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\pytest.exe
 
+      # The doctor is the launch gate, so its verdict must not depend on how
+      # many times it has been run. That regressed twice, each time because a
+      # check graded state it had created on the earlier run, and neither was
+      # visible in a single run. This runs the gate twice in the mode the steps
+      # above use and fails if the two reports differ.
+      #
+      # Deliberately no `if:` and no `shell:` override: it is one command, and
+      # each runner's default shell (bash, pwsh) runs it identically, so the
+      # check covers both operating systems instead of silently covering one.
+      - name: Doctor Is Idempotent Across Runs
+        run: python scripts/doctor_idempotence.py --skip-model-init --ci
+
   windows-install-smoke:
     name: Windows installer end to end (temp profile, launchers, GUI)
     runs-on: windows-latest

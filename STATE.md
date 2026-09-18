@@ -8,6 +8,23 @@ rewritten by the loop).
 
 ## Done
 
+- **Gate idempotence enforced in CI (2026-09-18)**: the doctor's verdict must not
+  depend on how many times it has been run — it regressed twice in that exact
+  class (a readiness PASS citing a smoke FLAC it never produced; a voice-source
+  count inflated by the previous run's own writes) and nothing in CI compared two
+  consecutive runs. `scripts/doctor_idempotence.py` now runs the doctor twice in
+  one mode and fails if the two `--json` reports differ, naming each differing
+  field with both values and printing a diff with measurements masked. Only
+  `chatterbox_init.seconds` and `deterministic_smoke.runtime_seconds` (the two
+  durations) may differ; the registry is pinned by a test, a container path
+  cannot be registered to excuse its children, and a renamed measurement fails as
+  drift. Wired into the CI test matrix as one shell-agnostic step (so both Linux
+  and Windows run it) in the same `--skip-model-init --ci` mode the other doctor
+  steps use. Proven by re-introducing the historical defect: the checker exits 1
+  with `voice_sources.fallback_clip_count: 0 != 2`. It asserts agreement only —
+  it does not become a second readiness gate. 949 passed this tree / 948 + 1
+  skipped clean copy. Details in `JUNO_FIXES.log`.
+
 - **Windows install proven by execution, not by inspection (2026-09-18)**: the
   suite pinned what the installer *writes*; nothing had proven those files
   *execute*. New CI job `windows-install-smoke` (windows-latest, own job, out of
