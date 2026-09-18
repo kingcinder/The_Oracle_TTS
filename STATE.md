@@ -8,6 +8,30 @@ rewritten by the loop).
 
 ## Done
 
+- **Every doctor PASS line is now accounted for (2026-09-18)**: each check was classified
+  by what its verdict is actually built on. Execution-backed in-run: `python`,
+  `chatterbox_import`, `perth`, `qt`, `entrypoint`, `deterministic_smoke`, `turbo`, and
+  `chatterbox_init` when not skipped. Existence is the property: `ffmpeg` (resolved from
+  PATH), `voice_sources` (how many reference clips exist). Documented and honest as-is:
+  `real_engine_smoke` is an import/prerequisite check that never runs the render, and says
+  so in code and in its separately-falsified `output_exists`. Verified rather than
+  assumed: the deterministic smoke deletes its project before its first pass
+  (`smoke.py:189`), so its reuse verdict is earned in-run. Experimental result: parking all
+  of `build/` and comparing every verdict field moves **nothing**, so no PASS is graded
+  from the doctor's own leftovers.
+- **`vulkan_backend.ok` was graded from a filename (2026-09-18)**: it was
+  `bool(binary) and model_file_exists and device_available` — pure existence, while
+  `find_audiocpp_binary()` returns anything that `exists()`. With `ORACLE_AUDIOCPP_CLI`
+  pointing at a real file that is `chmod +x` but is not a program, the doctor reported
+  `ok: True` beside `audio_cpp_devices: []` and `error: ""` — a PASS next to contradicting
+  evidence the same run had collected by executing that binary, and beside its own RDNA1
+  caveat. Fixed at the root: the device probe now reports `{ran, devices, detail}`, `ok`
+  requires `binary_runs`, and the reason is carried into the human report (as a WARN — this
+  line never gated `overall_ready`, so readiness is unchanged). A pre-existing test that
+  had *pinned* the defect (`error == ""` with the comment "not executability") was
+  corrected. New guard: `tests/test_doctor_report_is_history_independent.py` requires every
+  verdict to survive removing `build/`, and fails on the historical defect's shape.
+
 - **The launch path is validated from a clean checkout, repeatably (2026-09-18)**: the
   clean-tree comparison had been done by hand twice and nothing pinned it, so it now
   lives in `scripts/fresh_clone_acceptance.py`: `git archive HEAD` gives a tree with no
@@ -809,6 +833,9 @@ rewritten by the loop).
 
 ## Next
 
+- The same audit question is worth asking of the *GUI*'s readiness surfaces (the
+  onboarding/status panels), which report capability to the user but are only covered by
+  smoke tests today.
 - Watch the first real CI run of the new `Fresh Clone Acceptance (Linux)` step; the
   whole path is exercised locally (both legs, all three checks, 18 deltas registered,
   exit 0), but the step itself has not run on a runner yet.

@@ -535,20 +535,37 @@ def _first_device_name(vulkaninfo_text: str) -> str:
 _AUDIOCPP_DEVICE_LINE = re.compile(r'^Vulkan:(\d+)\s+"([^"]+)"')
 
 
-def _audiocpp_devices(binary: Path | None) -> list[dict[str, Any]]:
-    """Return the Vulkan devices audio.cpp reports via ``--list-devices``.
+def _probe_audiocpp_devices(binary: Path | None) -> dict[str, Any]:
+    """Run ``audiocpp_cli --list-devices`` and report what actually happened.
 
-    Each entry is ``{"index": <n>, "name": "..."}`` where ``<n>`` is the value
+    Returns ``{"ran": bool, "devices": [...], "detail": str}``.
+
+    ``ran`` is the evidence a verdict needs, and it is why this reports the probe
+    rather than just its output. A path that merely *exists* proves nothing: with
+    ``ORACLE_AUDIOCPP_CLI`` pointing at a file that cannot execute, the doctor
+    reported ``ok: True`` because ``find_audiocpp_binary`` returns anything that
+    ``exists()``, while this very probe returned no devices -- a PASS graded from
+    a filename, next to evidence gathered in the same run that contradicted it.
+
+    Each device is ``{"index": <n>, "name": "..."}`` where ``<n>`` is the value
     to pass as ``ORACLE_AUDIOCPP_DEVICE`` / ``--device <n>``. audio.cpp's own
     indexes are what the backend uses, so this is the authoritative answer for
     multi-GPU machines (vulkaninfo alone cannot tell us which index audio.cpp
-    picks). Empty when the binary is missing or reports nothing.
+    picks).
     """
     if binary is None or not Path(binary).exists():
-        return []
+        return {"ran": False, "devices": [], "detail": "no audio.cpp binary found"}
     result = _run_command([str(binary), "--backend", "vulkan", "--list-devices"], timeout=30)
     if not result["ok"]:
-        return []
+        return {
+            "ran": False,
+            "devices": [],
+            "detail": (
+                f"{binary} exists but did not run: --list-devices exited "
+                f"{result.get('returncode')}"
+                + (" (timed out)" if result.get("timed_out") else "")
+            ),
+        }
     devices: list[dict[str, Any]] = []
     seen_indexes: set[int] = set()
     # ggml builds often print device discovery lines to stderr; parse both
@@ -563,7 +580,7 @@ def _audiocpp_devices(binary: Path | None) -> list[dict[str, Any]]:
                     continue
                 seen_indexes.add(index)
                 devices.append({"index": index, "name": match.group(2)})
-    return devices
+    return {"ran": True, "devices": devices, "detail": ""}
 
 
 def _vulkan_patches_applied(repo_root: Path) -> bool | None:
@@ -614,6 +631,7 @@ def _vulkan_backend_status(repo_root: Path) -> dict[str, Any]:
             "ok": False,
             "error": f"{type(exc).__name__}: {exc}",
             "binary_built": False,
+            "binary_runs": False,
             "binary": "",
             "cli_override": "",
             "model_override_set": False,
@@ -655,9 +673,16 @@ def _vulkan_backend_status(repo_root: Path) -> dict[str, Any]:
     # the engine (ORACLE_AUDIOCPP_MAX_BATCH, clamped >= 1, default 32).
     batch_env = os.environ.get("ORACLE_AUDIOCPP_MAX_BATCH", "")
     effective_batch_cap = _vulkan_batch_max_requests()
+    # The one execution-backed fact in this check: the binary is not merely on
+    # disk, it ran. Everything else it reports is a stat of one kind or another,
+    # so without this a corrupt or incompatible build passes as readily as a
+    # working one -- and the RDNA1 caveat below warns about exactly that case.
+    device_probe = _probe_audiocpp_devices(binary)
+    binary_runs = bool(device_probe["ran"])
     return {
-        "ok": bool(binary) and model_file_exists and device_available,
+        "ok": bool(binary) and binary_runs and model_file_exists and device_available,
         "binary_built": binary is not None,
+        "binary_runs": binary_runs,
         "binary": str(binary) if binary else "",
         "cli_override": os.environ.get("ORACLE_AUDIOCPP_CLI", ""),
         "model_override_set": bool(model_env),
@@ -672,9 +697,10 @@ def _vulkan_backend_status(repo_root: Path) -> dict[str, Any]:
         "threads_env": os.environ.get("ORACLE_AUDIOCPP_THREADS", ""),
         "batch_env": batch_env,
         "effective_batch_cap": effective_batch_cap,
-        "audio_cpp_devices": _audiocpp_devices(binary),
+        "audio_cpp_devices": device_probe["devices"],
         "caveat": _vulkan_caveat(rdna1_device=rdna1_device, patched=patched, binary_built=binary is not None),
-        "error": "",
+        # Surface the probe's own failure, so a not-ok verdict always says why.
+        "error": ("" if not binary or binary_runs else str(device_probe["detail"])),
     }
 
 

@@ -123,7 +123,7 @@ select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n\
 """
 
 
-def test_audiocpp_devices_parses_vulkan_indexes(monkeypatch, tmp_path: Path) -> None:
+def test_probe_audiocpp_devices_parses_vulkan_indexes(monkeypatch, tmp_path: Path) -> None:
     doctor = _load_doctor()
     binary = tmp_path / "audiocpp_cli"
     binary.write_text("#!/bin/sh\nexit 0\n")
@@ -134,21 +134,26 @@ def test_audiocpp_devices_parses_vulkan_indexes(monkeypatch, tmp_path: Path) -> 
         lambda args, **kwargs: {"ok": True, "stdout": _LIST_DEVICES_SAMPLE, "stderr": "", "returncode": 0, "timed_out": False},
     )
 
-    devices = doctor._audiocpp_devices(binary)
+    probe = doctor._probe_audiocpp_devices(binary)
 
-    assert devices == [
+    assert probe["ran"] is True
+    assert probe["detail"] == ""
+    assert probe["devices"] == [
         {"index": 0, "name": "AMD Radeon RX 5700 XT (RADV NAVI10)"},
         {"index": 1, "name": "AMD Radeon RX 6900 XT (RADV NAVI21)"},
     ]
 
 
-def test_audiocpp_devices_returns_empty_when_binary_missing() -> None:
+def test_probe_audiocpp_devices_reports_not_ran_when_binary_missing() -> None:
     doctor = _load_doctor()
-    assert doctor._audiocpp_devices(Path("/does/not/exist")) == []
-    assert doctor._audiocpp_devices(None) == []
+    missing = doctor._probe_audiocpp_devices(Path("/does/not/exist"))
+    absent = doctor._probe_audiocpp_devices(None)
+
+    assert missing["devices"] == [] and missing["ran"] is False
+    assert absent["devices"] == [] and absent["ran"] is False
 
 
-def test_audiocpp_devices_returns_empty_when_command_fails(monkeypatch, tmp_path: Path) -> None:
+def test_probe_audiocpp_devices_reports_not_ran_and_why_when_the_command_fails(monkeypatch, tmp_path: Path) -> None:
     doctor = _load_doctor()
     binary = tmp_path / "audiocpp_cli"
     binary.write_text("#!/bin/sh\nexit 1\n")
@@ -159,7 +164,13 @@ def test_audiocpp_devices_returns_empty_when_command_fails(monkeypatch, tmp_path
         lambda args, **kwargs: {"ok": False, "stdout": "", "stderr": "boom", "returncode": 1, "timed_out": False},
     )
 
-    assert doctor._audiocpp_devices(binary) == []
+    probe = doctor._probe_audiocpp_devices(binary)
+
+    assert probe["devices"] == []
+    # Not running is its own fact, and the reason travels with it: the verdict
+    # below is built on this, and a bare empty list cannot say why it is empty.
+    assert probe["ran"] is False
+    assert "did not run" in probe["detail"]
 
 
 def test_audiocpp_devices_parses_stderr_when_stdout_empty(monkeypatch, tmp_path: Path) -> None:
@@ -179,35 +190,94 @@ def test_audiocpp_devices_parses_stderr_when_stdout_empty(monkeypatch, tmp_path:
         },
     )
 
-    devices = doctor._audiocpp_devices(binary)
+    probe = doctor._probe_audiocpp_devices(binary)
 
-    assert devices == [{"index": 0, "name": "AMD Radeon RX 5700 XT (RADV NAVI10)"}]
+    assert probe["devices"] == [{"index": 0, "name": "AMD Radeon RX 5700 XT (RADV NAVI10)"}]
+    assert probe["ran"] is True
+
+
+def test_vulkan_backend_is_not_ok_when_the_binary_exists_but_cannot_run(monkeypatch, tmp_path: Path) -> None:
+    """A verdict must be earned by execution, not by a filename existing.
+
+    Everything else this check looks at is satisfied here: the binary is on disk,
+    the GGUF model file is real, and a Vulkan device is visible. The only thing
+    wrong is that the binary cannot execute -- and ``find_audiocpp_binary``
+    returns anything that ``exists()``, so before this was pinned the doctor
+    reported ``ok: True`` beside an empty device list it had just collected by
+    running that very binary. That is a PASS graded from an artifact rather than
+    from a capability verified in the run.
+    """
+    doctor = _load_doctor()
+    binary = tmp_path / "audiocpp_cli"
+    binary.write_text("#!/bin/sh\nexit 0\n")  # deliberately not chmod +x
+    model = tmp_path / "chatterbox-q8_0.gguf"
+    model.write_bytes(b"model")
+    monkeypatch.setenv("ORACLE_AUDIOCPP_CLI", str(binary))
+    monkeypatch.setenv("ORACLE_AUDIOCPP_MODEL", str(model))
+    monkeypatch.setattr(doctor, "_vulkaninfo_summary", lambda: (True, "deviceName = some gpu"))
+    monkeypatch.setattr(doctor, "_vulkan_patches_applied", lambda repo_root: True)
+
+    status = doctor._vulkan_backend_status(tmp_path)
+
+    assert status["binary_built"] is True
+    assert status["model_file_exists"] is True
+    assert status["vulkan_device"] is True
+    assert status["binary_runs"] is False
+    assert status["ok"] is False
+    assert "did not run" in status["error"]
+
+
+def test_vulkan_backend_is_ok_when_everything_runs(monkeypatch, tmp_path: Path) -> None:
+    """The other half: requiring execution must not fail a working install."""
+    doctor = _load_doctor()
+    binary = tmp_path / "audiocpp_cli"
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+    model = tmp_path / "chatterbox-q8_0.gguf"
+    model.write_bytes(b"model")
+    monkeypatch.setenv("ORACLE_AUDIOCPP_CLI", str(binary))
+    monkeypatch.setenv("ORACLE_AUDIOCPP_MODEL", str(model))
+    monkeypatch.setattr(doctor, "_vulkaninfo_summary", lambda: (True, "deviceName = some gpu"))
+    monkeypatch.setattr(doctor, "_vulkan_patches_applied", lambda repo_root: True)
+    monkeypatch.setattr(
+        doctor,
+        "_run_command",
+        lambda args, **kwargs: {"ok": True, "stdout": _LIST_DEVICES_SAMPLE, "stderr": "", "returncode": 0, "timed_out": False},
+    )
+
+    status = doctor._vulkan_backend_status(tmp_path)
+
+    assert status["binary_runs"] is True
+    assert status["ok"] is True
+    assert status["error"] == ""
 
 
 def test_run_command_tolerates_non_executable_binary(monkeypatch, tmp_path: Path) -> None:
     doctor = _load_doctor()
     binary = tmp_path / "audiocpp_cli"
     binary.write_text("#!/bin/sh\nexit 0\n")  # deliberately not chmod +x
-    monkeypatch.setattr(doctor, "_audiocpp_devices", lambda _binary: [])
     monkeypatch.setenv("ORACLE_AUDIOCPP_CLI", str(binary))
     monkeypatch.setenv("ORACLE_AUDIOCPP_MODEL", "/models/chatterbox")
     monkeypatch.setattr(doctor, "_vulkaninfo_summary", lambda: (True, "deviceName = some gpu"))
     monkeypatch.setattr(doctor, "_vulkan_patches_applied", lambda repo_root: True)
 
-    # The real _run_command now catches PermissionError as a structured
-    # failure (OSError branch), so the doctor must not crash.
+    # The real _run_command catches PermissionError as a structured failure
+    # (OSError branch), so the doctor must not crash.
     result = doctor._run_command([str(binary), "--backend", "vulkan", "--list-devices"], timeout=5)
 
     assert result["ok"] is False
     assert result["returncode"] == 127
     assert "error" in result and result["error"]
 
-    # status["ok"] is computed from env/device checks, not executability,
-    # so assert the real invariant: the status call survives and reports no
-    # device list (the binary probe failed) without raising.
+    # The binary is on disk but cannot execute, which is the case a verdict
+    # built from existence alone gets wrong: this used to report no devices and
+    # error="", i.e. nothing at all. Now the probe's failure is carried into the
+    # verdict, so the status still returns without raising but says why.
     status = doctor._vulkan_backend_status(tmp_path)
     assert status["audio_cpp_devices"] == []
-    assert status["error"] == ""
+    assert status["binary_built"] is True, "the file exists, so this much is true"
+    assert status["binary_runs"] is False
+    assert "did not run" in status["error"]
 
 
 def test_vulkan_backend_status_includes_audio_cpp_devices(monkeypatch, tmp_path: Path) -> None:
@@ -218,11 +288,16 @@ def test_vulkan_backend_status_includes_audio_cpp_devices(monkeypatch, tmp_path:
     monkeypatch.setenv("ORACLE_AUDIOCPP_MODEL", "/models/chatterbox")
     monkeypatch.setattr(doctor, "_vulkaninfo_summary", lambda: (True, "deviceName = some gpu"))
     monkeypatch.setattr(doctor, "_vulkan_patches_applied", lambda repo_root: True)
-    monkeypatch.setattr(doctor, "_audiocpp_devices", lambda _binary: [{"index": 0, "name": "GPU A"}])
+    monkeypatch.setattr(
+        doctor,
+        "_probe_audiocpp_devices",
+        lambda _binary: {"ran": True, "devices": [{"index": 0, "name": "GPU A"}], "detail": ""},
+    )
 
     status = doctor._vulkan_backend_status(tmp_path)
 
     assert status["audio_cpp_devices"] == [{"index": 0, "name": "GPU A"}]
+    assert status["binary_runs"] is True
 
 
 def test_next_steps_hints_device_pick_on_multi_gpu(monkeypatch) -> None:
