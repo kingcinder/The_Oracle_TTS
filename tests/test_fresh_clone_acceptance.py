@@ -15,6 +15,7 @@ stay fast enough to run on every change.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -239,21 +240,37 @@ def test_the_readme_documents_commands_this_test_can_see() -> None:
     assert any(name.endswith(".sh") for name in documented)
 
 
-def test_every_documented_command_is_executable_in_git() -> None:
+def test_every_documented_command_is_executable() -> None:
     """The defect this pass found: ``./oracle`` was tracked 100644.
 
     A file the documentation invokes directly has to carry the executable bit,
     or ``./oracle install`` -- the README's first instruction -- dies with
     "Permission denied" (exit 126) on a fresh clone.
+
+    Both halves are asserted, and neither is skipped, so this holds in either
+    tree the suite runs in. On disk is the *effective* mode, which is what an
+    extracted archive has and what a checkout actually gives you. The recorded
+    git mode is the *promised* mode -- the thing a fresh clone will get even if
+    this particular checkout drifted -- and it is only readable where there is a
+    repository, which an archive deliberately is not.
     """
+    commands = sorted(_readme_direct_commands())
+
+    not_executable = [name for name in commands if not os.access(REPO_ROOT / name, os.X_OK)]
+    assert not not_executable, (
+        "these files are documented as `./<path>` but cannot be executed: "
+        + "; ".join(not_executable)
+    )
+
+    if not (REPO_ROOT / ".git").exists():
+        return
     modes = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "ls-files", "-s", "--", *_readme_direct_commands()],
+        ["git", "-C", str(REPO_ROOT), "ls-files", "-s", "--", *commands],
         capture_output=True,
         text=True,
         check=True,
     ).stdout
-
-    not_executable = []
+    wrong_mode = []
     for line in modes.splitlines():
         # `git ls-files -s` is `<mode> <sha> <stage>\t<path>`; splitting the tail
         # on the tab keeps a path containing spaces intact instead of printing
@@ -261,11 +278,11 @@ def test_every_documented_command_is_executable_in_git() -> None:
         mode, _, tail = line.split(maxsplit=2)
         path = tail.split("\t", 1)[-1]
         if mode != "100755":
-            not_executable.append(f"{path} is {mode}")
+            wrong_mode.append(f"{path} is {mode}")
 
-    assert not not_executable, (
-        "these files are documented as `./<path>` but are not executable: "
-        + "; ".join(not_executable)
+    assert not wrong_mode, (
+        "these files are documented as `./<path>` but a fresh clone would not be "
+        "able to run them: " + "; ".join(wrong_mode)
     )
 
 
@@ -316,22 +333,57 @@ def test_this_repository_loads_its_own_code(acceptance) -> None:
 # --- acquiring the clean tree ---------------------------------------------------
 
 
-def test_the_clean_tree_is_the_tracked_tree_without_local_state(acceptance, tmp_path: Path) -> None:
-    tree = acceptance.export_fresh_tree(REPO_ROOT, tmp_path / "tree")
+def _make_scratch_repo(root: Path) -> Path:
+    """A self-contained repository, so these tests run wherever the suite does.
 
-    assert (tree / "README.md").is_file()
-    assert (tree / "scripts" / "doctor.py").is_file()
-    # No .git, so a check that misbehaved cannot write to the real repository,
-    # and none of the git-ignored state this working tree carries.
+    Built here rather than reusing this checkout because the acceptance run is
+    performed *from* a `git archive` tree, which has no repository at all -- a
+    test needing this repo's `.git` would fail in exactly the tree the script
+    creates, which is how the first version of this file broke.
+    """
+    env = {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com",
+        "PATH": os.environ.get("PATH", "/usr/bin"),
+    }
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True, env=env)
+    (root / ".gitignore").write_text("ignored_dir/\n", encoding="utf-8")
+    (root / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    (root / "ignored_dir").mkdir()
+    (root / "ignored_dir" / "build_output.bin").write_bytes(b"noise")
+    subprocess.run(["git", "-C", str(root), "add", ".gitignore", "tracked.txt"], check=True, env=env)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "initial"], check=True, env=env)
+    (root / "untracked.txt").write_text("uncommitted\n", encoding="utf-8")
+    return root
+
+
+def test_the_clean_tree_carries_the_tracked_files_and_no_local_state(acceptance, tmp_path: Path) -> None:
+    repo = _make_scratch_repo(tmp_path / "repo")
+
+    tree = acceptance.export_fresh_tree(repo, tmp_path / "tree")
+
+    assert (tree / "tracked.txt").is_file()
+    assert (tree / ".gitignore").is_file()
+    # No .git, so a check that misbehaved cannot write to the repository it was
+    # archived from, and no local state travels with it.
     assert not (tree / ".git").exists()
-    assert not (tree / ".venv").exists()
-    assert not (tree / "audio.cpp").exists()
+    assert not (tree / "ignored_dir").exists(), "git-ignored state must not travel"
+    assert not (tree / "untracked.txt").exists(), "untracked files must not travel"
 
 
-def test_the_working_tree_can_be_overlaid_on_request(acceptance, repo_root_with_local_change) -> None:
-    tree = repo_root_with_local_change["tree"]
+def test_the_working_tree_can_be_overlaid_on_request(acceptance, tmp_path: Path) -> None:
+    repo = _make_scratch_repo(tmp_path / "repo")
 
-    assert (tree / "local_marker.txt").read_text(encoding="utf-8") == "uncommitted\n"
+    tree = acceptance.export_fresh_tree(repo, tmp_path / "overlaid", working_tree=True)
+
+    assert (tree / "untracked.txt").read_text(encoding="utf-8") == "uncommitted\n"
+    # Overlaying the working tree must not smuggle in the ignored build output,
+    # and must not smuggle in a repository either.
+    assert not (tree / "ignored_dir").exists()
+    assert not (tree / ".git").exists()
 
 
 @pytest.fixture(scope="module")
@@ -369,21 +421,4 @@ def test_ci_runs_it_where_the_wrappers_it_probes_exist(acceptance_step: dict) ->
     assert acceptance_step["if"] == "runner.os == 'Linux'"
 
 
-@pytest.fixture()
-def repo_root_with_local_change(tmp_path: Path, monkeypatch):
-    """A scratch repository with one committed file and one uncommitted file."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
-           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com", "PATH": str(Path("/usr/bin"))}
-    subprocess.run(["git", "init", "-q", str(repo)], check=True, env={**env})
-    (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(repo), "add", "tracked.txt"], check=True, env={**env})
-    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "initial"], check=True, env={**env})
-    (repo / "local_marker.txt").write_text("uncommitted\n", encoding="utf-8")
 
-    acceptance = _load("oracle_fresh_clone_acceptance_overlay", "fresh_clone_acceptance.py")
-    plain = acceptance.export_fresh_tree(repo, tmp_path / "plain")
-    overlaid = acceptance.export_fresh_tree(repo, tmp_path / "overlaid", working_tree=True)
-    assert not (plain / "local_marker.txt").exists(), "the archive must not carry untracked files"
-    return {"tree": overlaid}

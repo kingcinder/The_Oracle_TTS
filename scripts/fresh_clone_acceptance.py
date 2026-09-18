@@ -112,6 +112,8 @@ EXPECTED_DELTAS: dict[str, str] = {
         "the native audio.cpp build and its GGUF model are git-ignored",
     "doctor.vulkan_backend.binary_built":
         "the native audio.cpp build and its GGUF model are git-ignored",
+    "doctor.vulkan_backend.binary_runs":
+        "there is no binary to execute without the git-ignored native build",
     "doctor.vulkan_backend.model_auto_found":
         "the native audio.cpp build and its GGUF model are git-ignored",
     "doctor.vulkan_backend.model_file_exists":
