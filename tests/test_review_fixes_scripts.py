@@ -10,10 +10,12 @@ Covers:
   * oracle (bash): the ``gui`` action is wired to the backend parser's real
     GUI action (``run``) instead of being passed through dead.
   * scripts/doctor.py: the deterministic smoke status no longer reports
-    success unless the smoke output file exists and is non-empty, and the
+    success unless the smoke output file exists and is non-empty; the
     real-engine readiness check (which only evaluates prerequisites and never
     runs the render) no longer presents a smoke output path as though it had
-    produced one on a fresh machine.
+    produced one on a fresh machine; and the whole gate is read-only and
+    idempotent — it used to generate the smoke's reference clips, which the
+    voice-source count then picked up, so run 2 disagreed with run 1.
   * oracle.ps1: static checks that Invoke-Expression is gone and extra
     arguments are forwarded (PowerShell cannot execute in this Linux
     runtime, so runtime behavior of the .ps1 still needs verification on
@@ -444,3 +446,86 @@ def test_human_report_cites_present_smoke_output(doctor_module, capsys) -> None:
     line = next(l for l in capsys.readouterr().out.splitlines() if "Real-engine smoke readiness" in l)
     assert "present at" in line
     assert "real_engine_smoke.flac" in line
+
+
+# --- doctor.py: the launch gate must not change its own input -------------------
+# The real-engine check used to generate the smoke's reference clips. Those land
+# in build/real_engine_smoke/inputs, which the voice-source audit counts, so run 1
+# reported fallback=0 and run 2 reported fallback=2 on an unchanged machine: the
+# gate's verdict depended on how many times it had been run.
+
+
+def _stub_prereqs_only(monkeypatch, output: Path, *, ready: bool = True) -> None:
+    """Stub only the prerequisites probe, keeping the real
+    ``ensure_real_engine_inputs`` so any write the check performs is caught."""
+    real_mod = importlib.import_module("the_oracle.real_engine_smoke")
+    monkeypatch.setattr(
+        real_mod,
+        "real_engine_smoke_prerequisites",
+        lambda output_root: {"ready": ready, "expected_paths": {"output": str(output)}},
+    )
+
+
+def test_real_engine_readiness_does_not_write(doctor_module, tmp_path: Path, monkeypatch) -> None:
+    """A check must not create state. Without this, running the gate fed the next
+    run's voice-source count."""
+    output_root = tmp_path / "build" / "real_engine_smoke"
+    _stub_prereqs_only(monkeypatch, output_root / "real_engine_smoke.flac")
+    status = doctor_module._real_engine_smoke_status(tmp_path)
+    assert status["ok"] is True
+    assert not output_root.exists(), f"check wrote {list(output_root.rglob('*')) if output_root.exists() else ''}"
+
+
+def _stub_heavy_probes(doctor_module, monkeypatch) -> None:
+    """Stub everything expensive so the two-run test exercises the
+    voice-source <-> real-engine coupling without torch, Qt, or a real render."""
+    monkeypatch.setattr(doctor_module, "_python_status", lambda: {"ok": True, "executable": "python3", "version": "3.12"})
+    monkeypatch.setattr(doctor_module, "_ffmpeg_status", lambda: {"ok": True, "path": "ffmpeg"})
+    monkeypatch.setattr(doctor_module, "_entrypoint_status", lambda repo: {
+        "ok": True, "venv_entrypoint": "", "venv_entrypoint_exists": False,
+        "path_entrypoint": "the-oracle", "managed_wrapper_path": "", "managed_wrapper_installed": True,
+        "help_ok": True, "help_error": "", "fresh_shell_help_ok": True,
+        "fresh_shell_path": "the-oracle", "fresh_shell_error": "", "path_has_local_bin": True,
+    })
+    monkeypatch.setattr(doctor_module, "_chatterbox_probe", lambda *a, **k: {
+        "import_ok": True, "perth_ok": True, "watermarker_callable": True, "init_skipped": True,
+    })
+    monkeypatch.setattr(doctor_module, "_turbo_status", lambda *a, **k: {
+        "ok": True, "cached": True, "checkpoint_dir": "", "sample_rate": 24000, "error": "",
+    })
+    monkeypatch.setattr(doctor_module, "_cuda_backend_status", lambda repo: {
+        "ok": False, "runtime_available": False, "reason": "no CUDA", "devices": [],
+    })
+    monkeypatch.setattr(doctor_module, "_qt_status", lambda *a, **k: {
+        "ok": True, "plugin_path": "", "qt_platform": "offscreen", "error": "",
+        "missing_libraries": [], "suggested_packages": [], "offscreen_error": "", "ldd_error": "",
+    })
+    monkeypatch.setattr(doctor_module, "_deterministic_smoke_status", lambda repo: {
+        "ok": True, "output_path": "/o", "error": "",
+    })
+    monkeypatch.setattr(doctor_module, "_vulkan_backend_status", lambda repo: {
+        "ok": True, "binary_built": False, "model_override_set": False, "model_file_exists": False,
+        "model_path": "", "vulkan_device": False, "device_name": "", "rdna1_device": False,
+        "vendored_patch_applied": None, "device_index_env": "", "threads_env": "",
+        "audio_cpp_devices": [], "caveat": "", "error": "",
+    })
+
+
+def test_doctor_output_is_identical_across_consecutive_runs(
+    doctor_module, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Two runs on an unchanged machine must print byte-identical reports."""
+    repo = tmp_path / "repo"
+    (repo / "Seashells" / "generic").mkdir(parents=True)
+    (repo / "Seashells" / "generic" / "english_1.wav").write_bytes(b"RIFF")
+    (repo / "Seashells" / "curated.wav").write_bytes(b"RIFF")
+    _stub_heavy_probes(doctor_module, monkeypatch)
+
+    rendered: list[str] = []
+    for _ in range(2):
+        report = doctor_module.run(repo, model_timeout=1.0, qt_timeout=1.0, skip_model_init=True, ci_mode=True)
+        doctor_module._print_human_report(report)
+        rendered.append(capsys.readouterr().out)
+
+    differing = [a for a, b in zip(rendered[0].splitlines(), rendered[1].splitlines()) if a != b]
+    assert rendered[0] == rendered[1], f"report changed between runs: {differing}"
