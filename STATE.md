@@ -8,6 +8,26 @@ rewritten by the loop).
 
 ## Done
 
+- **Windows install proven by execution, not by inspection (2026-09-18)**: the
+  suite pinned what the installer *writes*; nothing had proven those files
+  *execute*. New CI job `windows-install-smoke` (windows-latest, own job, out of
+  the push/PR matrix gate because it downloads the pinned checkpoint) runs
+  `scripts/windows_install_smoke.py`: isolated environment (throwaway profile
+  with a **space in its path**, HF/pip caches named for the cache step, launcher
+  dir on `PATH`, `QT_QPA_PLATFORM=offscreen`, offline flags deliberately
+  removed), `manage_install install --pytorch-runtime cpu`, then the managed
+  `.cmd` launcher executed for real and the **Start Menu entry** launched until
+  `launch_gui()` reports `mainwindow_built`, killed via `taskkill /T /F /PID`.
+  Cache key follows `models/pins.py`, so a pin bump cannot reuse a stale
+  checkpoint. `tests/test_windows_install_smoke.py` (14 tests, any host) pins the
+  environment, the GUI-wait paths, the CI contract and the drift check that
+  launcher paths come from `manage_install` itself; a dropped PowerShell
+  continuation is caught by mutation. Also fixed here: `make_layout()` leaked a
+  deleted temp profile into `os.environ["APPDATA"]` (restored in a `finally`,
+  with a two-case regression test). Honest boundary: the job has not yet run on
+  a Windows runner; what is proven locally is its contract and logic. 930 passed
+  this tree / 929 + 1 skipped clean copy. Details in `JUNO_FIXES.log`.
+
 - **Offline guarantee enforced at every model-loading entry point (2026-09-18)**:
   the `.oracle_offline` marker was honoured only by the generated launchers and
   `manage_install run_gui()`, so the console script (`the-oracle render` / `gui`),

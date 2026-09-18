@@ -109,3 +109,52 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: .\.venv\Scripts\pytest.exe
+
+  windows-install-smoke:
+    name: Windows installer end to end (temp profile, launchers, GUI)
+    runs-on: windows-latest
+    # The suite pins what the installer writes; this job proves those files run.
+    # It installs the runtime, downloads the pinned Chatterbox checkpoint and the
+    # installer's own doctor renders a smoke pass, so it takes minutes — the
+    # matrix above still gates every push and pull request quickly. Raise the
+    # timeout only if a real install legitimately needs longer.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # The pinned revisions are the cache key: a pin bump invalidates it, so a
+      # stale model can never be reused across a pin change.
+      - name: Cache Model And pip Downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/oracle-smoke/hf
+            ${{ runner.temp }}/oracle-smoke/pip-cache
+          key: install-smoke-${{ runner.os }}-${{ hashFiles('src/the_oracle/models/pins.py') }}
+
+      - name: Ensure ffmpeg Is Available
+        shell: pwsh
+        run: |
+          if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+            ffmpeg -version | Select-Object -First 1
+          } else {
+            choco install ffmpeg -y --no-progress
+          }
+
+      # The profile path contains a space on purpose: the generated .cmd
+      # launcher and the Start Menu entry have to survive quoting, and this
+      # project's own checkout path has a space in it.
+      - name: Install End To End And Exercise The Launchers
+        shell: pwsh
+        run: |
+          python scripts/windows_install_smoke.py `
+            --profile "${{ runner.temp }}\oracle smoke profile" `
+            --hf-home "${{ runner.temp }}\oracle-smoke\hf" `
+            --pip-cache "${{ runner.temp }}\oracle-smoke\pip-cache"
