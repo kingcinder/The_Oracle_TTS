@@ -327,3 +327,10 @@ def test_bundle_launchers_invoke_offline_install(bundle_builder, tmp_path: Path)
     assert "--offline-bundle" in sh
     assert "--offline-bundle" in bat
     assert "repo.tar.gz" in sh and "repo.tar.gz" in bat
+    # %~dp0 always ends with a backslash. Left on, `--offline-bundle
+    # "%BUNDLE_DIR%"` expands to `...\bundle\"`, whose trailing backslash-quote
+    # PowerShell's argument parser reads as an escaped quote, mangling the
+    # path. Pin the strip plus a separator at the child-path use site.
+    assert ':~-1%' in bat and ':~0,-1%' in bat
+    assert '--offline-bundle "%BUNDLE_DIR%"' in bat
+    assert 'tar -xzf "%BUNDLE_DIR%\\repo.tar.gz"' in bat

@@ -157,9 +157,13 @@ def write_launchers(bundle_dir: Path) -> None:
         "@echo off\r\n"
         "REM Offline install of The Oracle from this bundle. No network needed.\r\n"
         'set "BUNDLE_DIR=%~dp0"\r\n'
+        # %~dp0 always ends with a backslash; strip it so the quoted
+        # --offline-bundle argument does not end in a backslash-quote, which
+        # PowerShell reads as an escaped quote and mangles the path with.
+        'if "%BUNDLE_DIR:~-1%"=="\\" set "BUNDLE_DIR=%BUNDLE_DIR:~0,-1%"\r\n'
         'if "%~1"=="" ( set "INSTALL_ROOT=%USERPROFILE%\\The_Oracle_TTS" ) else ( set "INSTALL_ROOT=%~1" )\r\n'
         'mkdir "%INSTALL_ROOT%" 2>nul\r\n'
-        'tar -xzf "%BUNDLE_DIR%repo.tar.gz" -C "%INSTALL_ROOT%"\r\n'
+        'tar -xzf "%BUNDLE_DIR%\\repo.tar.gz" -C "%INSTALL_ROOT%"\r\n'
         'powershell -ExecutionPolicy Bypass -File "%INSTALL_ROOT%\\install_oracle_tts.ps1" --offline-bundle "%BUNDLE_DIR%"\r\n',
         encoding="utf-8",
     )

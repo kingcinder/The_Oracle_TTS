@@ -166,3 +166,24 @@ def test_uninstall_removes_managed_desktop_files(manage, tmp_path, monkeypatch) 
     assert not entry.exists()
     assert not shortcut.exists()
     assert unrelated.exists()  # unmanaged files are left alone
+
+
+def test_update_forwards_offline_bundle_to_full_install(manage, tmp_path, monkeypatch) -> None:
+    """A no-venv `update --offline-bundle X` must fall back to a full install
+    that still uses the bundle.
+
+    Without this, an offline machine running `update --offline-bundle` (no venv
+    yet) would silently fall back to a networked install instead of failing or
+    using the local wheels/models it was handed.
+    """
+    monkeypatch.setattr(manage, "REPO_ROOT", tmp_path)  # no .venv in here
+    recorded: dict = {}
+
+    def _fake_install(**kwargs):
+        recorded.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(manage, "install", _fake_install)
+    bundle = tmp_path / "bundle"
+    assert manage.update(offline_bundle=bundle) == 0
+    assert recorded.get("offline_bundle") == bundle
