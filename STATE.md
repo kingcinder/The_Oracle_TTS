@@ -8,6 +8,26 @@ rewritten by the loop).
 
 ## Done
 
+- **Offline guarantee enforced at every model-loading entry point (2026-09-18)**:
+  the `.oracle_offline` marker was honoured only by the generated launchers and
+  `manage_install run_gui()`, so the console script (`the-oracle render` / `gui`),
+  `scripts/doctor.py` and `scripts/real_engine_smoke.py` loaded models with
+  offline resolution off. `huggingface_hub` reads `HF_HUB_OFFLINE` at **import**
+  time, so a late `os.environ` write is a no-op — measured: 0.0s offline vs 23.0s
+  (5 retries × 8s) for an unsatisfied resolution, and 0.0s once the import-time
+  constant is forced. New `src/the_oracle/offline.py` is the single owner
+  (marker name, variable set, `apply_offline_environment()`), wired into
+  `cli.main`, `doctor.main`, `real_engine_smoke.main`, and `manage_install.run_gui`.
+  `tests/test_offline_guarantee.py` has one test per entry point plus seeded-cache
+  resolution in a fresh process with `socket.connect` forbidden; each proven
+  load-bearing by mutation. Real runs: offline flag with a closed endpoint →
+  real-engine smoke render succeeded (23.4s); doctor full model init identical
+  with and without the marker. 916 passed this tree / 915 + 1 skipped clean copy.
+  Three adjacent gaps reported, not fixed: the Vulkan `.gguf` and the
+  LanguageTool snapshot are not in the offline bundle, and `download_models.py`
+  / `build_offline_bundle.py` intentionally stay online. Details in
+  `JUNO_FIXES.log`.
+
 - **Install boundary pinned by tests (2026-09-18)**: the harness that drove a
   whole install with `subprocess.run` intercepted and the user's
   `HOME`/XDG/HF roots redirected into scratch — previously an uncommitted

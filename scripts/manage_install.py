@@ -16,6 +16,7 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from the_oracle.offline import OFFLINE_ENV, OFFLINE_MARKER_FILENAME, apply_offline_environment  # noqa: E402
 from the_oracle.platform_support import (  # noqa: E402
     is_linux,
     is_windows,
@@ -50,7 +51,8 @@ CHATTERBOX_ENGINE_PACKAGES = (
     "omegaconf",
 )
 CHATTERBOX_TTS_PACKAGE = "chatterbox-tts==0.1.6"
-#: Marker file written into REPO_ROOT by an offline install. The managed
+#: Marker file written into REPO_ROOT by an offline install (defined by
+#: the_oracle.offline, which is also what the runtime checks). The managed
 #: wrapper exports HF_HUB_OFFLINE=1 when it exists, so every model loader
 #: (ours and third-party) resolves the pinned revisions from the seeded
 #: local HF cache instead of the network. Delete it to go back online.
@@ -464,12 +466,13 @@ def run_gui() -> int:
         return fail(f"The Oracle is not bootstrapped yet. Run {repo_bootstrap_display()} first.")
     env = build_env()
     # Mirror the managed launcher and the desktop entries: on an offline install
-    # the marker drives HF_HUB_OFFLINE so every model loader resolves from the
-    # seeded cache. Launching through this path (./run_oracle_tts.sh) must honour
-    # the same contract, or the offline install reaches for the network here.
-    # Delete the marker (documented) to re-enable network model fetches.
-    if (REPO_ROOT / OFFLINE_MARKER_FILENAME).is_file():
-        env["HF_HUB_OFFLINE"] = "1"
+    # the marker drives offline model resolution, so launching through this path
+    # (./run_oracle_tts.sh) must honour the same contract as the GUI shortcut or
+    # the install reaches for the network here. Delete the marker (documented) to
+    # re-enable network model fetches. the_oracle.offline owns the marker name and
+    # the variable set, so the launchers, this path, and the app cannot drift.
+    if apply_offline_environment(REPO_ROOT):
+        env.update(OFFLINE_ENV)
     if is_linux():
         has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
         if not has_display:
