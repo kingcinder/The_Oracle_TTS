@@ -1051,6 +1051,13 @@ def _print_human_report(report: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The doctor constructs the Chatterbox model and prefetches the turbo
+    # checkpoint, so on an offline install those probes must resolve from the
+    # seeded cache. Applied before run() so every subprocess probe inherits it
+    # through _probe_environment().
+    from the_oracle.offline import apply_offline_environment
+
+    apply_offline_environment()
     parser = argparse.ArgumentParser(description="Install and launch diagnostics for The Oracle.")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT_DEFAULT)

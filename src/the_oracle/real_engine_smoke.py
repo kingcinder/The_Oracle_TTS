@@ -201,6 +201,12 @@ def run_real_engine_smoke(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # This module imports the engine — and so huggingface_hub — at import time,
+    # which means the offline constant has already been captured by the time we
+    # get here; apply_offline_environment corrects both the env and the constant.
+    from the_oracle.offline import apply_offline_environment
+
+    apply_offline_environment()
     parser = argparse.ArgumentParser(description="Run an opt-in real-engine Chatterbox smoke render.")
     parser.add_argument("--output-root", type=Path, default=Path("build/real_engine_smoke"))
     parser.add_argument("--model-variant", choices=["standard", "multilingual", "turbo"], default="standard")

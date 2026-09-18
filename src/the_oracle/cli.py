@@ -1200,6 +1200,13 @@ def handle_setup_vulkan() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Before any model work: an offline install must resolve every model from the
+    # seeded cache. Done here (not in the render/gui handlers) so every console
+    # entry point inherits it, including `the-oracle render` invoked directly
+    # rather than through the managed launcher.
+    from the_oracle.offline import apply_offline_environment
+
+    apply_offline_environment()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "gui":
