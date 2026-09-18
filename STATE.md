@@ -8,6 +8,23 @@ rewritten by the loop).
 
 ## Done
 
+- **The deterministic smoke's reuse proof leaves no duplicate (2026-09-18)**: the
+  smoke's second render exists to prove the first pass's stems are reused, and it
+  rendered under the dialogue's own name — but the export policy never overwrites
+  an existing render, so the proof deposited `smoke_dialogue (1).flac` beside the
+  real output (and `(2)` on repeats), an artifact nothing reads. The second pass is
+  a probe, so it now renders under `cache_reuse_probe.flac`
+  (`REUSE_PROBE_FILENAME`) and deletes that file immediately;
+  `SmokeRenderResult.second_output_path` is gone with it. The verdict itself is
+  unchanged (`compute_incremental_changes` compares only utterance hashes), and
+  the tests no longer pin the duplicate: they assert the project dir holds exactly
+  `["smoke_dialogue.flac"]` and now also require the pass-2 timings to show
+  `cache_hit` true and `synthesize_seconds == 0` for every utterance — reuse that
+  actually happened rather than reuse inferred from a plan comparison. Falsified
+  by giving the probe pass a different reference: the verdict flips to False and
+  `cache_hit` to `[False, True, False, True]`. 957 passed this tree / 956 + 1
+  skipped clean copy, which leaves exactly one FLAC. Details in `JUNO_FIXES.log`.
+
 - **The doctor is proven read-only, for every check including future ones
   (2026-09-18)**: the two gate regressions in this class were caught *after* the
   fact by comparing two reports, so a third check could reintroduce one and stay
