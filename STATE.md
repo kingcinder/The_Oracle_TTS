@@ -8,6 +8,25 @@ rewritten by the loop).
 
 ## Done
 
+- **Subtitle-target naming and speaker-ref hint wording each have one owner (2026-09-18)**:
+  `src/the_oracle/subtitle_targets.py` owns where a subtitle's companion files go (the
+  converted `<stem>.srt.txt`/`<stem>.vtt.txt`/`<stem>.txt` script, and the render's `.srt`
+  sidecar) — previously spelled out at six call sites, two of which had silently dropped
+  the non-subtitle fallback. `src/the_oracle/speaker_ref_hints.py` owns the `--speaker-ref`
+  flag form, which keys are additional voices, every sentence, the line assembly, and the
+  shape-tolerance for the two forms the advice arrives in. The two display surfaces had
+  genuinely drifted — the CLI told the user to edit a rejected label "to a name or
+  'Speaker X'" while the GUI stopped at "edit the label in the file" — and now render
+  byte-identical advice apart from the bullet they are allowed to choose. Tests pin the
+  *ownership* (source scans that fail if any module re-spells a literal, each with a
+  vacuity guard) rather than only the output, because a rendered copy would pass an
+  output-only test on the day it was written.
+
+- **The GUI's hint logic now delegates instead of duplicating (2026-09-18)**:
+  `MainWindow._speaker_ref_hint_lines` is a wrapper that calls the owner, and
+  `RenderWorker` uses the naming owner. Both were verified by a real CLI run
+  (`.venv/bin/the-oracle check-input` on a subtitle) and the offscreen GUI popup test.
+
 - **Every doctor PASS line is now accounted for (2026-09-18)**: each check was classified
   by what its verdict is actually built on. Execution-backed in-run: `python`,
   `chatterbox_import`, `perth`, `qt`, `entrypoint`, `deterministic_smoke`, `turbo`, and
@@ -833,6 +852,22 @@ rewritten by the loop).
 
 ## Next
 
+- **The MainWindow extraction, which is the remaining work on this request.** `app_gui.py`
+  is 6416 lines with `MainWindow` at 2223-6376 (~4150 lines, 148 methods: 58 Qt-touching
+  over 2779 lines, 90 naming no Qt class over 1369). The constraint that shapes it: the
+  tests patch module-level names *in `app_gui`* (`QMessageBox`, `QFileDialog`, `QDialog`,
+  `QInputDialog`, `subprocess`, `_parse_oracle_model_path`, `_vulkan_preflight_report`,
+  `PreviewWorker`, `PrewarmThread`, `ModelDownloadThread`, `VulkanPreflightThread`), so a
+  method moved into another module resolves its globals there and silently defeats every
+  patch that used to intercept it. Two viable shapes: (a) extract only genuinely Qt-free
+  logic (state bookkeeping, payload building, naming, policy) and leave the Qt wiring where
+  the patches reach it — lower risk, smaller reduction; (b) move the Qt-calling clusters
+  into mixins and move each patch point with them — 7 test files of churn and the safety
+  net changes mid-refactor. Recommend (a), cluster by cluster, one verified slice per pass.
+  Natural first slices, in order of separability: format-health bookkeeping (trusted files,
+  format backups), then the settings/project payload cluster (`_default_gui_settings_payload`,
+  `_current_gui_settings_payload`, `_apply_gui_settings_payload`, `_render_settings`), then
+  the Vulkan/audio.cpp backend cluster (largest, most self-contained).
 - The same audit question is worth asking of the *GUI*'s readiness surfaces (the
   onboarding/status panels), which report capability to the user but are only covered by
   smoke tests today.

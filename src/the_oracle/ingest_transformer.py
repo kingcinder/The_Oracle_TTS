@@ -34,6 +34,7 @@ from datetime import datetime
 from pathlib import Path
 
 from the_oracle.speaker_attribution.heuristics import canonical_speaker_label
+from the_oracle.speaker_ref_hints import is_additional_voice, voice_flag
 
 # A plausible speaker label as it appears at the start of a line. Mirrors the
 # ingester's SPEAKER_RE label part so "looks like a speaker to the
@@ -737,18 +738,12 @@ def suggest_speaker_refs(text: str) -> list[SpeakerRefSuggestion]:
         key = mapping.get(label)
         if key is None:
             continue
-        if key == "A":
-            flag = "--speakerA-ref PATH"
-        elif key == "B":
-            flag = "--speakerB-ref PATH"
-        else:
-            flag = f"--speaker-ref {key}=PATH"
         suggestions.append(
             SpeakerRefSuggestion(
                 speaker=label,
                 voice_key=key,
-                flag=flag,
-                is_new=key not in ("A", "B"),
+                flag=voice_flag(key),
+                is_new=is_additional_voice(key),
             )
         )
     return suggestions
@@ -821,18 +816,12 @@ def suggest_rejected_label_refs(text: str) -> list[SpeakerRefSuggestion]:
         key = mapping.get(label.lower())
         if key is None:
             continue
-        if key == "A":
-            flag = "--speakerA-ref PATH"
-        elif key == "B":
-            flag = "--speakerB-ref PATH"
-        else:
-            flag = f"--speaker-ref {key}=PATH"
         suggestions.append(
             SpeakerRefSuggestion(
                 speaker=label,
                 voice_key=key,
-                flag=flag,
-                is_new=key not in ("A", "B"),
+                flag=voice_flag(key),
+                is_new=is_additional_voice(key),
             )
         )
     return suggestions
@@ -966,8 +955,9 @@ def apply_folder_fixes(fixes: list[FolderFix], *, backup: bool = True) -> list[t
             line_fix.rule == "srt" for line_fix in fix.line_fixes
         )
         if is_subtitle:
-            stem_tail = ".srt.txt" if fix.path.suffix.lower() == ".srt" else ".vtt.txt"
-            target = fix.path.with_name(fix.path.stem + stem_tail)
+            from the_oracle.subtitle_targets import converted_script_target
+
+            target = converted_script_target(fix.path)
         else:
             target = fix.path
         target.write_text(fix.fixed_text, encoding="utf-8")
@@ -1160,10 +1150,9 @@ def fix_input_file(path: str | Path, *, backup: bool = True) -> tuple[Path, int,
         backup_path = str(backup_file)
 
     if is_srt and file_path.suffix.lower() in (".srt", ".vtt"):
-        # with_suffix cannot build compound names like ".vtt.txt" (it
-        # replaces the whole suffix), so the name is assembled from the stem.
-        stem_suffix = ".srt.txt" if file_path.suffix.lower() == ".srt" else ".vtt.txt"
-        written_path = file_path.with_name(file_path.stem + stem_suffix)
+        from the_oracle.subtitle_targets import converted_script_target
+
+        written_path = converted_script_target(file_path)
         written_path.write_text(fixed_text, encoding="utf-8")
         return written_path, fix_count, backup_path
 

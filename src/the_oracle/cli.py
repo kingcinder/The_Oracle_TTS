@@ -268,11 +268,9 @@ def _voice_settings_from_args(args: argparse.Namespace) -> VoiceSettings:
 
 def _subtitle_script_target(file_path: Path) -> Path:
     """The sibling script path a subtitle conversion writes to."""
-    suffix = file_path.suffix.lower()
-    tail = ".srt.txt" if suffix == ".srt" else ".vtt.txt" if suffix == ".vtt" else ".txt"
-    # with_suffix cannot build compound names like ".vtt.txt" (it replaces
-    # the whole suffix), so the name is assembled from the stem.
-    return file_path.with_name(file_path.stem + tail)
+    from the_oracle.subtitle_targets import converted_script_target
+
+    return converted_script_target(file_path)
 
 
 def _srt_script_if_converted(input_path: str) -> str:
@@ -616,29 +614,18 @@ def _check_input_formatting_interactive(input_path: str, *, prompt=input) -> boo
 
 
 def _print_speaker_ref_hints(input_path: str) -> None:
-    """Print the exact --speaker-ref flags for the script's cast (stderr)."""
+    """Print the exact --speaker-ref flags for the script's cast (stderr).
+
+    The wording is not spelled out here: ``speaker_ref_hints`` owns it, so this
+    surface and the GUI's popup cannot drift apart. Only the bullets belong to
+    this function, because a terminal can distinguish a suggestion from a
+    warning and a dialog notice does not need to.
+    """
+    from the_oracle.speaker_ref_hints import hint_lines
+
     refs, rejected = _speaker_ref_report(Path(input_path), None)
-    if refs:
-        print("Speaker voices to provide (in first-appearance order):", file=sys.stderr)
-        for ref in refs:
-            marker = "add" if ref["new"] else "use"
-            print(f"  - {ref['speaker']} -> voice {ref['voice_key']}: {marker} {ref['flag']}", file=sys.stderr)
-    for entry in rejected:
-        label = entry["label"] if isinstance(entry, dict) else entry
-        rename_flag = entry.get("rename_flag") if isinstance(entry, dict) else None
-        if rename_flag:
-            print(
-                f"  ! '{label}' is not accepted as a speaker label; no reference audio can "
-                "attribute it as-is — rename the label in the file (e.g. to a name), then "
-                f"provide {rename_flag}",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                f"  ! '{label}' is not accepted as a speaker label; no reference audio can "
-                "attribute it — edit the label in the file (e.g. to a name or 'Speaker X').",
-                file=sys.stderr,
-            )
+    for line in hint_lines(refs, rejected):
+        print(line, file=sys.stderr)
 
 
 
@@ -1025,7 +1012,9 @@ def handle_render(args: argparse.Namespace) -> int:
     if args.srt:
         from the_oracle.audio.export_srt import write_srt
 
-        write_srt(Path(output_path).with_suffix(".srt"), plan.utterances)
+        from the_oracle.subtitle_targets import subtitle_sidecar_target
+
+        write_srt(subtitle_sidecar_target(output_path), plan.utterances)
     if args.save_project:
         save_project_manifest(args.save_project, build_saved_project(plan, settings, speakers))
     print(output_path)
