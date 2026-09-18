@@ -8,6 +8,28 @@ rewritten by the loop).
 
 ## Done
 
+- **Install verifies once (2026-09-18, launch-readiness mission goal 2)**:
+  `install()` used to verify twice — `bootstrap()` ran the doctor, then
+  `install()` ran it again — and each doctor run constructs the Chatterbox
+  model, so a fresh `./install_oracle_tts.sh` paid for two identical model
+  loads (process-boundary proof: 2 -> 1 recorded `doctor.py` invocations).
+  `install()` now calls `bootstrap(skip_doctor=True, ...)` and keeps its own
+  full (non-CI) `run_doctor()` after the launchers are registered, so the
+  entrypoint is still a blocking check. Two tests added, both proven to fail
+  without the fix. Consequence, accepted: a failing final verification now
+  leaves the already-written launchers in place (previously bootstrap's
+  identical run aborted first); `uninstall` removes them.
+  - Doctor gate re-confirmed trustworthy after the change: byte-identical
+    across consecutive runs with a clean `build/` (no
+    `build/real_engine_smoke/inputs` created, `fallback=0`).
+  - Environmental red, not a defect: the doctor's fresh-shell entrypoint
+    probe resolves the stale `/home/cody/.local/bin/the-oracle` (old
+    `/home/cody/The_Oracle_TTS` checkout, outside the repo), so non-CI
+    `doctor` exits 1 on this machine while `--ci` exits 0. A real
+    `bootstrap`/`install` rewrites that launcher before verifying. Suites:
+    897 passed (this tree) / 896 passed + 1 skipped (pristine tree).
+    Nothing pushed. Details in `JUNO_FIXES.log`.
+
 - **Launch-readiness pass (2026-09-17)**: aligned the working copy to
   upstream first — local `main` was 34 commits behind and 0 ahead, and the
   "CI failing" premise was stale (run 35039888506 on `main` is green as of

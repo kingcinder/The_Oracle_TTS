@@ -518,7 +518,12 @@ def bootstrap(
 
 
 def install(*, pytorch_runtime: str = "auto", offline_bundle: Path | None = None) -> int:
-    status = bootstrap(pytorch_runtime=pytorch_runtime, offline_bundle=offline_bundle)
+    # Bootstrap's own doctor run is skipped: it verifies the same tree the run
+    # below does, and each doctor run constructs the Chatterbox model, so a
+    # fresh install paid for two identical model loads. The single run here is
+    # the one that gates install, and it still runs in full (non-CI) mode, so a
+    # broken the-oracle entrypoint remains a blocking failure.
+    status = bootstrap(skip_doctor=True, pytorch_runtime=pytorch_runtime, offline_bundle=offline_bundle)
     if status != 0:
         return status
     install_desktop_launcher()

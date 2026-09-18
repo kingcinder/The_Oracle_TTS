@@ -16,6 +16,11 @@ Covers:
     produced one on a fresh machine; and the whole gate is read-only and
     idempotent — it used to generate the smoke's reference clips, which the
     voice-source count then picked up, so run 2 disagreed with run 1.
+  * scripts/manage_install.py: install() skips the doctor inside bootstrap and
+    runs it once, after the launchers are registered — each doctor run builds
+    the Chatterbox model, so a fresh install used to pay for two identical
+    model loads. That single run stays a full (non-CI) run, so a broken
+    ``the-oracle`` entrypoint still fails the install.
   * oracle.ps1: static checks that Invoke-Expression is gone and extra
     arguments are forwarded (PowerShell cannot execute in this Linux
     runtime, so runtime behavior of the .ps1 still needs verification on
@@ -529,3 +534,86 @@ def test_doctor_output_is_identical_across_consecutive_runs(
 
     differing = [a for a, b in zip(rendered[0].splitlines(), rendered[1].splitlines()) if a != b]
     assert rendered[0] == rendered[1], f"report changed between runs: {differing}"
+
+
+# --- manage_install.py: a fresh install verifies once, and that run must count --
+# install() called bootstrap() (which runs the doctor) and then ran the doctor
+# again at the end. Each doctor run constructs the Chatterbox model, so a fresh
+# install loaded it twice for the same answer.
+
+
+def _stub_bootstrap_steps(manage_install, monkeypatch, venv_python: Path) -> None:
+    """Stub every bootstrap step that would touch the system, so install()'s
+    call graph is observable without creating a venv or installing anything."""
+    monkeypatch.setattr(manage_install, "ensure_supported_python", lambda: None)
+    monkeypatch.setattr(manage_install, "ensure_venv", lambda: venv_python)
+    monkeypatch.setattr(manage_install, "install_dependencies", lambda *a, **k: None)
+    monkeypatch.setattr(manage_install, "install_managed_wrapper", lambda: None)
+
+
+def test_install_verifies_once_after_the_launcher(manage_install, monkeypatch, tmp_path: Path) -> None:
+    """Exactly one doctor run, and it happens after the launchers are in place."""
+    _stub_bootstrap_steps(manage_install, monkeypatch, tmp_path / "python")
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(manage_install, "install_desktop_launcher", lambda: events.append(("launcher", {})))
+    monkeypatch.setattr(
+        manage_install, "run_doctor", lambda *a, **k: (events.append(("doctor", k)), 0)[1]
+    )
+
+    assert manage_install.install() == 0
+
+    names = [name for name, _ in events]
+    assert names == ["launcher", "doctor"], f"install step order was {names}"
+    # CI mode exempts the entrypoint from the required checks, so the single
+    # verification must stay a full run.
+    assert not events[1][1].get("ci_mode"), "verification must not run in CI mode"
+
+
+def test_install_fails_when_the_entrypoint_is_broken(
+    manage_install, doctor_module, monkeypatch, tmp_path: Path, capsys
+) -> None:
+    """Bootstrap's doctor is skipped, so install()'s single run is the only thing
+    between a broken ``the-oracle`` entrypoint and a report of success."""
+    repo = tmp_path / "repo"
+    (repo / "Seashells" / "generic").mkdir(parents=True)
+    (repo / "Seashells" / "generic" / "english_1.wav").write_bytes(b"RIFF")
+    _stub_heavy_probes(doctor_module, monkeypatch)
+    _stub_real_engine(monkeypatch, repo / "build" / "real_engine_smoke" / "real_engine_smoke.flac")
+    monkeypatch.setattr(doctor_module, "_entrypoint_status", lambda _repo: {
+        "ok": False,
+        "venv_entrypoint": str(repo / ".venv" / "bin" / "the-oracle"),
+        "venv_entrypoint_exists": False,
+        "path_entrypoint": "",
+        "managed_wrapper_path": "",
+        "managed_wrapper_installed": False,
+        "help_ok": False,
+        "help_error": "the-oracle: command not found",
+        "fresh_shell_help_ok": False,
+        "fresh_shell_path": "",
+        "fresh_shell_error": "the-oracle is not available in a fresh shell PATH",
+        "path_has_local_bin": False,
+    })
+
+    # The doctor's own verdict for a broken entrypoint is "not ready".
+    verdict = doctor_module.main(["--repo-root", str(repo), "--skip-model-init"])
+    assert verdict == 1
+    capsys.readouterr()
+
+    _stub_bootstrap_steps(manage_install, monkeypatch, tmp_path / "python")
+    monkeypatch.setattr(manage_install, "install_desktop_launcher", lambda: None)
+    monkeypatch.setattr(manage_install, "run_doctor", lambda *a, **k: verdict)
+
+    # Install must delegate verification to its own final run, so that run is
+    # the one that reports the broken entrypoint.
+    real_bootstrap = manage_install.bootstrap
+    seen: dict = {}
+
+    def _spy_bootstrap(*a, **k):
+        seen.update(k)
+        return real_bootstrap(*a, **k)
+
+    monkeypatch.setattr(manage_install, "bootstrap", _spy_bootstrap)
+
+    assert manage_install.install() == verdict
+    assert seen.get("skip_doctor") is True, "install must skip the doctor inside bootstrap"
+    assert "Install complete." not in capsys.readouterr().out
