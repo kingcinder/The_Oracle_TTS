@@ -8,6 +8,28 @@ rewritten by the loop).
 
 ## Done
 
+- **The launch path is validated from a clean checkout, repeatably (2026-09-18)**: the
+  clean-tree comparison had been done by hand twice and nothing pinned it, so it now
+  lives in `scripts/fresh_clone_acceptance.py`: `git archive HEAD` gives a tree with no
+  `.venv` and none of the git-ignored build output a working tree accumulates, and both
+  legs run the full suite, the doctor gate, and a nine-row matrix of the documented
+  entry points (each asserted to dispatch to a specific `manage_install.py` subcommand
+  by reading its `usage:` line). Paths into the tree under test are substituted rather
+  than registered; the only registered measurements are the same two durations the
+  doctor idempotence check allows; the remaining 18 deltas are per-field registrations
+  with reasons. An unregistered delta exits 1. It also asserts the clean tree loaded its
+  *own* code and refuses to report otherwise, because this interpreter's editable
+  install otherwise resolves to this working tree. Wired into the test matrix as
+  `--only doctor,wrappers` on Linux.
+
+- **`./oracle` was not executable (2026-09-18)**: the README's first instruction
+  (`./oracle install`, lines 30-33 / 263-266) and the doctor's own CUDA hint
+  (`doctor.py:827`) both invoke `./oracle`, but it was tracked mode 100644, so a fresh
+  clone died with exit 126. Every `./*.sh` the README invokes was already 100755; this
+  was the only miss. Fixed with a mode-only change (`chmod +x oracle`), pinned by a test
+  that reads `git ls-files -s` for every tracked file the README invokes as `./<path>`.
+  Found by the new acceptance script's wrapper matrix, which went 5/9 -> 9/9.
+
 - **The Vulkan smoke can no longer skip silently (2026-09-18)**: the Vulkan backend
   smoke had skipped in every CI run the suite ever had — its guard is the git-ignored
   native `audio.cpp` build, which no runner provisioned — so a green suite proved
@@ -787,6 +809,12 @@ rewritten by the loop).
 
 ## Next
 
+- Watch the first real CI run of the new `Fresh Clone Acceptance (Linux)` step; the
+  whole path is exercised locally (both legs, all three checks, 18 deltas registered,
+  exit 0), but the step itself has not run on a runner yet.
+- Consider giving the `.ps1` entry points a dispatch matrix of their own on Windows;
+  today the acceptance script's matrix is `.sh`-only, which is why its CI step is
+  Linux-gated, and `test_review_fixes_scripts.py` can only statically inspect `oracle.ps1`.
 - Watch the first real run of the new `vulkan-smoke` CI job (it is gated off pull
   requests, so `workflow_dispatch` triggers it): what is proven locally is the job's
   declared contract and the orchestrator's preflight/gate/refusal logic, but no GitHub
@@ -796,6 +824,16 @@ rewritten by the loop).
   voices as live verification of the assembly fix (hardware-dependent).
 
 ## Noticed, not yet actioned
+
+- **`.ps1` executable bits are inconsistent (2026-09-18)**: `bootstrap_oracle_tts.ps1`,
+  `doctor_oracle_tts.ps1` and `oracle.ps1` are tracked 100644 while
+  `install_oracle_tts.ps1`, `run_oracle_tts.ps1` and `uninstall_oracle_tts.ps1` are
+  100755. This is *not* fixed alongside the `./oracle` defect because unlike that one
+  it has no failure mode: PowerShell is invoked as `powershell -File .\script.ps1` (as
+  the Windows CI job does) and never by a shebang, and `git` on Windows does not track
+  the bit at all. Making them consistent would be tidy, not a fix, and would touch six
+  files' modes for no behavioural gain. The acceptance script's wrapper matrix is
+  `.sh`-only for the same reason it is Linux-gated.
 
 - **Enum-vs-widget identity audit (2026-09-11, prompted by the Cancel-button
   bug)**: the full GUI was swept for the `clickedButton() is
