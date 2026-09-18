@@ -293,10 +293,9 @@ def convert_srt_file(path: str | Path, *, overwrite: bool = False) -> tuple[Path
     script, cue_count, speaker_count = srt_to_dialogue_text(text)
     if not script:
         raise ValueError(f"No valid SubRip cues found in {file_path}")
-    stem_tail = ".srt.txt" if file_path.suffix.lower() == ".srt" else ".vtt.txt" if file_path.suffix.lower() == ".vtt" else ".txt"
-    # with_suffix cannot build compound names like ".vtt.txt" (it replaces
-    # the whole suffix), so the target is assembled from the stem.
-    target = file_path.with_name(file_path.stem + stem_tail)
+    from the_oracle.subtitle_targets import converted_script_target
+
+    target = converted_script_target(file_path)
     if target.exists() and not overwrite:
         raise FileExistsError(f"Converted script already exists: {target}")
     target.write_text(script, encoding="utf-8")

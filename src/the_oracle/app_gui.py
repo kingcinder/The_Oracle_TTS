@@ -107,6 +107,12 @@ from the_oracle.vulkan_setup import parse_model_export, run_vulkan_setup, vulkan
 # it can be updated in one place if a verified GPU path is added later.
 _DEVICE_MODE: str = "cpu"
 
+#: One bullet style for every speaker-ref hint line. A dialog list has no way to
+#: make a warning look different from a suggestion, so unlike the CLI's terminal
+#: output it does not try; the sentences themselves come from
+#: ``the_oracle.speaker_ref_hints``, which owns the wording for both surfaces.
+_SPEAKER_HINT_BULLET = "  \u2022 "
+
 
 def _render_child_environment(repo_root: Path) -> dict[str, str]:
     """Build the exact runtime environment for an isolated render child.
@@ -407,8 +413,9 @@ class RenderWorker(QThread):
                 )
             if self.settings.metadata.get("export_srt"):
                 from the_oracle.audio.export_srt import write_srt
+                from the_oracle.subtitle_targets import subtitle_sidecar_target
 
-                srt_path = write_srt(Path(output_path).with_suffix(".srt"), self.plan.utterances)
+                srt_path = write_srt(subtitle_sidecar_target(output_path), self.plan.utterances)
                 self.plan.metadata["srt_path"] = str(srt_path)
         except Exception as exc:
             self.failed.emit(self.plan.to_dict(), str(exc))
@@ -5499,41 +5506,22 @@ class MainWindow(QMainWindow):
         return True  # Ignore (or any non-fix button) proceeds without a fix
 
     def _speaker_ref_hint_lines(self, input_file: str) -> list[str]:
-        """Human-readable --speaker-ref suggestions for a script's cast.
+        """--speaker-ref suggestions for a script's cast, for the popup list.
 
-        Computed from the *post-transform* text, so a cast only visible
-        after a fix (or a subtitle conversion) is still suggested.
+        Computed from the *post-transform* text, so a cast only visible after a
+        fix (or a subtitle conversion) is still suggested. The wording comes
+        from ``speaker_ref_hints`` -- the same owner the CLI prints from -- so
+        the advice cannot read differently depending on where it appears; only
+        the bullet is this panel's.
         """
         from the_oracle.cli import _speaker_ref_report
+        from the_oracle.speaker_ref_hints import sentence_lines
 
         try:
             refs, rejected = _speaker_ref_report(Path(input_file), None)
         except Exception:
             return []
-        lines: list[str] = []
-        if refs:
-            lines.append("Speaker voices to provide (in first-appearance order):")
-            for ref in refs:
-                marker = "add" if ref["new"] else "use"
-                lines.append(f"  \u2022 {ref['speaker']} -> voice {ref['voice_key']}: {marker} {ref['flag']}")
-        for entry in rejected:
-            if isinstance(entry, dict):
-                label = entry["label"]
-                rename_flag = entry.get("rename_flag")
-            else:
-                label, rename_flag = entry, None
-            if rename_flag:
-                lines.append(
-                    f"  \u2022 '{label}' is not accepted as a speaker label; no reference audio "
-                    "can attribute it as-is \u2014 rename the label in the file (e.g. to a name), "
-                    f"then provide {rename_flag}"
-                )
-            else:
-                lines.append(
-                    f"  \u2022 '{label}' is not accepted as a speaker label; no reference audio "
-                    "can attribute it \u2014 edit the label in the file."
-                )
-        return lines
+        return sentence_lines(refs, rejected, bullet=_SPEAKER_HINT_BULLET)
 
     def _input_file_is_trusted(self, input_file: str) -> bool:
         """True when the user pre-approved auto-fixes for this exact file."""
