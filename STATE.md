@@ -8,6 +8,23 @@ rewritten by the loop).
 
 ## Done
 
+- **The Vulkan smoke can no longer skip silently (2026-09-18)**: the Vulkan backend
+  smoke had skipped in every CI run the suite ever had — its guard is the git-ignored
+  native `audio.cpp` build, which no runner provisioned — so a green suite proved
+  nothing about that backend and nothing objected to the skip. Two root causes, two
+  fixes. Skips are now always reported with their nodeid and reason at the end of every
+  run, and any skip fails the session when `ORACLE_FAIL_ON_SKIP=1` (logic in
+  `tests/skip_audit.py`, only wired by `tests/conftest.py`). A new `vulkan-smoke` CI job
+  builds `audio.cpp` (its `ggml-vulkan` CMakeLists requires `glslc`), installs Mesa's
+  software Vulkan ICD so a GPU-less runner can report a device, verifies `vulkaninfo`,
+  fetches the model into a cache outside the clone, and runs
+  `scripts/vulkan_ci_smoke.py`, which asserts the smoke's own gates before running the
+  suite under strict skips — so the job cannot pass while the test would still skip.
+  Proven live: strict skips pass with 46/0 skips on this fully provisioned tree and fail
+  on a clean archive copy naming the exact reason; the orchestrator refuses with
+  `the Vulkan smoke would still skip` on that same copy. 1009 passed (this tree) /
+  1008 passed + 1 skip (pristine), the skip now loud rather than silent.
+
 - **The deterministic smoke's reuse proof leaves no duplicate (2026-09-18)**: the
   smoke's second render exists to prove the first pass's stems are reused, and it
   rendered under the dialogue's own name — but the export policy never overwrites
@@ -770,6 +787,11 @@ rewritten by the loop).
 
 ## Next
 
+- Watch the first real run of the new `vulkan-smoke` CI job (it is gated off pull
+  requests, so `workflow_dispatch` triggers it): what is proven locally is the job's
+  declared contract and the orchestrator's preflight/gate/refusal logic, but no GitHub
+  runner has yet built `audio.cpp` and opened the smoke's device gate. Expect the usual
+  one round of dependency fixes on first execution.
 - Re-render `Input/What is, reality.txt` on the Vulkan backend with generic
   voices as live verification of the assembly fix (hardware-dependent).
 
