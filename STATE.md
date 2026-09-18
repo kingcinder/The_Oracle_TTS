@@ -8,6 +8,26 @@ rewritten by the loop).
 
 ## Done
 
+- **The doctor is proven read-only, for every check including future ones
+  (2026-09-18)**: the two gate regressions in this class were caught *after* the
+  fact by comparing two reports, so a third check could reintroduce one and stay
+  unnoticed unless its write happened to change a compared field. Now
+  `tests/helpers.py` offers a reusable whole-tree content snapshot
+  (`repo_tree_snapshot` / `snapshot_differences`) and
+  `tests/test_doctor_read_only.py` runs the real doctor and fails if anything
+  outside `build/doctor_deterministic_smoke/` — the deterministic smoke's own
+  project, which is that check's subject — was created, changed or removed. Git-
+  ignored paths are deliberately included, since that is where both regressions
+  lived. The guard parks an existing `build/` (same-filesystem rename) so every run
+  starts from the fresh-clone state; without that it silently passed, because a
+  check that writes only what is missing writes nothing on a machine that already
+  has it. Proven by mutation: the original defect is caught naming its three
+  created files, a new check caching into `Output/logs` is caught too, and a
+  vacuous snapshot is caught by its own test. Files ≤1 MiB are hashed in full;
+  larger ones (3.35 GB native build clone) by size+mtime, so two snapshots cost
+  ~1.5s. 957 passed this tree (193s) / 956 + 1 skipped clean copy with no `build/`
+  at all. Details in `JUNO_FIXES.log`.
+
 - **Gate idempotence enforced in CI (2026-09-18)**: the doctor's verdict must not
   depend on how many times it has been run — it regressed twice in that exact
   class (a readiness PASS citing a smoke FLAC it never produced; a voice-source
