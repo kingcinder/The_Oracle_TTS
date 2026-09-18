@@ -10,7 +10,10 @@ Covers:
   * oracle (bash): the ``gui`` action is wired to the backend parser's real
     GUI action (``run``) instead of being passed through dead.
   * scripts/doctor.py: the deterministic smoke status no longer reports
-    success unless the smoke output file exists and is non-empty.
+    success unless the smoke output file exists and is non-empty, and the
+    real-engine readiness check (which only evaluates prerequisites and never
+    runs the render) no longer presents a smoke output path as though it had
+    produced one on a fresh machine.
   * oracle.ps1: static checks that Invoke-Expression is gone and extra
     arguments are forwarded (PowerShell cannot execute in this Linux
     runtime, so runtime behavior of the .ps1 still needs verification on
@@ -342,3 +345,102 @@ def test_oracle_ps1_forwards_remaining_arguments() -> None:
     assert "RemainingArgs" in text
     # The final dispatch must use the call operator, not string evaluation.
     assert "& $pythonTokens[0]" in text
+
+
+# --- doctor.py: real-engine readiness must not imply an artifact exists ----------
+# This check evaluates prerequisites only; it never runs the render. Printing the
+# smoke output path as though the check produced it tells a freshly installed
+# user about a file that has never existed on their machine.
+
+
+def _stub_real_engine(monkeypatch, output: Path, *, ready: bool = True):
+    fake = types.ModuleType("the_oracle.real_engine_smoke")
+    fake.ensure_real_engine_inputs = lambda output_root: {}
+    fake.real_engine_smoke_prerequisites = lambda output_root: {
+        "ready": ready,
+        "expected_paths": {"output": str(output)},
+    }
+    monkeypatch.setitem(sys.modules, "the_oracle.real_engine_smoke", fake)
+
+
+def test_real_engine_readiness_flags_missing_output(doctor_module, tmp_path: Path, monkeypatch) -> None:
+    """A pristine tree has no build/real_engine_smoke/*.flac: readiness must be
+    reported without claiming an output exists."""
+    missing = tmp_path / "build" / "real_engine_smoke" / "real_engine_smoke.flac"
+    _stub_real_engine(monkeypatch, missing)
+    status = doctor_module._real_engine_smoke_status(tmp_path)
+    assert status["ok"] is True  # prerequisites are met ...
+    assert status["output_exists"] is False  # ... but nothing was produced
+
+
+def test_real_engine_readiness_flags_present_output(doctor_module, tmp_path: Path, monkeypatch) -> None:
+    present = tmp_path / "real_engine_smoke.flac"
+    present.write_bytes(b"RIFF....fake-audio")
+    _stub_real_engine(monkeypatch, present)
+    status = doctor_module._real_engine_smoke_status(tmp_path)
+    assert status["ok"] is True
+    assert status["output_exists"] is True
+
+
+def _report_with_real_engine(real_engine: dict) -> dict:
+    return {
+        "repo_root": "/repo",
+        "platform": "linux",
+        "ci_mode": True,
+        "python": {"ok": True, "executable": "python3", "version": "3.12"},
+        "ffmpeg": {"ok": True, "path": "ffmpeg"},
+        "entrypoint": {
+            "ok": True, "fresh_shell_path": "the-oracle", "path_entrypoint": "",
+            "venv_entrypoint": "", "fresh_shell_error": "", "help_error": "",
+        },
+        "chatterbox_import": {"ok": True, "target": "x", "error": ""},
+        "chatterbox_init": {"ok": True, "seconds": 1.0, "skipped": False, "error": ""},
+        "perth": {"ok": True, "watermarker_symbol": "w", "error": ""},
+        "turbo": {"ok": True, "checkpoint_dir": "", "error": ""},
+        "voice_sources": {
+            "ok": True,
+            "default_voice_assessment": "ok",
+            "seashell_clip_count": 2,
+            "fallback_clip_count": 0,
+            "better_local_assets_detail": "",
+            "voice_mixing_detail": "",
+        },
+        "qt": {
+            "ok": True, "plugin_path": "", "qt_platform": "offscreen", "error": "",
+            "missing_libraries": [], "suggested_packages": [], "offscreen_error": "", "ldd_error": "",
+        },
+        "deterministic_smoke": {"ok": True, "output_path": "/o", "error": ""},
+        "real_engine_smoke": real_engine,
+        "vulkan_backend": {
+            "ok": True, "binary_built": True, "model_override_set": True,
+            "model_file_exists": True, "model_path": "/models/x.gguf",
+            "vulkan_device": True, "device_name": "GPU A", "rdna1_device": False,
+            "vendored_patch_applied": True, "device_index_env": "", "threads_env": "",
+            "audio_cpp_devices": [], "caveat": "", "error": "",
+        },
+        "next_steps": [],
+    }
+
+
+def test_human_report_does_not_claim_absent_smoke_output(doctor_module, capsys) -> None:
+    """The PASS line must scope itself to prerequisites when no smoke has run."""
+    report = _report_with_real_engine({
+        "ok": True, "ready": True, "output_exists": False, "error": "",
+        "expected_paths": {"output": "/repo/build/real_engine_smoke/real_engine_smoke.flac"},
+    })
+    doctor_module._print_human_report(report)
+    line = next(l for l in capsys.readouterr().out.splitlines() if "Real-engine smoke readiness" in l)
+    assert line.startswith("PASS")
+    assert "no smoke output yet" in line
+    assert "present at" not in line
+
+
+def test_human_report_cites_present_smoke_output(doctor_module, capsys) -> None:
+    report = _report_with_real_engine({
+        "ok": True, "ready": True, "output_exists": True, "error": "",
+        "expected_paths": {"output": "/repo/build/real_engine_smoke/real_engine_smoke.flac"},
+    })
+    doctor_module._print_human_report(report)
+    line = next(l for l in capsys.readouterr().out.splitlines() if "Real-engine smoke readiness" in l)
+    assert "present at" in line
+    assert "real_engine_smoke.flac" in line
