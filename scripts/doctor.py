@@ -491,7 +491,16 @@ def _real_engine_smoke_status(repo_root: Path) -> dict[str, Any]:
     except Exception as exc:
         return {"ok": False, "ready": False, "error": f"{type(exc).__name__}: {exc}"}
 
-    return {"ok": bool(readiness.get("ready")), **readiness}
+    result = dict(readiness)
+    # This check evaluates the prerequisites to run the real-engine smoke; it
+    # never runs the render itself. Report whether an output actually exists so
+    # the human report cannot present a path that was never produced (a fresh
+    # install has no build/real_engine_smoke/real_engine_smoke.flac at all).
+    expected = readiness.get("expected_paths") or {}
+    output_path = expected.get("output")
+    result["ok"] = bool(readiness.get("ready"))
+    result["output_exists"] = bool(output_path) and Path(str(output_path)).is_file()
+    return result
 
 
 _VULKAN_PATCH_MARKER = "ORACLE VENDORED PATCH"
@@ -960,7 +969,19 @@ def _print_human_report(report: dict[str, Any]) -> None:
 
     real_engine = report["real_engine_smoke"]
     if real_engine["ok"]:
-        print(f"{_status(True)} Real-engine smoke readiness: {real_engine['expected_paths']['output']}")
+        # "Ready" means the prerequisites are met — this check does not run the
+        # smoke. Cite the output path only when a real smoke run has left one,
+        # so a freshly installed machine is never told an artifact exists that
+        # never did.
+        output_display = (real_engine.get("expected_paths") or {}).get("output", "the smoke output")
+        if real_engine.get("output_exists"):
+            detail = f"prerequisites ready; smoke output present at {output_display}"
+        else:
+            detail = (
+                "prerequisites ready; no smoke output yet — run "
+                f"{repo_python_display()} scripts/real_engine_smoke.py to produce {output_display}"
+            )
+        print(f"{_status(True)} Real-engine smoke readiness: {detail}")
     else:
         detail = real_engine.get("error") or str(real_engine.get("chatterbox_import", {}))
         print(f"{_status(False)} Real-engine smoke readiness: {detail}")
