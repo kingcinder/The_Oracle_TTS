@@ -17,11 +17,13 @@ def test_deterministic_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
     result = run_deterministic_smoke_render(tmp_path, source_format="txt")
 
     assert result.output_path.exists()
-    assert result.second_output_path.exists()
-    assert result.second_output_path.name == "smoke_dialogue (1).flac"
     assert result.render_plan_path.exists()
     assert result.stem_count == 4
     assert result.cache_reused_on_second_pass is True
+    # The second pass is a cache-reuse probe, and the export policy never
+    # overwrites an existing render, so the probe must not leave a versioned
+    # duplicate ("smoke_dialogue (1).flac") of the real output beside it.
+    assert sorted(path.name for path in result.project_dir.glob("*.flac")) == ["smoke_dialogue.flac"]
 
     audio, sample_rate = sf.read(result.output_path, always_2d=False)
     assert sample_rate == 24000
@@ -40,6 +42,11 @@ def test_deterministic_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
     assert render_timings["summary"]["join_count"] == 3
     assert len(render_timings["segments"]) == 4
     assert len(render_timings["joins"]) == 3
+    # The verdict above comes from comparing the two plans. Prove it empirically
+    # as well: a pass that reuses the cache synthesizes nothing, so every
+    # utterance must be a cache hit.
+    assert [entry["cache_hit"] for entry in utterance_entries] == [True] * 4
+    assert [entry["synthesize_seconds"] for entry in utterance_entries] == [0.0] * 4
     assert utterance_entries[0]["cache_stem_path"].endswith(".wav")
     assert utterance_entries[0]["exported_stem_path"].endswith(".wav")
     assert render_timings["segments"][0]["content_start_seconds"] == 0.0
@@ -51,11 +58,10 @@ def test_deterministic_markdown_smoke_render_runs_end_to_end(tmp_path: Path) -> 
     result = run_deterministic_smoke_render(tmp_path, source_format="md")
 
     assert result.output_path.exists()
-    assert result.second_output_path.exists()
-    assert result.second_output_path.name == "smoke_dialogue (1).flac"
     assert result.render_plan_path.exists()
     assert result.stem_count == 4
     assert result.cache_reused_on_second_pass is True
+    assert sorted(path.name for path in result.project_dir.glob("*.flac")) == ["smoke_dialogue.flac"]
 
     audio, sample_rate = sf.read(result.output_path, always_2d=False)
     assert sample_rate == 24000
@@ -72,6 +78,8 @@ def test_deterministic_markdown_smoke_render_runs_end_to_end(tmp_path: Path) -> 
     assert render_timings["summary"]["join_count"] == 3
     assert len(render_timings["segments"]) == 4
     assert len(render_timings["joins"]) == 3
+    utterances = [entry for entry in render_timings["entries"] if entry["type"] == "utterance"]
+    assert [entry["cache_hit"] for entry in utterances] == [True] * 4
     assert render_timings["joins"][0]["left_stem_path"].endswith(".wav")
     assert render_timings["joins"][0]["right_stem_path"].endswith(".wav")
     assert "output | path=" in render_trace

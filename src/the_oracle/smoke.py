@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +17,13 @@ from the_oracle.models.project import VoiceSettings
 from the_oracle.pipeline import ChatterboxConditioning, OraclePipeline, RenderSettings, SpeakerSettings
 from the_oracle.utils.hashing import hash_payload
 
+
+#: Output filename for the cache-reuse probe (the smoke's second render). It is
+#: deliberately not the dialogue's own name: the export policy never overwrites an
+#: existing render, so a second pass under the real name would leave a
+#: "smoke_dialogue (1).flac" duplicate behind. This artifact is discarded as soon
+#: as the pass that produced it has been read.
+REUSE_PROBE_FILENAME = "cache_reuse_probe.flac"
 
 SMOKE_DIALOGUE = """Speaker A: The Oracle is online.
 Speaker B: Confirm the signal path.
@@ -37,7 +44,6 @@ Speaker B: Render complete.
 class SmokeRenderResult:
     source_format: str
     output_path: Path
-    second_output_path: Path
     project_dir: Path
     cache_reused_on_second_pass: bool
     stem_count: int
@@ -48,7 +54,6 @@ class SmokeRenderResult:
         return {
             "source_format": self.source_format,
             "output_path": str(self.output_path),
-            "second_output_path": str(self.second_output_path),
             "project_dir": str(self.project_dir),
             "cache_reused_on_second_pass": self.cache_reused_on_second_pass,
             "stem_count": self.stem_count,
@@ -212,7 +217,19 @@ def run_deterministic_smoke_render(output_root: str | Path, source_format: str =
             metadata={"title": f"Deterministic Smoke Render ({source_format})"},
         )
         _, output_path = pipeline.render_project(dialogue_path, project_dir, speaker_settings, render_settings)
-        _, second_output_path = pipeline.render_project(dialogue_path, project_dir, speaker_settings, render_settings)
+        # The second pass exists to prove the first pass's stems are reused: the
+        # pipeline decides that by comparing this plan against the stored one and
+        # records the verdict before it exports anything. It does still export,
+        # though, and the export policy deliberately never overwrites an existing
+        # render -- so a second pass under the dialogue's own name would drop a
+        # duplicate next to the real output. Render the probe under its own name
+        # and delete it: the reuse verdict is the result, the file is not.
+        probe_settings = replace(
+            render_settings,
+            metadata={**render_settings.metadata, "output_filename": REUSE_PROBE_FILENAME},
+        )
+        _, probe_path = pipeline.render_project(dialogue_path, project_dir, speaker_settings, probe_settings)
+        probe_path.unlink(missing_ok=True)
 
     render_plan_path = project_dir / "render_plan.json"
     render_plan = json.loads(render_plan_path.read_text(encoding="utf-8"))
@@ -220,7 +237,6 @@ def run_deterministic_smoke_render(output_root: str | Path, source_format: str =
     return SmokeRenderResult(
         source_format=source_format,
         output_path=output_path,
-        second_output_path=second_output_path,
         project_dir=project_dir,
         cache_reused_on_second_pass=render_plan["metadata"].get("cache_reused_on_second_pass") == "True",
         stem_count=stem_count,
