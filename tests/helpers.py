@@ -95,6 +95,64 @@ def normalise_speaker_label(label: str) -> str:
     return upper
 
 
+#: Directories that hold no repository content: VCS metadata, the virtualenv,
+#: interpreter caches, and the agent harness's own state. Everything else in the
+#: tree is included, git-ignored or not -- the checks that regressed wrote into
+#: git-ignored space (``build/real_engine_smoke/inputs``), so honouring
+#: ``.gitignore`` here would have hidden the very writes this looks for.
+DEFAULT_SNAPSHOT_EXCLUDED_DIRS = frozenset(
+    {".git", ".venv", ".freebuff", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}
+)
+
+#: Files larger than this are fingerprinted by size and mtime instead of by
+#: content. The repository carries multi-gigabyte native build output
+#: (``audio.cpp/``), and hashing it twice per run costs seconds for no extra
+#: detection, because a rewrite changes size or mtime. Content is hashed
+#: everywhere else -- which is where checks actually write: plans, JSON, text.
+SNAPSHOT_HASH_LIMIT_BYTES = 1 << 20
+
+
+def repo_tree_snapshot(root, *, excluded_dirs=DEFAULT_SNAPSHOT_EXCLUDED_DIRS) -> dict[str, str]:
+    """Fingerprint every file under ``root``, for before/after comparison.
+
+    Returns ``{relative path: signature}``. Two snapshots of an unchanged tree are
+    equal, and any file created, removed, rewritten or merely touched between them
+    shows up as a difference -- so a check that writes where it should only read
+    is caught by comparing snapshots taken either side of it. Paths are relative
+    to ``root`` with forward slashes, so a diff reads the same on every platform.
+    """
+    import hashlib
+    import os
+    from pathlib import Path
+
+    root = Path(root)
+    snapshot: dict[str, str] = {}
+    for directory, subdirectories, filenames in os.walk(root):
+        subdirectories[:] = [name for name in subdirectories if name not in excluded_dirs]
+        for filename in filenames:
+            path = Path(directory) / filename
+            relative = path.relative_to(root).as_posix()
+            try:
+                stat = path.stat()
+                size = stat.st_size
+                if size <= SNAPSHOT_HASH_LIMIT_BYTES:
+                    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                else:
+                    digest = f"not-hashed-above-{SNAPSHOT_HASH_LIMIT_BYTES}"
+                snapshot[relative] = f"size={size} mtime={stat.st_mtime_ns} sha256={digest}"
+            except OSError as exc:  # pragma: no cover - unreadable entries are reported, not fatal
+                snapshot[relative] = f"unreadable: {type(exc).__name__}"
+    return snapshot
+
+
+def snapshot_differences(before: dict[str, str], after: dict[str, str]) -> tuple[list[str], list[str], list[str]]:
+    """``(created, changed, removed)`` paths between two snapshots, each sorted."""
+    created = sorted(after.keys() - before.keys())
+    removed = sorted(before.keys() - after.keys())
+    changed = sorted(path for path in before.keys() & after.keys() if before[path] != after[path])
+    return created, changed, removed
+
+
 def isolate_user_config(monkeypatch, config_dir) -> None:
     """Point the platform config root at ``config_dir`` for one test.
 
