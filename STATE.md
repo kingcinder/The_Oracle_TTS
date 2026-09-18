@@ -8,6 +8,22 @@ rewritten by the loop).
 
 ## Done
 
+- **Launch-readiness pass (2026-09-17)**: aligned the working copy to
+  upstream first — local `main` was 34 commits behind and 0 ahead, and the
+  "CI failing" premise was stale (run 35039888506 on `main` is green as of
+  2026-09-16). The uncommitted ingest-refactor work from an interrupted
+  architecture pass was preserved on branch `wip/ingest-refactor-hints`;
+  local `main` was then fast-forwarded a320ab2 -> 96f5081. Two real bugs
+  fixed: `manage_install.py` `update()` dropped `--offline-bundle` on its
+  no-venv fallback (an offline target would silently install from the
+  network), and the offline bundle's Windows `install.bat` passed a
+  backslash-terminated directory (`%~dp0`) as `"...\bundle\"`, whose
+  trailing backslash-quote PowerShell parses as an escaped quote. Verified:
+  full suite 886 passed / 0 failed, doctor green via both the manager and
+  the wrapper, all five shell wrappers dispatch to the right subcommand,
+  deterministic smoke render passes with cache reuse. Nothing pushed.
+  Details in `JUNO_FIXES.log`.
+
 - **Fully offline install (2026-09-14)**: every model pinned to an exact HF
   commit SHA in `src/the_oracle/models/pins.py` (newest commits as of
   2026-09-14); `scripts/build_offline_bundle.py` builds a self-contained

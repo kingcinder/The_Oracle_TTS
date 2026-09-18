@@ -521,7 +521,9 @@ def update(skip_doctor: bool = False, *, pytorch_runtime: str = "auto", offline_
     Seashells/, Profiles/, Output/, and the app settings file) is untouched."""
     if not (REPO_ROOT / ".venv").exists():
         print("No existing install found; running a full install instead.")
-        return install(pytorch_runtime=pytorch_runtime)
+        # Forward the bundle: dropping it here would make an offline machine
+        # attempt networked installs despite being handed local artifacts.
+        return install(pytorch_runtime=pytorch_runtime, offline_bundle=offline_bundle)
 
     ensure_supported_python()
     passed(f"Using Python {sys.version.split()[0]} from {sys.executable}")
