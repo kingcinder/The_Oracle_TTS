@@ -244,14 +244,21 @@ def seed_offline_models(offline_bundle: Path) -> None:
     src_root = offline_bundle / "hf_cache"
     if not src_root.is_dir():
         raise SystemExit(fail(f"Offline bundle has no model cache: {src_root}"))
-    dest_root = hf_hub_cache_dir()
-    dest_root.mkdir(parents=True, exist_ok=True)
-    seeded: list[str] = []
+    # Validate the whole bundle before creating or replacing anything: an
+    # incomplete bundle must leave the machine untouched rather than creating an
+    # empty HF cache (and a half-seeded one) before it discovers the gap.
+    plan: list[tuple[str, str, Path, str]] = []
     for repo_id, sha in MODEL_PINS.items():
         cache_dirname = "models--" + repo_id.replace("/", "--")
         src = src_root / cache_dirname
         if not src.is_dir():
             raise SystemExit(fail(f"Offline bundle is missing model {repo_id} ({cache_dirname})"))
+        plan.append((repo_id, cache_dirname, src, sha))
+
+    dest_root = hf_hub_cache_dir()
+    dest_root.mkdir(parents=True, exist_ok=True)
+    seeded: list[str] = []
+    for repo_id, cache_dirname, src, sha in plan:
         dest = dest_root / cache_dirname
         if dest.exists():
             shutil.rmtree(dest)
@@ -456,6 +463,13 @@ def run_gui() -> int:
     if not entrypoint.exists():
         return fail(f"The Oracle is not bootstrapped yet. Run {repo_bootstrap_display()} first.")
     env = build_env()
+    # Mirror the managed launcher and the desktop entries: on an offline install
+    # the marker drives HF_HUB_OFFLINE so every model loader resolves from the
+    # seeded cache. Launching through this path (./run_oracle_tts.sh) must honour
+    # the same contract, or the offline install reaches for the network here.
+    # Delete the marker (documented) to re-enable network model fetches.
+    if (REPO_ROOT / OFFLINE_MARKER_FILENAME).is_file():
+        env["HF_HUB_OFFLINE"] = "1"
     if is_linux():
         has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
         if not has_display:

@@ -334,3 +334,72 @@ def test_bundle_launchers_invoke_offline_install(bundle_builder, tmp_path: Path)
     assert ':~-1%' in bat and ':~0,-1%' in bat
     assert '--offline-bundle "%BUNDLE_DIR%"' in bat
     assert 'tar -xzf "%BUNDLE_DIR%\\repo.tar.gz"' in bat
+
+
+# --- the manager's own launch path must honour the offline marker --------------
+# The generated launchers export HF_HUB_OFFLINE=1 when the marker exists, but
+# `manage_install run` (i.e. ./run_oracle_tts.sh) executes the venv entrypoint
+# directly and used to skip that check — so a documented launch path bypassed the
+# offline guarantee and model loaders could reach for the network.
+
+
+def _make_fake_run_capture():
+    captured: dict = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = list(args)
+        captured["env"] = dict(kwargs.get("env") or {})
+        return types.SimpleNamespace(returncode=0)
+
+    return captured, fake_run
+
+
+def _prepare_run_repo(manage_install, tmp_path: Path, monkeypatch, *, offline: bool) -> None:
+    repo = tmp_path / "repo with space"
+    entrypoint = manage_install.venv_entrypoint_path(repo, "the-oracle")
+    entrypoint.parent.mkdir(parents=True, exist_ok=True)
+    entrypoint.write_text("#!/bin/sh\n", encoding="utf-8")
+    if offline:
+        (repo / manage_install.OFFLINE_MARKER_FILENAME).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(manage_install, "REPO_ROOT", repo)
+    monkeypatch.setenv("DISPLAY", ":0")
+
+
+def test_run_path_exports_hf_hub_offline_on_offline_install(
+    manage_install, tmp_path: Path, monkeypatch
+) -> None:
+    _prepare_run_repo(manage_install, tmp_path, monkeypatch, offline=True)
+    captured, fake_run = _make_fake_run_capture()
+    monkeypatch.setattr(manage_install.subprocess, "run", fake_run)
+    assert manage_install.run_gui() == 0
+    assert captured["env"].get("HF_HUB_OFFLINE") == "1"
+    assert captured["args"][-1] == "gui"
+
+
+def test_run_path_leaves_offline_flag_unset_without_marker(
+    manage_install, tmp_path: Path, monkeypatch
+) -> None:
+    _prepare_run_repo(manage_install, tmp_path, monkeypatch, offline=False)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    captured, fake_run = _make_fake_run_capture()
+    monkeypatch.setattr(manage_install.subprocess, "run", fake_run)
+    assert manage_install.run_gui() == 0
+    assert "HF_HUB_OFFLINE" not in captured["env"]
+
+
+# --- an invalid bundle must not leave a half-made cache behind -----------------
+
+
+def test_seed_offline_models_validates_before_creating_cache(
+    manage_install, tmp_path: Path, monkeypatch
+) -> None:
+    """An incomplete bundle must leave the machine untouched: the HF cache is
+    created only once every pinned model is known to be present."""
+    bundle = tmp_path / "bundle"
+    (bundle / "hf_cache").mkdir(parents=True)
+    (bundle / "manifest.json").write_text("{}", encoding="utf-8")
+    hf_cache = tmp_path / "hf" / "hub"
+    monkeypatch.setenv("HF_HUB_CACHE", str(hf_cache))
+    with pytest.raises(SystemExit):
+        manage_install.seed_offline_models(bundle)
+    assert not hf_cache.exists(), "an invalid bundle created the HF cache"
