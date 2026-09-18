@@ -3,6 +3,12 @@ name: CI
 on:
   push:
   pull_request:
+  # The Vulkan job below builds audio.cpp, which is far too slow to run on every
+  # pull request, so it is gated to non-PR events (see that job's `if:`) and these
+  # two triggers are what keep it running regularly.
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
 
 jobs:
   test:
@@ -121,6 +127,86 @@ jobs:
       # check covers both operating systems instead of silently covering one.
       - name: Doctor Is Idempotent Across Runs
         run: python scripts/doctor_idempotence.py --skip-model-init --ci
+
+  # The Vulkan smoke skipped in CI from the day it was written: it needs a Vulkan
+  # device, a built audiocpp_cli and the Chatterbox ggml model, and the runner had
+  # none of them. A skip looks exactly like a pass in a green run, so the suite
+  # covered nothing here and said so only to whoever read the skip summary.
+  #
+  # This job provides all three and then runs the suite with ORACLE_FAIL_ON_SKIP=1,
+  # so a skip fails the job instead of hiding in it.
+  vulkan-smoke:
+    name: Vulkan backend (audio.cpp built, no skips allowed)
+    runs-on: ubuntu-latest
+    # Not on pull requests: the audio.cpp build is the expensive part and a PR does
+    # not change it. Push to a branch, the weekly schedule, or run it by hand.
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 90
+    env:
+      # Outside the clone path on purpose: scripts/build_audio_cpp.sh clones into
+      # audio.cpp/, and git refuses to clone into a non-empty directory -- a cache
+      # restored inside it would break the build on the first cached run.
+      AUDIOCPP_MODELS_ROOT: ${{ runner.temp }}/oracle-vulkan-models
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Vulkan And Build Dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          # glslc is not optional: audio.cpp's ggml-vulkan CMakeLists does
+          # `find_package(Vulkan COMPONENTS glslc REQUIRED)`. vulkan-tools provides
+          # the vulkaninfo the smoke's device probe calls, and mesa-vulkan-drivers
+          # provides the software ICD (lvp) that lets a GPU-less runner report a
+          # device at all.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            g++ \
+            git \
+            glslc \
+            libvulkan-dev \
+            mesa-vulkan-drivers \
+            ninja-build \
+            pkg-config \
+            vulkan-tools
+
+      # This is the smoke's own device gate, run by hand first so a missing ICD
+      # fails here with a readable message instead of turning into a skip later.
+      # On a GPU-less runner the device reported here is Mesa's llvmpipe.
+      - name: Verify A Vulkan Device Is Visible
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          vulkaninfo --summary | head -40
+          echo
+          echo "Device probe (vulkaninfo --summary) succeeded, so the smoke's first gate is open."
+
+      - name: Bootstrap Runtime And Test Dependencies
+        shell: bash
+        run: python scripts/manage_install.py bootstrap --skip-doctor --include-dev
+
+      # The model is the only download worth caching: it is large and does not
+      # change between runs, unlike the source tree the build clones.
+      - name: Cache The Chatterbox GGML Model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/oracle-vulkan-models
+          key: vulkan-smoke-model-chatterbox_q8_0-v1
+
+      # scripts/vulkan_ci_smoke.py builds the CLI, fetches the model, asserts the
+      # smoke's three gates resolve, then runs the suite with ORACLE_FAIL_ON_SKIP=1.
+      - name: Build audio.cpp, Fetch The Model, Run The Suite Without Skips
+        shell: bash
+        run: ./.venv/bin/python scripts/vulkan_ci_smoke.py
 
   windows-install-smoke:
     name: Windows installer end to end (temp profile, launchers, GUI)
