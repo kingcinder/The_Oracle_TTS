@@ -480,13 +480,19 @@ def _deterministic_smoke_status(repo_root: Path) -> dict[str, Any]:
 def _real_engine_smoke_status(repo_root: Path) -> dict[str, Any]:
     _prepend_repo_src(repo_root)
     try:
-        from the_oracle.real_engine_smoke import ensure_real_engine_inputs, real_engine_smoke_prerequisites
+        from the_oracle.real_engine_smoke import real_engine_smoke_prerequisites
     except Exception as exc:
         return {"ok": False, "ready": False, "error": f"{type(exc).__name__}: {exc}"}
 
     output_root = repo_root / "build" / "real_engine_smoke"
     try:
-        ensure_real_engine_inputs(output_root)
+        # Read-only: a check must not create state. Generating the smoke's inputs
+        # here wrote reference clips into build/real_engine_smoke/inputs, which
+        # the voice-source audit counts — so run 1 reported fallback=0 and run 2
+        # fallback=2 on an unchanged machine. The smoke script generates its own
+        # inputs (real_engine_smoke.py) when it is actually run, and
+        # real_engine_smoke_prerequisites already reports input existence and
+        # whether they can be generated.
         readiness = real_engine_smoke_prerequisites(output_root)
     except Exception as exc:
         return {"ok": False, "ready": False, "error": f"{type(exc).__name__}: {exc}"}
