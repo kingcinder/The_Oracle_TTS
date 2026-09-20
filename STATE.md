@@ -852,6 +852,17 @@ rewritten by the loop).
 
 ## Next
 
+- **The docs surface exists.** CHANGELOG.md, docs/UPGRADING.md, and
+  docs/TROUBLESHOOTING.md landed (8915feb) with the `gui_smoke_prewarm` prune;
+  README links all three. The offline audit's two recommended fixes also
+  landed (fd302d7): `setup-vulkan` refuses on an offline install and the
+  LanguageTool warm download skips when the marker is present.
+- **Watch the venv against the declared pins.** A 2026-09-20 incident:
+  an out-of-band pip event replaced transformers/huggingface_hub/chatterbox
+  with incompatible majors and broke two offline-guarantee tests; restored
+  to the pyproject pins. A future `update`/doctor pass could add a
+  pin-verification check.
+
 - **Release metadata is single-sourced.** `__version__` in `src/the_oracle/__init__.py` is the
   only tracked version literal; `pyproject.toml` reads it via `[tool.setuptools.dynamic]` and
   `scripts/release.py` enforces the invariant (`--check`), rewrites the README/STATE banners
@@ -921,13 +932,13 @@ rewritten by the loop).
   (`buttons()[0]` positional indexing in four transformer GUI tests —
   brittle if Qt reorders buttons, but test-only).
 
-- **`tests/test_grammar_language_tool.py` leaks temp dirs (found
-  2026-09-11 during the orphan sweep)**: each test creates its cache via
-  `tempfile.mkdtemp(prefix="oracle_lt_cache_")` and never removes it —
-  ~140 `oracle_lt_cache_*` directories accumulated in `/tmp` across
-  sessions. Pre-existing test-code hygiene issue, not introduced by the
-  transformer campaign; fix is a `tempfile.TemporaryDirectory` context or
-  `shutil.rmtree` teardown (out of scope for this session's requests).
+- **RESOLVED 2026-09-20**: `tests/test_grammar_language_tool.py` used to
+  leak temp dirs (found 2026-09-11 during the orphan sweep): each test
+  created its cache via `tempfile.mkdtemp(prefix="oracle_lt_cache_")` and
+  never removed it — ~140 `oracle_lt_cache_*` directories accumulated in
+  `/tmp` across sessions. All four cache sites now use pytest's auto-cleaned
+  `tmp_path`, the accumulated dirs were swept, and a before/after run probe
+  showed zero new leaks (JUNO_FIXES.log 2026-09-20).
 
 - Serpent-circle inventory scan updated (2026-09-08, in
   `~/.agents/skills/serpent-circle/`): the bloat scan and language
