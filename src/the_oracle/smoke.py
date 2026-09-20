@@ -14,7 +14,8 @@ import numpy as np
 from the_oracle.audio.assemble import save_wav
 from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.project import VoiceSettings
-from the_oracle.pipeline import ChatterboxConditioning, OraclePipeline, RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings
+from the_oracle.pipeline import ChatterboxConditioning, OraclePipeline
 from the_oracle.utils.hashing import hash_payload
 
 

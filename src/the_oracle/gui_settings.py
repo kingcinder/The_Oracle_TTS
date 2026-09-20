@@ -14,6 +14,7 @@ from the_oracle.app_paths import normalize_output_filename
 from the_oracle.correction_modes import normalize_correction_mode
 from the_oracle.gui_utils import MAX_CAST_SPEAKERS, normalize_cast_keys
 from the_oracle.models.project import VoiceSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings
 from the_oracle.platform_support import app_config_dir
 
 

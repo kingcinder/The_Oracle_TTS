@@ -10,7 +10,7 @@ import pytest
 from the_oracle.audio.assemble import AudioSegment, assemble_dialogue
 from the_oracle.audio.blend import blend_references
 from the_oracle.models.project import VoiceSettings
-from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings; from the_oracle.pipeline import OraclePipeline
 from the_oracle.smoke import _SmokeEmotionClassifier, _write_reference
 from the_oracle.text_repair.repairer import RepairResult
 

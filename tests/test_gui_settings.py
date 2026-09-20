@@ -509,7 +509,7 @@ def test_next_and_drop_format_backup_skip_malformed_records() -> None:
 
 def _defaults() -> "PayloadDefaults":
     from the_oracle.models.project import VoiceSettings
-    from the_oracle.pipeline import RenderSettings
+    from the_oracle.models.settings import RenderSettings
 
     render = RenderSettings()
     return PayloadDefaults(
@@ -530,7 +530,7 @@ def _defaults() -> "PayloadDefaults":
 
 def _snapshot(**overrides) -> "WidgetSnapshot":
     from the_oracle.gui_settings import WidgetSnapshot
-    from the_oracle.pipeline import SpeakerSettings
+    from the_oracle.models.settings import SpeakerSettings
     from the_oracle.models.project import VoiceSettings
 
     base = dict(
@@ -646,7 +646,7 @@ def test_speaker_config_decode_validates_blend_fields() -> None:
 
 def test_current_payload_decodes_back_to_equal_speaker_settings() -> None:
     """A current-payload speakers entry round-trips through the decoder."""
-    from the_oracle.pipeline import SpeakerSettings
+    from the_oracle.models.settings import SpeakerSettings
 
     snapshot = _snapshot()
     payload = current_gui_settings_payload(snapshot)

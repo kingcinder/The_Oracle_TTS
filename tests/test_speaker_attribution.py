@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from the_oracle.models.project import Utterance, VoiceSettings
-from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings; from the_oracle.pipeline import OraclePipeline
 from the_oracle.smoke import _SmokeEmotionClassifier, _write_reference
 from the_oracle.speaker_attribution.assign import SpeakerAttributor
 from the_oracle.speaker_attribution.heuristics import (

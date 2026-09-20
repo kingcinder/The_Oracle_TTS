@@ -14,7 +14,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile
-from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings
+from the_oracle.models.settings import RenderSettings
+from the_oracle.pipeline import OraclePipeline, RenderProgress
 from the_oracle.utils.logging import configure_logging
 
 

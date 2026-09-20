@@ -99,7 +99,8 @@ from the_oracle.recording_wizard import RecordingStudioSetupWizard
 from the_oracle.gui_widgets import PerceptualSlider
 from the_oracle.gui_sections import QHSectionGroup, collapsible_section
 from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings, Utterance
-from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings
+from the_oracle.pipeline import OraclePipeline, RenderProgress
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
 from the_oracle.voice_catalog import (
     VoiceChoice,
@@ -108,6 +109,7 @@ from the_oracle.voice_catalog import (
     save_blend_voice,
 )
 from the_oracle.tts_engines.chatterbox_engine import SUPPORTED_VARIANTS, ChatterboxEngine
+from the_oracle.gui_vulkan import _device_row_text, _parse_oracle_model_path
 from the_oracle.tts_engines.vulkan_backend import AudioCppUnavailableError, AudioCppVulkanEngine, find_audiocpp_binary
 from the_oracle.vulkan_setup import parse_model_export, run_vulkan_setup, vulkan_setup_needed
 
@@ -140,12 +142,6 @@ def _render_child_environment(repo_root: Path) -> dict[str, str]:
     env["PYTHONNOUSERSITE"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
     return env
-
-
-def _device_row_text(index: int, name: str) -> str:
-    """Human label for one Vulkan device, shared by the dropdown items and
-    the picker's summary label so the two can never drift apart."""
-    return f"Device {index}: {name}"
 
 
 def _vulkan_prerequisite_missing() -> list[str]:
@@ -685,15 +681,6 @@ class VulkanPreflightThread(QThread):
 
 
 _MODEL_DOWNLOAD_TIMEOUT = 1800.0  # large GGUF downloads can take a while
-
-
-def _parse_oracle_model_path(output: str) -> str:
-    """Extract the installed model path from the download script's output.
-
-    Delegates to :func:`the_oracle.vulkan_setup.parse_model_export` (the
-    single source of truth shared with the auto-setup orchestrator).
-    """
-    return parse_model_export(output)
 
 
 class ModelDownloadThread(QThread):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import os
 import platform
@@ -208,6 +209,83 @@ def _qt_package_suggestions(missing_libraries: list[str]) -> list[str]:
             continue
         suggestions.append(_preferred_package(candidates))
     return sorted(set(suggestions))
+
+
+def _dependency_pin_status(repo_root: Path) -> dict[str, Any]:
+    """Verify the running venv matches the pyproject dependency pins.
+
+    Full-suite green claims are only valid against the declared dependency
+    set: an out-of-band `pip install` can silently replace a pinned package
+    (this actually happened -- a stray upgrade of huggingface_hub/transformers
+    broke offline-guarantee tests that were green the day before, see
+    JUNO_FIXES.log 2026-09-20 docs entry). This check compares every pinned
+    requirement in pyproject.toml against the installed distribution metadata
+    via importlib.metadata, so drift is caught by the gate instead of by a
+    mysterious test failure days later.
+
+    Reports one entry per requirement plus the importability of tomllib and
+    packaging (both stdlib/vendored-stdlib in practice; listed for honesty).
+    """
+    import tomllib
+
+    import packaging.requirements
+
+    pyproject = repo_root / "pyproject.toml"
+    try:
+        with pyproject.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        return {
+            "ok": False,
+            "error": f"could not read {pyproject}: {error}",
+            "mismatches": [],
+            "missing": [],
+            "checked_count": 0,
+        }
+
+    project = data.get("project", {})
+    requirement_groups: list[tuple[str, list[str]]] = [("dependencies", project.get("dependencies") or [])]
+    for group_name, group in (project.get("optional-dependencies") or {}).items():
+        requirement_groups.append((f"optional:{group_name}", group or []))
+
+    mismatches: list[dict[str, str]] = []
+    missing: list[dict[str, str]] = []
+    checked = 0
+    for group_name, requirement_strings in requirement_groups:
+        for requirement_string in requirement_strings:
+            try:
+                requirement = packaging.requirements.Requirement(requirement_string)
+            except packaging.requirements.InvalidRequirement as error:
+                mismatches.append({"group": group_name, "requirement": requirement_string, "error": str(error)})
+                continue
+            checked += 1
+            try:
+                installed = importlib.metadata.version(requirement.name)
+            except importlib.metadata.PackageNotFoundError:
+                missing.append({"group": group_name, "requirement": requirement_string})
+                continue
+            if not requirement.specifier.contains(installed, prereleases=True):
+                mismatches.append(
+                    {
+                        "group": group_name,
+                        "requirement": requirement_string,
+                        "installed": installed,
+                        "error": f"installed {requirement.name} {installed} does not satisfy {requirement_string}",
+                    }
+                )
+
+    error = ""
+    if missing:
+        error = "; ".join(f"{entry['requirement']} not installed" for entry in missing)
+    if mismatches:
+        error = "; ".join(filter(None, [error, *(entry.get("error", "") for entry in mismatches)]))
+    return {
+        "ok": not mismatches and not missing,
+        "error": error,
+        "mismatches": mismatches,
+        "missing": missing,
+        "checked_count": checked,
+    }
 
 
 def _python_status() -> dict[str, Any]:
@@ -789,6 +867,14 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
     if not report["chatterbox_import"]["ok"] or chatterbox_init_blocked or not report["perth"]["ok"]:
         steps.append(f"Re-run {repo_bootstrap_display()} with internet access so Chatterbox and Perth can be installed and cached on CPU.")
 
+    pins = report.get("dependency_pins") or {"ok": True, "error": ""}
+    if not pins["ok"]:
+        detail = pins["error"] or "the installed venv does not match the pyproject pins"
+        steps.append(
+            "Dependency drift detected: " + detail
+            + f" Re-run {repo_bootstrap_display()} (or the oracle update) to restore the declared dependency set."
+        )
+
     if not report["deterministic_smoke"]["ok"]:
         steps.append(f"Inspect the deterministic smoke failure above, then retry with {repo_python_display()} scripts/download_models.py or {repo_python_display()} scripts/smoke_render.py as needed.")
 
@@ -903,9 +989,11 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "deterministic_smoke": _deterministic_smoke_status(repo_root),
         "real_engine_smoke": _real_engine_smoke_status(repo_root),
         "vulkan_backend": _vulkan_backend_status(repo_root),
+        "dependency_pins": _dependency_pin_status(repo_root),
     }
     required_checks = [
         report["python"]["ok"],
+        report["dependency_pins"]["ok"],
         report["chatterbox_import"]["ok"],
         report["perth"]["ok"],
         skip_model_init or report["chatterbox_init"]["ok"],
@@ -925,6 +1013,12 @@ def _print_human_report(report: dict[str, Any]) -> None:
     print(f"Repo root: {report['repo_root']}")
     print(f"Platform: {report['platform']}")
     print(f"{_status(report['python']['ok'])} Python: {report['python']['executable']} ({report['python']['version']})")
+
+    pins = report.get("dependency_pins") or {"ok": True, "error": "", "checked_count": 0}
+    if pins["ok"]:
+        print(f"{_status(True)} Dependency pins: {pins['checked_count']} requirements match the installed venv")
+    else:
+        print(f"{_status(False)} Dependency pins: {pins['error']}")
 
     ffmpeg_detail = report["ffmpeg"]["path"] or "ffmpeg not found on PATH"
     ffmpeg_label = _status(report["ffmpeg"]["ok"]) if report["ffmpeg"]["ok"] or not report.get("ci_mode") else optional_status
