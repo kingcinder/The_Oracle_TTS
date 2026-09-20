@@ -2,6 +2,10 @@
 
 **Release V1.1.1** — CUDA inference support, guided onboarding, and complete first-run workspace persistence.
 
+Changes between releases: [CHANGELOG.md](CHANGELOG.md). Upgrading an
+existing install: [docs/UPGRADING.md](docs/UPGRADING.md). Problems:
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
 The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The repository now ships with a cross-platform bootstrap/install surface for both Linux and Windows.
 
 Chatterbox outputs include built-in Perth watermarking by design. This project does not remove or hide that.
@@ -549,7 +553,8 @@ silently.
 - `scripts/` install, doctor, smoke, and model utility entrypoints
 - `src/the_oracle/` application code
 - `tests/` unit and integration-style coverage
-- `docs/` design specs and plans
+- `docs/` design specs, the [upgrade guide](docs/UPGRADING.md), and the
+  [troubleshooting guide](docs/TROUBLESHOOTING.md)
 - `packaging/` Linux desktop install/uninstall assets
 - `bootstrap_oracle_tts.sh` / `.ps1` one-command setup (install, doctor,
   run, uninstall wrappers follow the same `*_oracle_tts` naming)
