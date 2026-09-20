@@ -852,21 +852,15 @@ rewritten by the loop).
 
 ## Next
 
-- **The MainWindow extraction, which is the remaining work on this request.** `app_gui.py`
-  is 6416 lines with `MainWindow` at 2223-6376 (~4150 lines, 148 methods: 58 Qt-touching
-  over 2779 lines, 90 naming no Qt class over 1369). The constraint that shapes it: the
-  tests patch module-level names *in `app_gui`* (`QMessageBox`, `QFileDialog`, `QDialog`,
-  `QInputDialog`, `subprocess`, `_parse_oracle_model_path`, `_vulkan_preflight_report`,
-  `PreviewWorker`, `PrewarmThread`, `ModelDownloadThread`, `VulkanPreflightThread`), so a
-  method moved into another module resolves its globals there and silently defeats every
-  patch that used to intercept it. Two viable shapes: (a) extract only genuinely Qt-free
-  logic (state bookkeeping, payload building, naming, policy) and leave the Qt wiring where
-  the patches reach it — lower risk, smaller reduction; (b) move the Qt-calling clusters
-  into mixins and move each patch point with them — 7 test files of churn and the safety
-  net changes mid-refactor. Recommend (a), cluster by cluster, one verified slice per pass.
-  Natural first slices, in order of separability: format-health bookkeeping (trusted files,
-  format backups), then the settings/project payload cluster (`_default_gui_settings_payload`,
-  `_current_gui_settings_payload`, `_apply_gui_settings_payload`, `_render_settings`), then
+- **The MainWindow extraction, slice 1 landed.** The transformer popups and preview
+  dialogs now live in `src/the_oracle/gui_ingest.py` (warning popup, side-by-side fix
+  preview, batch folder preview, rule-label coloring; ~500 lines). The seam the audit
+  recommended held without any test churn: the dialogs receive the Qt classes the tests
+  patch (`QDialog`, `QMessageBox`) from MainWindow at call time, so `app_gui` stays the
+  patch point and the moved code stays patch-agnostic. `app_gui.py` is down from 6416 to
+  6025 lines. Remaining slices, unchanged in shape: (a) extract only genuinely Qt-free
+  logic and leave the Qt wiring where the patches reach it — format-health bookkeeping
+  (trusted files, format backups) next, then the settings/project payload cluster, then
   the Vulkan/audio.cpp backend cluster (largest, most self-contained).
 - The same audit question is worth asking of the *GUI*'s readiness surfaces (the
   onboarding/status panels), which report capability to the user but are only covered by

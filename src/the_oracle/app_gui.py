@@ -15,8 +15,8 @@ import subprocess
 import threading
 from typing import Callable
 
-from PySide6.QtCore import QByteArray, QThread, Qt, QUrl, Signal, QTimer
-from PySide6.QtGui import QColor, QTextCharFormat, QAction
+from PySide6.QtCore import QThread, Qt, QUrl, Signal, QTimer
+from PySide6.QtGui import QAction
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -28,8 +28,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
-    QTreeWidget,
-    QTreeWidgetItem,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -45,7 +43,6 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
-    QTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -5100,6 +5097,7 @@ class MainWindow(QMainWindow):
         rewrite, then a single Apply that writes every accepted file (each
         original backed up) and reports per-file results in the status panel.
         """
+        from the_oracle.gui_ingest import run_batch_fix_preview
         from the_oracle.ingest_transformer import analyze_folder, apply_folder_fixes, preview_folder_fixes
 
         folder = QFileDialog.getExistingDirectory(self, "Choose Folder of Input Scripts", "")
@@ -5157,234 +5155,21 @@ class MainWindow(QMainWindow):
         )
 
     def _color_rule_labels_in_view(self, view, rules: list[str]) -> None:
-        """Color every ``[rule label]`` occurrence in *view* by its rule.
+        """Delegate to the single owner in gui_ingest."""
+        from the_oracle.gui_ingest import color_rule_labels_in_view
 
-        Each fix rule gets its own stable hue (see ``rule_color``), so a
-        mixed batch reads as distinct colors rather than uniform text.
-        Uses extra selections appended after any existing ones (row
-        backgrounds), so both layers render.
-        """
-        from the_oracle.ingest_transformer import rule_color, rule_label
-
-        selections = list(view.extraSelections())
-        document = view.document()
-        for rule in dict.fromkeys(rules):  # unique, order-preserving
-            needle = f" [{rule_label(rule)}]"
-            fmt = QTextCharFormat()
-            red, green, blue = rule_color(rule)
-            fmt.setForeground(QColor(red, green, blue))
-            found = document.find(needle, 0)
-            while not found.isNull():
-                selection = QTextEdit.ExtraSelection()
-                selection.cursor = found
-                selection.format = fmt
-                selections.append(selection)
-                found = document.find(needle, found.selectionEnd())
-        view.setExtraSelections(selections)
+        color_rule_labels_in_view(view, rules)
 
     def _show_batch_fix_preview_dialog(
         self,
         folder: str,
         fixes: list,
         warnings_only: list,
-    ) -> bool:
-        """Folder tree + per-file diff preview of the whole batch.
+    ) -> list:
+        """Folder tree + per-file diff preview; the fixes to apply, or []."""
+        from the_oracle.gui_ingest import run_batch_fix_preview
 
-        A tree on the left lists every fixable file under the chosen folder
-        (recursed, shown as paths relative to the folder) with its fix
-        count and an include-checkbox (all ticked by default); selecting
-        one shows its rule-labeled diff on the right. A rule-filter row of
-        checkboxes unticks whole fix rules (e.g. keep only timestamp
-        fixes). Unfixable warnings are listed beneath the tree. Returns
-        the list of fixes to apply on Accept — recomputed against the rule
-        filter and limited to the ticked files (empty when cancelled,
-        nothing ticked, or every fix filtered out).
-        """
-        from the_oracle.ingest_transformer import labeled_fixed_diff, rule_label
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Preview Batch Fix")
-        dialog.setModal(True)
-        dialog.resize(860, 560)
-        layout = QVBoxLayout(dialog)
-
-        total = sum(fix.fix_count for fix in fixes)
-        summary = QLabel(
-            f"{len(fixes)} file(s) under the folder can be corrected "
-            f"({total} fix(es) total). Tick the files to include; untick "
-            "any file to leave it untouched. Selecting a file shows its "
-            "changes; every included original is backed up."
-        )
-        summary.setWordWrap(True)
-        layout.addWidget(summary)
-
-        body = QHBoxLayout()
-
-        # Rule filter: unticking a fix rule leaves those lines untouched
-        # everywhere in the batch (e.g. accept only timestamp fixes). The
-        # Apply is recomputed against the filter, so a file whose fixes are
-        # all filtered out is skipped entirely.
-        present_rules: list[str] = []
-        for fix in fixes:
-            for line_fix in fix.line_fixes:
-                if line_fix.rule not in present_rules:
-                    present_rules.append(line_fix.rule)
-        filter_row = QHBoxLayout()
-        filter_label = QLabel("Fix rules to apply:")
-        filter_row.addWidget(filter_label)
-        rule_checkboxes: dict[str, QCheckBox] = {}
-        for rule in present_rules:
-            box = QCheckBox(rule_label(rule))
-            box.setChecked(True)
-            occurrences = sum(1 for fix in fixes for line_fix in fix.line_fixes if line_fix.rule == rule)
-            box.setToolTip(
-                f"{occurrences} fix(es) of this rule in the batch. Untick to "
-                "leave every line this rule would rewrite unchanged."
-            )
-            filter_row.addWidget(box)
-            rule_checkboxes[rule] = box
-
-        def _excluded_rules() -> set[str]:
-            return {rule for rule, box in rule_checkboxes.items() if not box.isChecked()}
-
-        if rule_checkboxes:
-            filter_row.addStretch(1)
-            layout.addLayout(filter_row)
-
-        tree_column = QVBoxLayout()
-        tree_header = QLabel("Files to fix (folder tree)")
-        tree = QTreeWidget()
-        tree.setHeaderLabels(["File", "Fixes"])
-        tree.setColumnWidth(0, 260)
-        root_item = QTreeWidgetItem(tree, [Path(folder).name or folder, ""])
-        fixes_by_relative: dict[str, object] = {}
-        for fix in fixes:
-            relative = str(fix.path.relative_to(Path(folder)))
-            fixes_by_relative[relative] = fix
-            item = QTreeWidgetItem(root_item, [relative, str(fix.fix_count)])
-            # Every file is included by default; a checkbox excludes it.
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.Checked)
-        root_item.setExpanded(True)
-        tree_column.addWidget(tree_header)
-        tree_column.addWidget(tree, 1)
-        body.addLayout(tree_column, 2)
-
-        def _checked_fixes() -> list:
-            """The fixes whose tree items are ticked, in scan order."""
-            return [
-                fixes_by_relative[root_item.child(i).text(0)]
-                for i in range(root_item.childCount())
-                if root_item.child(i).checkState(0) == Qt.Checked
-            ]
-
-        def _update_counts() -> None:
-            excluded = _excluded_rules()
-            checked = [fix for fix in _checked_fixes() if any(lf.rule not in excluded for lf in fix.line_fixes)]
-            count = len(checked)
-            fix_total = sum(
-                sum(1 for lf in fix.line_fixes if lf.rule not in excluded)
-                for fix in checked
-            )
-            accept.setText(
-                f"Apply Fixes to {count} of {len(fixes)} File(s) ({fix_total} fix(es))"
-            )
-            accept.setEnabled(bool(checked))
-
-        tree.itemChanged.connect(lambda _item, _column: _update_counts())
-        for box in rule_checkboxes.values():
-            box.toggled.connect(lambda _checked: _update_counts())
-
-        diff_column = QVBoxLayout()
-        diff_header = QLabel("Diff (selected file)")
-        diff_view = QPlainTextEdit()
-        diff_view.setReadOnly(True)
-        diff_view.setFont(self.font())
-        diff_column.addWidget(diff_header)
-        diff_column.addWidget(diff_view, 1)
-        body.addLayout(diff_column, 3)
-        layout.addLayout(body, 1)
-
-        if warnings_only:
-            warning_lines = [
-                f"! {Path(a.path).relative_to(Path(folder))}, line {issue.line_number}: "
-                f"{issue.description} (cannot be fixed automatically)"
-                for a in warnings_only
-                for issue in a.warning_issues[:2]
-            ]
-            if warning_lines:
-                warnings_label = QLabel("\n".join(warning_lines[:6]))
-                warnings_label.setWordWrap(True)
-                layout.addWidget(warnings_label)
-
-        first = fixes[0] if fixes else None
-
-        def _show_diff() -> None:
-            selected = tree.selectedItems()
-            if not selected or selected[0] is root_item:
-                if first is not None:
-                    relative = str(first.path.relative_to(Path(folder)))
-                else:
-                    return
-            else:
-                relative = selected[0].text(0)
-            fix = fixes_by_relative.get(relative)
-            if fix is None:
-                return
-            diff_view.setPlainText(
-                labeled_fixed_diff(fix.original_text, fix.fixed_text, fix.line_fixes)
-            )
-            self._color_rule_labels_in_view(
-                diff_view, [line_fix.rule for line_fix in fix.line_fixes]
-            )
-
-        tree.itemSelectionChanged.connect(_show_diff)
-        # Preselect the first fixable file so the diff pane is never empty.
-        if fixes:
-            first_relative = str(fixes[0].path.relative_to(Path(folder)))
-            for index in range(root_item.childCount()):
-                child = root_item.child(index)
-                if child.text(0) == first_relative:
-                    tree.setCurrentItem(child)
-                    break
-            _show_diff()
-
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        accept = QPushButton(f"Apply Fixes to {len(fixes)} File(s)")
-        accept.setDefault(True)
-        cancel = QPushButton("Cancel")
-        buttons.addWidget(accept)
-        buttons.addWidget(cancel)
-        layout.addLayout(buttons)
-        accept.clicked.connect(dialog.accept)
-        cancel.clicked.connect(dialog.reject)
-        # After the button exists, so the label/enablement can be computed.
-        _update_counts()
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        if not accepted:
-            return []
-        checked_relatives = {
-            root_item.child(i).text(0)
-            for i in range(root_item.childCount())
-            if root_item.child(i).checkState(0) == Qt.Checked
-        }
-        excluded = _excluded_rules()
-        if not checked_relatives:
-            return []
-        # Recompute the batch against the rule filter: the precomputed
-        # rewrites include every rule, so applying them as-is would ignore
-        # the filter. A file whose fixes are all excluded drops out here.
-        from the_oracle.ingest_transformer import preview_folder_fixes
-
-        try:
-            refixes, _warnings = preview_folder_fixes(folder, exclude_rules=excluded or None)
-        except ValueError:
-            return []  # every fix was filtered out
-        return [
-            fix for fix in refixes
-            if str(fix.path.relative_to(Path(folder))) in checked_relatives
-        ]
+        return run_batch_fix_preview(self, folder, fixes, warnings_only, dialog_cls=QDialog)
 
     def _run_ingest_transformer_check(self) -> bool:
         """Check the input file's formatting with the ingestion transformer.
@@ -5397,6 +5182,7 @@ class MainWindow(QMainWindow):
         file, or user chose to continue anyway); False when the user wants to
         stop and fix the file themselves.
         """
+        from the_oracle.gui_ingest import format_warning_choice
         from the_oracle.ingest_transformer import analyze_input_file, fix_input_file, preview_fixed_text
 
         input_file = self.input_path.text().strip()
@@ -5424,86 +5210,47 @@ class MainWindow(QMainWindow):
             )
             return True
 
-        fixable = analysis.fixable_issues
-        warnings = analysis.warning_issues
-        lines: list[str] = []
-        if fixable:
-            lines.append(
-                f"Found {len(fixable)} formatting problem(s) that can be corrected automatically:"
-            )
-            for issue in fixable[:5]:
-                where = f"line {issue.line_number}" if issue.line_number else "file"
-                lines.append(f"  \u2022 {where}: {issue.fix_description}")
-            if len(fixable) > 5:
-                lines.append(f"  \u2026 and {len(fixable) - 5} more.")
-        if warnings:
-            lines.append(
-                f"Found {len(warnings)} formatting warning(s) that cannot be corrected automatically:"
-            )
-            for issue in warnings[:5]:
-                where = f"line {issue.line_number}" if issue.line_number else "file"
-                lines.append(f"  \u2022 {where}: {issue.description}")
-            if len(warnings) > 5:
-                lines.append(f"  \u2026 and {len(warnings) - 5} more.")
-        # Cast suggestions are meaningful even pre-fix: they come from the
-        # transformed text, so a subtitle conversion's cast is included.
-        lines.extend(self._speaker_ref_hint_lines(input_file))
-
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Input Formatting")
-        box.setText(
-            "The input file's formatting may prevent correct speaker attribution."
+        choice = format_warning_choice(
+            self,
+            fixable_issues=analysis.fixable_issues,
+            warning_issues=analysis.warning_issues,
+            hint_lines=self._speaker_ref_hint_lines(input_file),
+            message_box_cls=QMessageBox,
         )
-        box.setInformativeText("\n".join(lines))
-        if fixable:
-            fix_button = box.addButton("Fix File Automatically", QMessageBox.ButtonRole.AcceptRole)
-            box.addButton(QMessageBox.StandardButton.Cancel)
-            box.addButton(QMessageBox.StandardButton.Ignore)
-            box.setDefaultButton(fix_button)
-        else:
-            box.addButton(QMessageBox.StandardButton.Ok)
-            box.setDefaultButton(QMessageBox.StandardButton.Ok)
-        box.exec()
-        clicked = box.clickedButton()
-        if not fixable:
-            return True
-        if clicked is fix_button:
-            try:
-                original_text, fixed_text, fix_count, _issues, line_fixes = preview_fixed_text(input_file)
-            except (OSError, ValueError) as exc:
-                QMessageBox.critical(self, "Fix Failed", f"The file could not be corrected:\n{exc}")
-                return False
-            if not self._show_fix_preview_dialog(original_text, fixed_text, fix_count, line_fixes, input_file=input_file):
-                self.error_panel.append("Fix cancelled: the input file was left unchanged.")
-                return False
-            try:
-                _text, fix_count, backup_path = fix_input_file(input_file)
-            except (OSError, ValueError) as exc:
-                QMessageBox.critical(self, "Fix Failed", f"The file could not be corrected:\n{exc}")
-                return False
-            self._remember_format_backup(input_file, backup_path)
-            message = f"Corrected {fix_count} formatting problem(s) in {Path(input_file).name}."
-            if backup_path:
-                message += f"\n\nA backup of the original was saved to:\n{backup_path}"
-            hint_lines = self._speaker_ref_hint_lines(input_file)
-            if hint_lines:
-                message += "\n\n" + "\n".join(hint_lines)
-            QMessageBox.information(self, "File Corrected", message)
-            self.error_panel.append(
-                f"Input formatting: corrected {fix_count} problem(s) in "
-                f"{Path(input_file).name}"
-                + (f" (backup: {backup_path})" if backup_path else "")
-                + " \u2014 re-analyzing the corrected file now."
-            )
-            for hint in self._speaker_ref_hint_lines(input_file):
-                self.error_panel.append(f"  {hint}")
-            return True
-        # standardButton() maps the clicked widget back to its role; a bare
-        # `is` comparison against the enum can never be true for a button.
-        if box.standardButton(clicked) == QMessageBox.StandardButton.Cancel:
+        if choice == "cancel":
             return False
-        return True  # Ignore (or any non-fix button) proceeds without a fix
+        if choice != "fix":
+            return True  # clean of fixables, Ignore, or any non-fix button
+        try:
+            original_text, fixed_text, fix_count, _issues, line_fixes = preview_fixed_text(input_file)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Fix Failed", f"The file could not be corrected:\n{exc}")
+            return False
+        if not self._show_fix_preview_dialog(original_text, fixed_text, fix_count, line_fixes, input_file=input_file):
+            self.error_panel.append("Fix cancelled: the input file was left unchanged.")
+            return False
+        try:
+            _text, fix_count, backup_path = fix_input_file(input_file)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Fix Failed", f"The file could not be corrected:\n{exc}")
+            return False
+        self._remember_format_backup(input_file, backup_path)
+        message = f"Corrected {fix_count} formatting problem(s) in {Path(input_file).name}."
+        if backup_path:
+            message += f"\n\nA backup of the original was saved to:\n{backup_path}"
+        hint_lines = self._speaker_ref_hint_lines(input_file)
+        if hint_lines:
+            message += "\n\n" + "\n".join(hint_lines)
+        QMessageBox.information(self, "File Corrected", message)
+        self.error_panel.append(
+            f"Input formatting: corrected {fix_count} problem(s) in "
+            f"{Path(input_file).name}"
+            + (f" (backup: {backup_path})" if backup_path else "")
+            + " \u2014 re-analyzing the corrected file now."
+        )
+        for hint in self._speaker_ref_hint_lines(input_file):
+            self.error_panel.append(f"  {hint}")
+        return True
 
     def _speaker_ref_hint_lines(self, input_file: str) -> list[str]:
         """--speaker-ref suggestions for a script's cast, for the popup list.
@@ -5672,155 +5419,29 @@ class MainWindow(QMainWindow):
         ``[dash/pipe separator]``); rows scroll in sync so long scripts stay
         reviewable.
         """
-        from the_oracle.ingest_transformer import rule_label, side_by_side_diff_rows
+        from the_oracle.gui_ingest import run_fix_preview
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Preview Fixed Text")
-        dialog.setModal(True)
-        dialog.resize(900, 560)
-        # Restore the size/position remembered from the last session, so the
-        # dialog reopens the way the user left it (multi-monitor safe: the
-        # blob encodes position relative to the OS's virtual desktop).
-        saved_geometry = self._app_settings.get("preview_dialog_geometry")
-        if isinstance(saved_geometry, str) and saved_geometry:
-            dialog.restoreGeometry(QByteArray.fromBase64(saved_geometry.encode("ascii")))
-        layout = QVBoxLayout(dialog)
-
-        summary = QLabel(
-            f"The correction rewrites {fix_count} line(s). Original on the "
-            "left, corrected on the right \u2014 review the changes before "
-            "accepting; the original is backed up either way."
+        result = run_fix_preview(
+            self,
+            original_text,
+            fixed_text,
+            fix_count,
+            line_fixes,
+            input_file,
+            dialog_cls=QDialog,
+            saved_geometry=self._app_settings.get("preview_dialog_geometry"),
         )
-        summary.setWordWrap(True)
-        layout.addWidget(summary)
-
-        panes = QHBoxLayout()
-        left_column = QVBoxLayout()
-        left_header = QLabel("Original")
-        left_view = QPlainTextEdit()
-        left_view.setReadOnly(True)
-        left_view.setFont(self.font())
-        left_column.addWidget(left_header)
-        left_column.addWidget(left_view, 1)
-        panes.addLayout(left_column, 1)
-
-        right_column = QVBoxLayout()
-        right_header = QLabel("Corrected (with fix rule)")
-        right_view = QPlainTextEdit()
-        right_view.setReadOnly(True)
-        right_view.setFont(self.font())
-        right_column.addWidget(right_header)
-        right_column.addWidget(right_view, 1)
-        panes.addLayout(right_column, 1)
-        layout.addLayout(panes, 1)
-
-        rows = side_by_side_diff_rows(original_text, fixed_text, line_fixes or [])
-        left_lines: list[str] = []
-        right_lines: list[str] = []
-        for row in rows:
-            if row.kind == "same":
-                left_lines.append(row.left or "")
-                right_lines.append(row.right or "")
-            elif row.kind == "changed":
-                left_lines.append(f"- {row.left}")
-                label = f" [{rule_label(row.rule)}]" if row.rule else ""
-                right_lines.append(f"+ {row.right}{label}")
-            elif row.kind == "removed":
-                left_lines.append(f"- {row.left}")
-                right_lines.append("")
-            else:  # added
-                label = f" [{rule_label(row.rule)}]" if row.rule else ""
-                left_lines.append("")
-                right_lines.append(f"+ {row.right}{label}")
-        left_view.setPlainText("\n".join(left_lines))
-        right_view.setPlainText("\n".join(right_lines))
-
-        # Color-code the changed rows: soft red on the original pane, soft
-        # green on the corrected pane, so rewrites scan at a glance. Extra
-        # selections give full-width per-line backgrounds without rich text.
-        # Softened so the text stays readable in both light and dark themes.
-        removed_format = QTextCharFormat()
-        removed_format.setBackground(QColor(255, 106, 106, 70))
-        added_format = QTextCharFormat()
-        added_format.setBackground(QColor(108, 220, 108, 70))
-        left_selections: list[QTextEdit.ExtraSelection] = []
-        right_selections: list[QTextEdit.ExtraSelection] = []
-        cursor = left_view.textCursor()
-        cursor.movePosition(cursor.MoveOperation.Start)
-        for line_index, row in enumerate(rows):
-            block = left_view.document().findBlockByLineNumber(line_index)
-            if not block.isValid():
-                break
-            cursor.setPosition(block.position())
-            cursor.movePosition(cursor.MoveOperation.EndOfBlock, cursor.MoveMode.KeepAnchor)
-            if row.kind == "changed" or row.kind == "removed":
-                selection = QTextEdit.ExtraSelection()
-                selection.cursor = cursor
-                selection.format = removed_format
-                left_selections.append(selection)
-        cursor = right_view.textCursor()
-        cursor.movePosition(cursor.MoveOperation.Start)
-        for line_index, row in enumerate(rows):
-            block = right_view.document().findBlockByLineNumber(line_index)
-            if not block.isValid():
-                break
-            cursor.setPosition(block.position())
-            cursor.movePosition(cursor.MoveOperation.EndOfBlock, cursor.MoveMode.KeepAnchor)
-            if row.kind == "changed" or row.kind == "added":
-                selection = QTextEdit.ExtraSelection()
-                selection.cursor = cursor
-                selection.format = added_format
-                right_selections.append(selection)
-        left_view.setExtraSelections(left_selections)
-        right_view.setExtraSelections(right_selections)
-
-        # Tint each [rule label] by its rule's color so a mixed set of
-        # fixes reads as distinct hues, not uniform text. Must run after
-        # the row backgrounds above (setExtraSelections replaces the list;
-        # the helper appends to whatever exists).
-        present_rules = [row.rule for row in rows if row.rule]
-        self._color_rule_labels_in_view(right_view, present_rules)
-
-        # Synchronized scrolling: either pane's scroll drives the other.
-        left_bar = left_view.verticalScrollBar()
-        right_bar = right_view.verticalScrollBar()
-        left_bar.valueChanged.connect(right_bar.setValue)
-        right_bar.valueChanged.connect(left_bar.setValue)
-
-        remember = None
-        if input_file:
-            remember = QCheckBox("Remember this choice and fix this file automatically in the future")
-            remember.setToolTip(
-                "Pre-approve fixes for this exact file: future Analyze/Render runs "
-                "correct it silently (a backup is still kept) without this popup. "
-                "Clear via Settings > Forget remembered auto-fix approvals."
-            )
-            layout.addWidget(remember)
-
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        accept = QPushButton("Accept Fix")
-        accept.setDefault(True)
-        cancel = QPushButton("Cancel")
-        buttons.addWidget(accept)
-        buttons.addWidget(cancel)
-        layout.addLayout(buttons)
-        accept.clicked.connect(dialog.accept)
-        cancel.clicked.connect(dialog.reject)
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
         # Remember the dialog's size and position for the next session
         # (persists through the app-settings file alongside the workspace).
-        if self._app_settings_ready:
-            geometry = dialog.saveGeometry()
-            if not geometry.isNull():
-                self._app_settings["preview_dialog_geometry"] = bytes(geometry.toBase64()).decode("ascii")
-                try:
-                    save_app_settings(self._app_settings)
-                except Exception as exc:
-                    self.error_panel.append(f"Could not persist preview dialog geometry: {exc}")
-        if accepted and remember is not None and remember.isChecked() and input_file:
+        if self._app_settings_ready and result.geometry:
+            self._app_settings["preview_dialog_geometry"] = result.geometry
+            try:
+                save_app_settings(self._app_settings)
+            except Exception as exc:
+                self.error_panel.append(f"Could not persist preview dialog geometry: {exc}")
+        if result.accepted and result.remember and input_file:
             self._remember_trusted_input_file(input_file)
-        return accepted
+        return result.accepted
 
     def prepare_project(self) -> None:
         with self._prewarm_lock:
