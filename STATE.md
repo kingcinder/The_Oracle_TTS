@@ -864,6 +864,7 @@ rewritten by the loop).
   injection design; the Vulkan/audio.cpp and render/preview clusters carry
   wholesale-patched module names (thread classes, workers, dialogs) and must keep the
   patch surface; those come later, in that order, one verified slice per pass.
+- **The parked `wip/ingest-refactor-hints` branch is finished and merged** (591efa0, fast-forward). Its two still-valid owners landed: `srt_ingest.ensure_subtitle_script` owns the convert-not-overwrite subtitle policy (both `cli._maybe_convert_srt` and `app_gui._convert_subtitle_input` are presentation wrappers; the GUI's old strict-decode copy — which blocked CP1252 subtitles the CLI converted fine — is gone), and the speaker-ref report data lives in `ingest_transformer.speaker_ref_report_for_file` instead of a CLI private the GUI imported. Ownership is pinned by source scans in `tests/test_subtitle_conversion_has_one_owner.py`, both pins mutation-proven. Worktree note: testing a linked worktree against the shared venv requires PYTHONPATH shadowing (the editable install resolves `the_oracle` to the main checkout); verified by probe before trusting any worktree result.
 - The stream-of-consciousness sample is now a permanent fixture
   (`tests/fixtures/stream_of_consciousness_dialogue_with_typos.txt`) pinning the
   transformer's spelling-blindness: format-clean file, typos survive every transform
