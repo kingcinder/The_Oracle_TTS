@@ -6,12 +6,17 @@ from tests.helpers import isolate_user_config
 
 from the_oracle.gui_settings import (
     GUISettingsError,
+    drop_next_format_backup,
+    input_file_is_trusted,
     list_templates,
     load_app_settings,
     load_gui_settings,
     load_recent_reference_paths,
     load_template,
+    next_format_backup,
+    remember_format_backup,
     remember_recent_reference_path,
+    remember_trusted_input_file,
     save_app_settings,
     save_gui_settings,
     save_template,
@@ -414,3 +419,79 @@ def test_load_gui_settings_corrupt_json_raises_gui_settings_error(tmp_path: Path
 def test_load_template_missing_raises_gui_settings_error() -> None:
     with pytest.raises(GUISettingsError):
         load_template("no_such_template_anywhere")
+
+
+# ----------------------------------------------------------------------------
+# Input format-health bookkeeping (trusted files + backup records)
+# ----------------------------------------------------------------------------
+
+
+def test_remember_format_backup_dedupes_per_file_and_keeps_newest_first() -> None:
+    settings: dict = {}
+    remember_format_backup(settings, "/tmp/a.txt", "/tmp/a.txt.bak-1", stamp="t1")
+    remember_format_backup(settings, "/tmp/b.txt", "/tmp/b.txt.bak-1", stamp="t2")
+    remember_format_backup(settings, "/tmp/a.txt", "/tmp/a.txt.bak-2", stamp="t3")
+
+    records = settings["recent_format_backups"]
+    assert [r["file"] for r in records] == ["/tmp/a.txt", "/tmp/b.txt"]
+    assert records[0]["backup"] == "/tmp/a.txt.bak-2"
+    # A no-backup call records nothing.
+    remember_format_backup(settings, "/tmp/c.txt", None)
+    assert len(settings["recent_format_backups"]) == 2
+
+
+def test_remember_format_backup_caps_the_history_at_twenty() -> None:
+    settings: dict = {}
+    for index in range(25):
+        remember_format_backup(
+            settings, f"/tmp/f{index}.txt", f"/tmp/f{index}.txt.bak", stamp=f"t{index}"
+        )
+    records = settings["recent_format_backups"]
+    assert len(records) == 20
+    assert records[0]["file"] == "/tmp/f24.txt"  # newest survives
+    assert records[-1]["file"] == "/tmp/f5.txt"  # oldest five dropped
+
+
+def test_remember_format_backup_stamps_with_the_persisted_format() -> None:
+    from datetime import datetime
+
+    settings: dict = {}
+    remember_format_backup(settings, "/tmp/a.txt", "/tmp/a.txt.bak")
+    stamp = settings["recent_format_backups"][0]["stamp"]
+    # Round-trips through the format the schema is documented with.
+    assert datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
+
+
+def test_trusted_file_check_resolves_paths_before_comparing() -> None:
+    settings: dict = {}
+    remember_trusted_input_file(settings, "/tmp/repo/input/messy.txt")
+    assert input_file_is_trusted(settings, "/tmp/repo/input/messy.txt")
+    # The same file via a different spelling of the path is still trusted.
+    assert input_file_is_trusted(settings, "/tmp/repo/./input/messy.txt")
+    assert not input_file_is_trusted(settings, "/tmp/repo/input/other.txt")
+    # An empty settings payload is never trusted.
+    assert not input_file_is_trusted({}, "/tmp/repo/input/messy.txt")
+
+
+def test_next_and_drop_format_backup_skip_malformed_records() -> None:
+    settings = {
+        "recent_format_backups": [
+            "not-a-dict",
+            {"file": "/tmp/x.txt"},  # no backup key
+            {"file": "/tmp/a.txt", "backup": "/tmp/a.txt.bak", "stamp": "t1"},
+            {"backup": "/tmp/b.txt.bak"},  # no file key
+            {"file": "/tmp/b.txt", "backup": "/tmp/b.txt.bak", "stamp": "t0"},
+        ]
+    }
+    assert next_format_backup(settings) == {
+        "file": "/tmp/a.txt", "backup": "/tmp/a.txt.bak", "stamp": "t1"
+    }
+    # next does not consume; drop consumes exactly the first usable record.
+    assert next_format_backup(settings) is not None
+    drop_next_format_backup(settings)
+    assert next_format_backup(settings)["file"] == "/tmp/b.txt"
+    drop_next_format_backup(settings)
+    assert next_format_backup(settings) is None
+    # Dropping past the end leaves an empty list, not a crash.
+    drop_next_format_backup(settings)
+    assert settings["recent_format_backups"] == []

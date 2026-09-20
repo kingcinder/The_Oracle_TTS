@@ -852,16 +852,18 @@ rewritten by the loop).
 
 ## Next
 
-- **The MainWindow extraction, slice 1 landed.** The transformer popups and preview
-  dialogs now live in `src/the_oracle/gui_ingest.py` (warning popup, side-by-side fix
-  preview, batch folder preview, rule-label coloring; ~500 lines). The seam the audit
-  recommended held without any test churn: the dialogs receive the Qt classes the tests
-  patch (`QDialog`, `QMessageBox`) from MainWindow at call time, so `app_gui` stays the
-  patch point and the moved code stays patch-agnostic. `app_gui.py` is down from 6416 to
-  6025 lines. Remaining slices, unchanged in shape: (a) extract only genuinely Qt-free
-  logic and leave the Qt wiring where the patches reach it — format-health bookkeeping
-  (trusted files, format backups) next, then the settings/project payload cluster, then
-  the Vulkan/audio.cpp backend cluster (largest, most self-contained).
+- **The MainWindow extraction, slices 1-2 landed.** Slice 1: the transformer popups and
+  preview dialogs live in `src/the_oracle/gui_ingest.py` (~500 lines), with the Qt classes
+  the tests patch injected from MainWindow at call time. Slice 2: the format-health
+  bookkeeping (trusted-file approvals, backup records) lives in `gui_settings.py` — which
+  already normalized both schemas on load, so one file now owns the full payload
+  lifecycle; `app_gui.py` holds zero references to the two schema keys. Both slices
+  required zero edits to existing tests, which is the seam proof. A full per-cluster
+  review (AST method inventory + exhaustive patch-surface scan) cleared slice 2 and
+  shaped the rest: the settings-payload cluster reads 15 widgets and needs a widget-read
+  injection design; the Vulkan/audio.cpp and render/preview clusters carry
+  wholesale-patched module names (thread classes, workers, dialogs) and must keep the
+  patch surface; those come later, in that order, one verified slice per pass.
 - The stream-of-consciousness sample is now a permanent fixture
   (`tests/fixtures/stream_of_consciousness_dialogue_with_typos.txt`) pinning the
   transformer's spelling-blindness: format-clean file, typos survive every transform
