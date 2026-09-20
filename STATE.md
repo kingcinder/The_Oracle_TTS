@@ -852,6 +852,13 @@ rewritten by the loop).
 
 ## Next
 
+- **Release metadata is single-sourced.** `__version__` in `src/the_oracle/__init__.py` is the
+  only tracked version literal; `pyproject.toml` reads it via `[tool.setuptools.dynamic]` and
+  `scripts/release.py` enforces the invariant (`--check`), rewrites the README/STATE banners
+  from it (`--sync-banners`), and builds versioned sdist+wheel with a `checksums-<version>.sha256`
+  manifest via the in-venv PEP 517 hooks (offline). Verified end-to-end on the real repo;
+  `tests/test_release.py` pins it. Setuptools' `build_meta` mutates `sys.argv` permanently —
+  any future in-process hook caller must not read `sys.argv` after the first hook call.
 - **The MainWindow extraction, slices 1-2 landed.** Slice 1: the transformer popups and
   preview dialogs live in `src/the_oracle/gui_ingest.py` (~500 lines), with the Qt classes
   the tests patch injected from MainWindow at call time. Slice 2: the format-health
