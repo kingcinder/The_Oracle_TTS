@@ -294,12 +294,18 @@ def test_bash_oracle_rejects_unknown_action(tmp_path: Path) -> None:
 
 
 def _stub_smoke(monkeypatch, output_path: Path):
+    # The doctor delegates the output-verdict policy to the smoke module, so
+    # the fake module carries the real helper -- these tests then still
+    # exercise the real policy (missing/empty fail, present passes).
+    from the_oracle.smoke import smoke_output_problem
+
     fake_smoke = types.ModuleType("the_oracle.smoke")
     fake_smoke.run_deterministic_smoke_render = lambda output_root, source_format="txt": SimpleNamespace(
         output_path=output_path,
         project_dir=output_root / "project",
         cache_reused_on_second_pass=False,
     )
+    fake_smoke.smoke_output_problem = smoke_output_problem
     monkeypatch.setitem(sys.modules, "the_oracle.smoke", fake_smoke)
 
 

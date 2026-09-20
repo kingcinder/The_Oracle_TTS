@@ -173,6 +173,22 @@ def _write_reference(path: Path, frequency: float) -> Path:
     return path
 
 
+def smoke_output_problem(result: SmokeRenderResult) -> str | None:
+    """Why a smoke render's output is not usable, or None when it is.
+
+    The render call can return without raising yet produce no usable audio
+    (deleted/moved output, empty file), so every caller that reports a smoke
+    verdict -- the doctor's wrapper and the standalone runner alike -- checks
+    this instead of trusting the return value alone.
+    """
+    output_path = Path(result.output_path)
+    if not output_path.is_file():
+        return f"Smoke render produced no output file at {output_path}"
+    if output_path.stat().st_size == 0:
+        return f"Smoke render output is empty at {output_path}"
+    return None
+
+
 def run_deterministic_smoke_render(output_root: str | Path, source_format: str = "txt") -> SmokeRenderResult:
     if source_format not in {"txt", "md"}:
         raise ValueError(f"Unsupported smoke source format: {source_format}")

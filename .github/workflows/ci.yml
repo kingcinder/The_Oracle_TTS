@@ -116,6 +116,24 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\pytest.exe
 
+      # The doctor runs the deterministic smoke render inside its report
+      # (steps above); this runs the standalone runner directly so the smoke
+      # render is a named signal in its own right, on both operating systems,
+      # on every push and pull request. It needs no model and no network: the
+      # smoke's engine is deterministic and the text-repair helpers run on
+      # their built-in fallbacks. The runner verifies its own outputs and
+      # exits nonzero when a render comes back empty, so a green step here
+      # means real audio was produced and cached on the second pass.
+      - name: Deterministic Smoke Render (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./.venv/bin/python scripts/smoke_render.py
+
+      - name: Deterministic Smoke Render (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe scripts/smoke_render.py
+
       # The doctor is the launch gate, so its verdict must not depend on how
       # many times it has been run. That regressed twice, each time because a
       # check graded state it had created on the earlier run, and neither was

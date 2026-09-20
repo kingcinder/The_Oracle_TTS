@@ -1,16 +1,25 @@
+import importlib.util
 import json
 from pathlib import Path
 from unittest.mock import patch
 
 import soundfile as sf
 import pytest
+import yaml
 
 pytestmark = pytest.mark.slow
 
 from the_oracle.models.project import VoiceProfile
 from the_oracle.models.project import VoiceSettings
 from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
-from the_oracle.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference, run_deterministic_smoke_render
+from the_oracle.smoke import (
+    SmokeRenderResult,
+    _DeterministicChatterboxEngine,
+    _SmokeEmotionClassifier,
+    _write_reference,
+    run_deterministic_smoke_render,
+    smoke_output_problem,
+)
 
 
 def test_deterministic_smoke_render_runs_end_to_end(tmp_path: Path) -> None:
@@ -214,3 +223,211 @@ def test_render_preview_reports_honest_stage_progress(tmp_path: Path) -> None:
         "Complete",
     ]
     assert events[-1].current_step == events[-1].total_steps == 4
+
+
+# --- the output-verdict policy: one owner, applied by every caller ------------
+
+
+def _script_module():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "smoke_render.py"
+    spec = importlib.util.spec_from_file_location("oracle_smoke_render_script", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _result(output_path: Path, source_format: str = "txt") -> SmokeRenderResult:
+    return SmokeRenderResult(
+        source_format=source_format,
+        output_path=output_path,
+        project_dir=output_path.parent,
+        cache_reused_on_second_pass=True,
+        stem_count=4,
+        render_plan_path=output_path.parent / "plan.json",
+        dialogue_path=output_path.parent / "dialogue.txt",
+    )
+
+
+def test_smoke_output_problem_reports_missing_and_empty_outputs(tmp_path: Path) -> None:
+    missing = tmp_path / "gone.flac"
+    assert "no output" in (smoke_output_problem(_result(missing)) or "").lower()
+
+    empty = tmp_path / "empty.flac"
+    empty.write_bytes(b"")
+    assert "empty" in (smoke_output_problem(_result(empty)) or "").lower()
+
+    real = tmp_path / "real.flac"
+    real.write_bytes(b"RIFF....")
+    assert smoke_output_problem(_result(real)) is None
+
+
+def test_smoke_render_script_exits_zero_only_when_outputs_are_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The standalone runner verifies what the render claims, not just that
+    it returned: a render that returns without producing a non-empty output
+    file fails the run with the reason, like the doctor's wrapper does."""
+    module = _script_module()
+    real = tmp_path / "real.flac"
+    real.write_bytes(b"RIFF....")
+
+    monkeypatch.setattr(
+        module,
+        "run_deterministic_smoke_render",
+        lambda output_root, source_format="txt": _result(real, source_format),
+    )
+    assert module.main(["--output-root", str(tmp_path)]) == 0
+
+    # The healthy md leg, but a txt leg whose output vanished after render.
+    def _half_broken(output_root, source_format="txt"):
+        if source_format == "txt":
+            return _result(tmp_path / "vanished.flac", source_format)
+        return _result(real, source_format)
+
+    monkeypatch.setattr(module, "run_deterministic_smoke_render", _half_broken)
+    assert module.main(["--output-root", str(tmp_path)]) == 1
+    assert "no output" in capsys.readouterr().err.lower()
+    # The healthy leg's report still printed, so the failure is diagnosable.
+    assert "md" in capsys.readouterr().out
+
+
+def test_the_output_verdict_policy_has_one_owner() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    owner = (repo / "src" / "the_oracle" / "smoke.py").read_text(encoding="utf-8")
+    doctor = (repo / "scripts" / "doctor.py").read_text(encoding="utf-8")
+    runner = (repo / "scripts" / "smoke_render.py").read_text(encoding="utf-8")
+    # The verdict literals live exactly once, in the owner (vacuity guard:
+    # a rename must not make this scan pass by matching nothing).
+    assert owner.count("produced no output file") == 1
+    assert "produced no output file" not in doctor
+    assert "produced no output file" not in runner
+    # Both callers delegate to the owner instead of re-implementing it.
+    assert "smoke_output_problem(result)" in doctor
+    assert "smoke_output_problem(result)" in runner
+
+
+# --- CI: the smoke render is a named step on every push -----------------------
+
+
+def test_workflow_runs_the_deterministic_smoke_render_on_both_oses() -> None:
+    workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    steps = {step.get("name"): step for step in workflow["jobs"]["test"]["steps"]}
+    linux = steps["Deterministic Smoke Render (Linux)"]
+    windows = steps["Deterministic Smoke Render (Windows)"]
+    assert ".venv/bin/python" in linux["run"]
+    assert "scripts/smoke_render.py" in linux["run"]
+    assert ".venv\\Scripts\\python.exe" in windows["run"]
+    assert "scripts/smoke_render.py" in windows["run"]
+    # Gated only by operating system, so the step runs on every push and
+    # pull_request -- the `on:` block needs no per-step opt-in.
+    assert linux["if"] == "runner.os == 'Linux'"
+    assert windows["if"] == "runner.os == 'Windows'"
+
+
+# ---------------------------------------------------------------------------
+# The standalone runner's own verdict, and where its policy lives
+# ---------------------------------------------------------------------------
+
+
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "smoke_render.py"
+WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+
+
+def _load_smoke_render_script():
+    spec = importlib.util.spec_from_file_location("oracle_smoke_render_script", SCRIPT_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def _result(output_path: Path, source_format: str = "txt") -> SmokeRenderResult:
+    return SmokeRenderResult(
+        source_format=source_format,
+        output_path=output_path,
+        project_dir=output_path.parent / f"render_project_{source_format}",
+        cache_reused_on_second_pass=True,
+        stem_count=4,
+        render_plan_path=output_path.parent / "render_plan.json",
+        dialogue_path=output_path.parent / f"smoke_dialogue.{source_format}",
+    )
+
+
+def test_smoke_output_problem_flags_missing_and_empty_outputs(tmp_path: Path) -> None:
+    healthy = tmp_path / "healthy.flac"
+    healthy.write_bytes(b"RIFF-fake-audio")
+    assert smoke_output_problem(_result(healthy)) is None
+
+    missing = smoke_output_problem(_result(tmp_path / "missing.flac"))
+    assert missing is not None and "no output file" in missing
+
+    empty = tmp_path / "empty.flac"
+    empty.write_bytes(b"")
+    empty_problem = smoke_output_problem(_result(empty))
+    assert empty_problem is not None and "empty" in empty_problem
+
+
+def test_smoke_render_script_exits_zero_only_when_outputs_are_usable(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A render can return without raising yet leave no usable audio; the
+    runner's exit code must catch that, not just a raised exception."""
+    module = _load_smoke_render_script()
+    healthy = tmp_path / "healthy.flac"
+    healthy.write_bytes(b"RIFF-fake-audio")
+
+    healthy_results = [_result(healthy, "txt"), _result(healthy, "md")]
+    monkeypatch.setattr(
+        module,
+        "run_deterministic_smoke_render",
+        lambda root, source_format="txt": healthy_results[0 if source_format == "txt" else 1],
+    )
+    assert module.main(["--output-root", str(tmp_path)]) == 0
+    capsys.readouterr()  # discard the human-readable run
+    assert module.main(["--json", "--output-root", str(tmp_path)]) == 0
+    parsed = json.loads(capsys.readouterr().out)
+    assert [entry["source_format"] for entry in parsed] == ["txt", "md"]
+
+    missing = tmp_path / "missing.flac"
+    broken_results = [_result(missing, "txt"), _result(healthy, "md")]
+    monkeypatch.setattr(
+        module,
+        "run_deterministic_smoke_render",
+        lambda root, source_format="txt": broken_results[0 if source_format == "txt" else 1],
+    )
+    assert module.main(["--output-root", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "no output file" in err and "txt" in err
+    assert "md" not in err  # only the failing leg is named
+
+
+def test_workflow_runs_the_deterministic_smoke_render_on_both_operating_systems() -> None:
+    workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    steps = {step.get("name"): step for step in workflow["jobs"]["test"]["steps"]}
+    linux = steps["Deterministic Smoke Render (Linux)"]
+    windows = steps["Deterministic Smoke Render (Windows)"]
+    assert "scripts/smoke_render.py" in linux["run"]
+    assert ".venv/bin/python" in linux["run"]
+    assert "scripts/smoke_render.py" in windows["run"]
+    assert ".venv\\Scripts\\python.exe" in windows["run"]
+    # Gated only by operating system, so the step runs on every push and
+    # pull request; a job-level `if:` could silently remove it from pushes.
+    assert linux["if"] == "runner.os == 'Linux'"
+    assert windows["if"] == "runner.os == 'Windows'"
+
+
+def test_the_smoke_output_verdict_policy_has_one_owner() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    smoke_src = (repo / "src" / "the_oracle" / "smoke.py").read_text(encoding="utf-8")
+    doctor_src = (repo / "scripts" / "doctor.py").read_text(encoding="utf-8")
+    script_src = (repo / "scripts" / "smoke_render.py").read_text(encoding="utf-8")
+    # The reason strings live once, in the owner; the count is its own
+    # vacuity guard -- a rename that empties the owner fails here too.
+    assert smoke_src.count("produced no output file") == 1
+    assert "produced no output file" not in doctor_src
+    assert "produced no output file" not in script_src
+    # And both callers delegate to the owner rather than re-deriving it.
+    assert "smoke_output_problem(result)" in doctor_src
+    assert "smoke_output_problem(result)" in script_src
