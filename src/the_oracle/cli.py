@@ -266,18 +266,13 @@ def _voice_settings_from_args(args: argparse.Namespace) -> VoiceSettings:
     )
 
 
-def _subtitle_script_target(file_path: Path) -> Path:
-    """The sibling script path a subtitle conversion writes to."""
-    from the_oracle.subtitle_targets import converted_script_target
-
-    return converted_script_target(file_path)
-
-
 def _srt_script_if_converted(input_path: str) -> str:
     """Return the converted subtitle script when a fix produced one."""
+    from the_oracle.subtitle_targets import converted_script_target
+
     file_path = Path(input_path)
     if file_path.suffix.lower() in (".srt", ".vtt"):
-        script = _subtitle_script_target(file_path)
+        script = converted_script_target(file_path)
         if script.is_file():
             return str(script)
     return input_path
@@ -293,41 +288,31 @@ def _maybe_convert_srt(input_path: str) -> str:
     not a valid subtitle file (including a missing or unreadable file) is
     returned unchanged so the ordinary error paths report it.
     """
-    from the_oracle.srt_ingest import convert_srt_file, looks_like_srt
+    from the_oracle.srt_ingest import ensure_subtitle_script
 
-    file_path = Path(input_path)
-    if file_path.suffix.lower() not in (".srt", ".vtt") or not file_path.is_file():
-        return input_path
     try:
-        text = file_path.read_bytes().decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = file_path.read_bytes().decode("cp1252", errors="replace")
-    except OSError:
+        script_path, outcome = ensure_subtitle_script(input_path)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"SRT conversion failed: {exc}") from exc
+    if outcome is None:
         return input_path
-    if not looks_like_srt(text):
-        return input_path
-    try:
-        script_path, cue_count, speaker_count = convert_srt_file(file_path)
-    except FileExistsError:
+    if outcome == "reused":
         # A previous conversion already produced the script; reuse it.
-        script_path = _subtitle_script_target(file_path)
         print(
             f"SRT input: reusing previously converted script {script_path}",
             file=sys.stderr,
         )
-        _print_speaker_ref_hints(str(script_path))
-        return str(script_path)
-    except (OSError, ValueError) as exc:
-        raise SystemExit(f"SRT conversion failed: {exc}") from exc
-    print(
-        f"SRT input: converted {cue_count} cue(s) from {file_path.name} into "
-        f"{script_path.name} ({speaker_count} speaker(s)); rendering the script.",
-        file=sys.stderr,
-    )
+    else:
+        _converted, cue_count, speaker_count = outcome
+        print(
+            f"SRT input: converted {cue_count} cue(s) from {Path(input_path).name} into "
+            f"{Path(script_path).name} ({speaker_count} speaker(s)); rendering the script.",
+            file=sys.stderr,
+        )
     # The converted script names a cast; tell the user which voice flags to
     # provide so the render can attribute every speaker.
-    _print_speaker_ref_hints(str(script_path))
-    return str(script_path)
+    _print_speaker_ref_hints(script_path)
+    return script_path
 
 
 def _input_issue_json(issue, *, fixable: bool) -> dict:
@@ -384,49 +369,7 @@ def _input_json_document(
     return document
 
 
-def _speaker_ref_report(file_path: Path, post_fix_text: str | None) -> tuple[list[dict], list[str]]:
-    """Compute --speaker-ref suggestions for a script's cast.
 
-    Returns ``(refs, rejected)``: one dict per speaker (``speaker``,
-    ``voice_key``, ``flag``, ``new``) plus distinct labels that fail speaker
-    validation entirely (no reference audio can attribute those). When
-    ``post_fix_text`` is None the file is read and its post-transform text
-    is computed on the fly, so a suggested cast always matches what a render
-    would see after a fix.
-    """
-    from the_oracle.ingest_transformer import (
-        _decode_best_effort,
-        rejected_labels,
-        suggest_rejected_label_refs,
-        suggest_speaker_refs,
-        transform_text,
-    )
-
-    if post_fix_text is None:
-        try:
-            raw = file_path.read_bytes()
-        except OSError:
-            return [], []
-        post_fix_text = transform_text(_decode_best_effort(raw))[0]
-    refs = [
-        {
-            "speaker": s.speaker,
-            "voice_key": s.voice_key,
-            "flag": s.flag,
-            "new": s.is_new,
-        }
-        for s in suggest_speaker_refs(post_fix_text)
-    ]
-    rejected = rejected_labels(post_fix_text)
-    try:
-        rename_flags = {
-            s.speaker: s.flag for s in suggest_rejected_label_refs(post_fix_text)
-        }
-    except (OSError, ValueError):
-        rename_flags = {}
-    return refs, [
-        {"label": label, "rename_flag": rename_flags.get(label)} for label in rejected
-    ]
 
 
 def _check_input_formatting(input_path: str, fix: bool, json_output: bool = False) -> None:
@@ -478,7 +421,9 @@ def _check_input_formatting(input_path: str, fix: bool, json_output: bool = Fals
             return
         # Speaker-voice suggestions come from the post-fix text so a cast
         # member only visible after a transform is still suggested.
-        refs, rejected = _speaker_ref_report(Path(input_path), None)
+        from the_oracle.ingest_transformer import speaker_ref_report_for_file
+
+        refs, rejected = speaker_ref_report_for_file(Path(input_path), None)
         if not analysis.has_issues or not fix or not analysis.fixable_issues:
             # Exactly one JSON document per run, so a consumer can always
             # parse stdout as a single object.
@@ -621,9 +566,10 @@ def _print_speaker_ref_hints(input_path: str) -> None:
     this function, because a terminal can distinguish a suggestion from a
     warning and a dialog notice does not need to.
     """
+    from the_oracle.ingest_transformer import speaker_ref_report_for_file
     from the_oracle.speaker_ref_hints import hint_lines
 
-    refs, rejected = _speaker_ref_report(Path(input_path), None)
+    refs, rejected = speaker_ref_report_for_file(Path(input_path), None)
     for line in hint_lines(refs, rejected):
         print(line, file=sys.stderr)
 
@@ -724,7 +670,9 @@ def handle_check_input(args: argparse.Namespace) -> int:
     if json_mode:
         # Exactly one JSON document per run, on stdout; nothing else is
         # printed in json mode so pipelines can parse stdout cleanly.
-        refs, rejected = _speaker_ref_report(file_path, None)
+        from the_oracle.ingest_transformer import speaker_ref_report_for_file
+
+        refs, rejected = speaker_ref_report_for_file(file_path, None)
         fixed_count: int | None = None
         backup: str | None = None
         if args.fix and analysis.fixable_issues:
