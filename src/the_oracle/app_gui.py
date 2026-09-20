@@ -59,12 +59,18 @@ from the_oracle.correction_modes import CORRECTION_MODE_OPTIONS, correction_mode
 from the_oracle.emotion.goemotions import SUPPORTED_EMOTIONS
 from the_oracle.gui_settings import (
     GUISettingsError,
+    clear_trusted_input_files,
+    drop_next_format_backup,
+    input_file_is_trusted,
     list_templates,
     load_app_settings,
     load_gui_settings,
     load_recent_reference_paths,
     load_template,
+    next_format_backup,
+    remember_format_backup,
     remember_recent_reference_path,
+    remember_trusted_input_file,
     save_app_settings,
     save_gui_settings,
     save_template,
@@ -5272,16 +5278,11 @@ class MainWindow(QMainWindow):
 
     def _input_file_is_trusted(self, input_file: str) -> bool:
         """True when the user pre-approved auto-fixes for this exact file."""
-        trusted = self._app_settings.get("trusted_format_files", [])
-        return bool(trusted) and str(Path(input_file).resolve()) in {str(Path(p).resolve()) for p in trusted}
+        return input_file_is_trusted(self._app_settings, input_file)
 
     def _remember_trusted_input_file(self, input_file: str) -> None:
         """Add the file to the trusted list and persist app settings."""
-        resolved = str(Path(input_file).resolve())
-        trusted = list(self._app_settings.get("trusted_format_files", []))
-        if resolved not in trusted:
-            trusted.append(resolved)
-        self._app_settings["trusted_format_files"] = trusted
+        remember_trusted_input_file(self._app_settings, input_file)
         if self._app_settings_ready:
             try:
                 save_app_settings(self._app_settings)
@@ -5290,7 +5291,7 @@ class MainWindow(QMainWindow):
 
     def _clear_trusted_input_files(self) -> None:
         """Forget every pre-approved file (Settings menu action)."""
-        self._app_settings["trusted_format_files"] = []
+        clear_trusted_input_files(self._app_settings)
         if self._app_settings_ready:
             try:
                 save_app_settings(self._app_settings)
@@ -5303,26 +5304,7 @@ class MainWindow(QMainWindow):
 
     def _remember_format_backup(self, fixed_file: str, backup_path: str | None) -> None:
         """Record a fix's backup so it can be restored from Settings later."""
-        if not backup_path:
-            return
-        from datetime import datetime
-
-        resolved = str(Path(fixed_file).resolve())
-        backup = str(Path(backup_path).resolve())
-        records = [
-            r
-            for r in self._app_settings.get("recent_format_backups", [])
-            if isinstance(r, dict) and r.get("file") != resolved
-        ]
-        records.insert(
-            0,
-            {
-                "file": resolved,
-                "backup": backup,
-                "stamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            },
-        )
-        self._app_settings["recent_format_backups"] = records[:20]
+        remember_format_backup(self._app_settings, fixed_file, backup_path)
         if self._app_settings_ready:
             try:
                 save_app_settings(self._app_settings)
@@ -5331,12 +5313,8 @@ class MainWindow(QMainWindow):
 
     def _restore_most_recent_format_backup(self) -> None:
         """Settings action: undo the most recent input-file fix from its backup."""
-        records = [
-            r
-            for r in self._app_settings.get("recent_format_backups", [])
-            if isinstance(r, dict) and r.get("file") and r.get("backup")
-        ]
-        if not records:
+        record = next_format_backup(self._app_settings)
+        if record is None:
             QMessageBox.information(
                 self,
                 "Restore Backup",
@@ -5344,7 +5322,6 @@ class MainWindow(QMainWindow):
                 "whenever a formatting fix corrects a file in place.",
             )
             return
-        record = records[0]
         fixed_file = Path(record["file"])
         backup_file = Path(record["backup"])
         if not backup_file.is_file():
@@ -5353,7 +5330,7 @@ class MainWindow(QMainWindow):
                 "Restore Backup",
                 f"The backup file no longer exists:\n{backup_file}",
             )
-            self._app_settings["recent_format_backups"] = records[1:]
+            drop_next_format_backup(self._app_settings)
             if self._app_settings_ready:
                 try:
                     save_app_settings(self._app_settings)
@@ -5382,7 +5359,7 @@ class MainWindow(QMainWindow):
                 f"The backup could not be restored:\n{exc}",
             )
             return
-        self._app_settings["recent_format_backups"] = records[1:]
+        drop_next_format_backup(self._app_settings)
         if self._app_settings_ready:
             try:
                 save_app_settings(self._app_settings)

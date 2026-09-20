@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -263,6 +264,73 @@ def remember_recent_reference_path(path_value: str, limit: int = 10) -> None:
     existing = [item for item in load_recent_reference_paths(limit=limit * 2) if item != normalized]
     updated = [normalized, *existing][:limit]
     recent_references_path().write_text(json.dumps(updated, indent=2, ensure_ascii=True), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Input format-health bookkeeping: the trusted-file approvals ("remember my
+# choice" in the fix preview) and the per-file backup records a fix leaves
+# behind. These mutate the caller's live settings dict -- the app owns that
+# dict and persists it -- so the whole lifecycle of both payloads (hygiene on
+# load in _normalize_app_settings, policy on write here) has one owner.
+# ---------------------------------------------------------------------------
+
+
+def input_file_is_trusted(settings: dict[str, Any], input_file: str) -> bool:
+    """True when the user pre-approved auto-fixes for this exact file."""
+    trusted = settings.get("trusted_format_files", [])
+    return bool(trusted) and str(Path(input_file).resolve()) in {str(Path(p).resolve()) for p in trusted}
+
+
+def remember_trusted_input_file(settings: dict[str, Any], input_file: str) -> None:
+    """Add the file to the trusted list (resolved path, deduped)."""
+    resolved = str(Path(input_file).resolve())
+    trusted = list(settings.get("trusted_format_files", []))
+    if resolved not in trusted:
+        trusted.append(resolved)
+    settings["trusted_format_files"] = trusted
+
+
+def clear_trusted_input_files(settings: dict[str, Any]) -> None:
+    """Forget every pre-approved file."""
+    settings["trusted_format_files"] = []
+
+
+def remember_format_backup(
+    settings: dict[str, Any], fixed_file: str, backup_path: str | None, *, stamp: str | None = None
+) -> None:
+    """Record a fix's backup: deduped per file, newest first, capped at 20."""
+    if not backup_path:
+        return
+    if stamp is None:
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    resolved = str(Path(fixed_file).resolve())
+    backup = str(Path(backup_path).resolve())
+    records = [
+        r
+        for r in settings.get("recent_format_backups", [])
+        if isinstance(r, dict) and r.get("file") != resolved
+    ]
+    records.insert(0, {"file": resolved, "backup": backup, "stamp": stamp})
+    settings["recent_format_backups"] = records[:20]
+
+
+def _usable_backup_records(settings: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        r
+        for r in settings.get("recent_format_backups", [])
+        if isinstance(r, dict) and r.get("file") and r.get("backup")
+    ]
+
+
+def next_format_backup(settings: dict[str, Any]) -> dict[str, str] | None:
+    """The most recent usable backup record, without consuming it."""
+    records = _usable_backup_records(settings)
+    return records[0] if records else None
+
+
+def drop_next_format_backup(settings: dict[str, Any]) -> None:
+    """Discard the most recent backup record (applied, or found missing)."""
+    settings["recent_format_backups"] = _usable_backup_records(settings)[1:]
 
 
 def _normalize_device_mode(value: str) -> str:
