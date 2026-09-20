@@ -449,3 +449,25 @@ def test_setup_vulkan_subcommand_runs_setup(monkeypatch, tmp_path: Path, capsys)
     assert "already configured" in captured.err
     assert str(binary) in captured.out
     assert str(model) in captured.out
+
+
+def test_setup_vulkan_refuses_offline_install(monkeypatch, tmp_path: Path, capsys) -> None:
+    """On an offline install the Vulkan GGUF model is not in the bundle, so
+    setup must refuse with the way out instead of attempting a network fetch."""
+    from the_oracle import offline
+    from the_oracle.cli import build_parser, handle_setup_vulkan
+
+    marker = tmp_path / ".oracle_offline"
+    marker.write_text("", encoding="utf-8")
+    monkeypatch.setattr(offline, "marker_path", lambda root=None: marker)
+    attempts: list[object] = []
+    monkeypatch.setattr(vulkan_setup, "run_vulkan_setup", lambda **kwargs: attempts.append(kwargs))
+
+    parser = build_parser()
+    args = parser.parse_args(["setup-vulkan"])
+    assert args.command == "setup-vulkan"
+    assert handle_setup_vulkan() == 1
+    captured = capsys.readouterr()
+    assert "offline install" in captured.err
+    assert ".oracle_offline" in captured.err  # the message names the way out
+    assert attempts == [], "setup must refuse before any model work"

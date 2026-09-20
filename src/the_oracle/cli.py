@@ -1114,6 +1114,27 @@ def handle_setup_vulkan() -> int:
     same paths automatically, so no shell exports are needed. Exit code 0 on
     success, 1 with a clear error otherwise.
     """
+    from the_oracle import offline
+
+    if offline.is_offline_install():
+        # The Vulkan GGUF model is not part of the offline bundle, so on an
+        # offline install there is nothing to resolve it from and setup's
+        # model step could only fail -- after attempting a network fetch the
+        # offline guarantee forbids. Refuse with the way out instead.
+        print(
+            "Vulkan backend setup is unavailable on an offline install: the Vulkan GGUF"
+            " model is not part of the offline bundle, and an offline install must never"
+            " attempt a network fetch.",
+            file=sys.stderr,
+        )
+        print(
+            "To enable Vulkan, re-run `the-oracle setup-vulkan` on a networked machine"
+            " after deleting the .oracle_offline marker in the install root (deleting the"
+            " marker re-enables network model fetches), or re-install without"
+            " --offline-bundle.",
+            file=sys.stderr,
+        )
+        return 1
     from the_oracle.vulkan_setup import run_vulkan_setup
 
     def _progress(line: str) -> None:

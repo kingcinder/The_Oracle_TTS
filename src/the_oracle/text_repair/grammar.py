@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
@@ -9,6 +10,10 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+from the_oracle.offline import is_offline_install
+
+logger = logging.getLogger(__name__)
 
 # First use of language_tool_python downloads the LanguageTool server
 # (hundreds of MB). On a slow link that would otherwise block every render for
@@ -99,6 +104,13 @@ def _warm_language_tool_download() -> None:
     warms for a later run without blocking this render or printing over its
     progress bars. The helper survives this process, and a lock file in the
     cache dir keeps rapid renders from starting duplicate downloads."""
+    if is_offline_install():
+        # An offline install must never touch the network, and this helper's
+        # only job is a download that cannot succeed there. The render's own
+        # load path still falls back to local fixes when the server is absent,
+        # and a usable on-disk snapshot is still reused via LTP_JAR_DIR_PATH.
+        logger.info("Offline install: skipping the LanguageTool warm download (no network fetches)")
+        return
     if not sys.executable:
         return
     try:

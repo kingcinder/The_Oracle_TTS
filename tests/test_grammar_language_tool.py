@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -126,14 +127,13 @@ def test_timeout_constant_reads_from_environment(monkeypatch: pytest.MonkeyPatch
     assert grammar.LANGUAGE_TOOL_LOAD_TIMEOUT_SECONDS == 25.0
 
 
-def test_not_cached_skips_download_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_not_cached_skips_download_wait(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A machine without the (hundreds-of-MB) LanguageTool download must not
     stall the render waiting for it: it falls back immediately and hands the
     download off to a detached helper process for a later run."""
-    import tempfile
     import language_tool_python
 
-    fake_cache = tempfile.mkdtemp(prefix="oracle_lt_cache_")
+    fake_cache = str(tmp_path / "lt_cache")
     calls: list[str] = []
     monkeypatch.setattr(
         language_tool_python,
@@ -164,13 +164,10 @@ def test_not_cached_skips_download_wait(monkeypatch: pytest.MonkeyPatch) -> None
     assert spawned and "download_lt" in " ".join(spawned[0])
 
 
-def test_usable_snapshot_dir_finds_complete_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A fully extracted snapshot (server jar present) is reported as usable,
+def test_usable_snapshot_dir_finds_complete_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """    A fully extracted snapshot (server jar present) is reported as usable,
     while a partial/incomplete one is skipped."""
-    import tempfile
-    import pathlib
-
-    fake_cache = pathlib.Path(tempfile.mkdtemp(prefix="oracle_lt_cache_"))
+    fake_cache = tmp_path / "lt_cache"
     complete = fake_cache / "LanguageTool-6.9-SNAPSHOT"
     (complete / "languagetool-server.jar").parent.mkdir(parents=True)
     (complete / "languagetool-server.jar").touch()
@@ -185,14 +182,11 @@ def test_usable_snapshot_dir_finds_complete_snapshot(monkeypatch: pytest.MonkeyP
     assert grammar._usable_snapshot_dir() == str(complete)
 
 
-def test_usable_snapshot_dir_none_when_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No usable snapshot -> None, so the caller falls back to warming."""
-    import tempfile
-    import pathlib
-
-    fake_cache = pathlib.Path(tempfile.mkdtemp(prefix="oracle_lt_cache_"))
+def test_usable_snapshot_dir_none_when_incomplete(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """    No usable snapshot -> None, so the caller falls back to warming."""
+    fake_cache = tmp_path / "lt_cache"
     stub = fake_cache / "LanguageTool-6.9-SNAPSHOT"
-    stub.mkdir()  # extracted dir exists but the server jar is missing
+    stub.mkdir(parents=True)  # extracted dir exists but the server jar is missing
 
     monkeypatch.setattr(
         "language_tool_python.download_lt.get_language_tool_download_path",
@@ -242,13 +236,12 @@ def test_stale_version_mismatch_reuses_snapshot_dir(
     os.environ.pop("LTP_JAR_DIR_PATH", None)
 
 
-def test_warm_skips_when_download_already_running(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_warm_skips_when_download_already_running(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Rapid renders must not stack duplicate warm downloads: once a helper
     claims the lock, later warm-ups return without spawning another one."""
     import os
-    import tempfile
 
-    fake_cache = tempfile.mkdtemp(prefix="oracle_lt_cache_")
+    fake_cache = str(tmp_path / "lt_cache")
     monkeypatch.setattr(
         grammar,
         "_language_tool_download_ready",
@@ -314,3 +307,29 @@ def test_download_ready_probe_fails_open(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(lt_download, "get_language_tool_download_path", lambda: "/fake/cache")
 
     assert grammar._language_tool_download_ready() is True
+
+
+def test_warm_download_skipped_on_offline_install(monkeypatch, tmp_path) -> None:
+    """An offline install must never attempt the LanguageTool fetch: the warm
+    helper would only ever fail there, and the offline guarantee forbids the
+    attempt. The guard fires before any lock or cache directory is touched."""
+    import language_tool_python
+
+    marker = tmp_path / ".oracle_offline"
+    marker.write_text("", encoding="utf-8")
+    monkeypatch.setattr(grammar, "is_offline_install", lambda root=None: True)
+    monkeypatch.setattr(
+        "language_tool_python.download_lt.get_language_tool_download_path",
+        lambda: str(tmp_path / "lt_cache"),
+    )
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(
+        grammar.subprocess,
+        "Popen",
+        lambda cmd, **kwargs: spawned.append(cmd) or object(),
+    )
+
+    grammar._warm_language_tool_download()
+
+    assert spawned == [], "no download helper may be spawned on an offline install"
+    assert not (tmp_path / "lt_cache" / ".oracle_lt_warm.lock").exists()
