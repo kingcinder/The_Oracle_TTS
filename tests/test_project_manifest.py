@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from the_oracle.project_manifest import ProjectManifestError, build_saved_project, load_project_manifest, save_project_manifest
-from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings; from the_oracle.pipeline import OraclePipeline
 from the_oracle.smoke import _DeterministicChatterboxEngine, _SmokeEmotionClassifier, _write_reference
 from the_oracle.models.project import RenderPlan, VoiceSettings
 

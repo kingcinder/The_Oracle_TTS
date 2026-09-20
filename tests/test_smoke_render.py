@@ -11,7 +11,7 @@ pytestmark = pytest.mark.slow
 
 from the_oracle.models.project import VoiceProfile
 from the_oracle.models.project import VoiceSettings
-from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings; from the_oracle.pipeline import OraclePipeline, RenderProgress
 from the_oracle.smoke import (
     SmokeRenderResult,
     _DeterministicChatterboxEngine,

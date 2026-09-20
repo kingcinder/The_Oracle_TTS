@@ -1,6 +1,6 @@
 # The Oracle
 
-**Release V1.1.1** — CUDA inference support, guided onboarding, and complete first-run workspace persistence.
+**Release V1.2.0** — CUDA inference support, guided onboarding, and complete first-run workspace persistence.
 
 Changes between releases: [CHANGELOG.md](CHANGELOG.md). Upgrading an
 existing install: [docs/UPGRADING.md](docs/UPGRADING.md). Problems:

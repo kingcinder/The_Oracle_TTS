@@ -10,7 +10,8 @@ from pathlib import Path
 
 from the_oracle import __version__
 from the_oracle.models.project import VoiceSettings
-from the_oracle.pipeline import NoAudioToAssembleError, OraclePipeline, PartialRenderError, RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings
+from the_oracle.pipeline import NoAudioToAssembleError, OraclePipeline, PartialRenderError
 from the_oracle.project_manifest import build_saved_project, load_project_manifest, save_project_manifest
 from the_oracle.tts_engines.vulkan_backend import AudioCppUnavailableError, RDNA1VulkanError
 from the_oracle.utils.logging import configure_logging

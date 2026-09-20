@@ -11,7 +11,7 @@ from typing import Any
 
 from the_oracle.models.cache import atomic_write
 from the_oracle.models.project import RenderPlan
-from the_oracle.pipeline import RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings
 
 
 PROJECT_MANIFEST_VERSION = 1

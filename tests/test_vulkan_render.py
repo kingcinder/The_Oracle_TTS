@@ -24,7 +24,7 @@ pytestmark = pytest.mark.slow
 
 from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.project import VoiceSettings
-from the_oracle.pipeline import OraclePipeline, RenderProgress, RenderSettings, SpeakerSettings, _chunk_engine_key
+from the_oracle.models.settings import RenderSettings, SpeakerSettings; from the_oracle.pipeline import OraclePipeline, RenderProgress, _chunk_engine_key
 from the_oracle.smoke import _SmokeEmotionClassifier, _write_reference
 from the_oracle.utils.chunking import chunk_utterance
 from the_oracle.utils.hashing import build_chunk_hash, hash_file, hash_payload

@@ -7,7 +7,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings
-from the_oracle.pipeline import RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings; 
 from the_oracle.project_manifest import build_saved_project
 
 from tests.test_app_gui_profiles import _build_window

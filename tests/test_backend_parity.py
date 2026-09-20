@@ -16,7 +16,7 @@ import pytest
 pytestmark = pytest.mark.slow  # exercises the full repair pipeline
 
 from the_oracle.models.project import VoiceSettings
-from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings; from the_oracle.pipeline import OraclePipeline
 from the_oracle.smoke import _write_reference
 
 

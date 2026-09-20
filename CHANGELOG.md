@@ -5,6 +5,12 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
 ## [Unreleased]
 
+### Changed
+
+- (nothing yet)
+
+## [1.2.0] — 2026-09-20
+
 ### Added
 
 **Input linting and repair**

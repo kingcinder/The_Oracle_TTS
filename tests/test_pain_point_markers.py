@@ -82,7 +82,7 @@ def test_utterance_text_for_tts_strips_markers_in_verbatim_mode() -> None:
 
 
 def test_prepare_plan_removes_markers_before_repair_and_keeps_review_annotation(tmp_path) -> None:
-    from the_oracle.pipeline import OraclePipeline, RenderSettings, SpeakerSettings
+    from the_oracle.models.settings import RenderSettings, SpeakerSettings; from the_oracle.pipeline import OraclePipeline
     from the_oracle.smoke import _write_reference
 
     source = tmp_path / "marked.txt"

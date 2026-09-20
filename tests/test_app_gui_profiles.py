@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from the_oracle.app_paths import OraclePaths, default_output_filename, ensure_repo_default_paths
 from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings
-from the_oracle.pipeline import RenderSettings, SpeakerSettings
+from the_oracle.models.settings import RenderSettings, SpeakerSettings; 
 from the_oracle.gui_settings import load_app_settings, save_app_settings
 from the_oracle.project_manifest import build_saved_project
 
