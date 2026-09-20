@@ -16,7 +16,6 @@ import pytest
 
 from the_oracle.cli import (
     _input_json_document,
-    _speaker_ref_report,
     build_parser,
     handle_check_input,
     handle_fix_folder,
@@ -970,7 +969,9 @@ def test_check_input_json_reuses_render_path_schema(tmp_path, capsys) -> None:
     file_path = tmp_path / "messy.txt"
     file_path.write_text("[Speaker A]: Hello there.\n", encoding="utf-8")
     analysis = analyze_input_file(file_path)
-    refs, rejected = _speaker_ref_report(file_path, None)
+    from the_oracle.ingest_transformer import speaker_ref_report_for_file
+
+    refs, rejected = speaker_ref_report_for_file(file_path, None)
     standalone = _input_json_document(str(file_path), analysis, speaker_refs=refs, rejected=rejected)
     assert set(standalone) == {
         "file", "fixable_count", "warning_count", "issues",

@@ -3261,30 +3261,34 @@ class MainWindow(QMainWindow):
 
         Non-subtitle paths pass through unchanged. On success the sibling
         script's path is returned and a status line explains the
-        conversion; an existing script from a previous run is reused. A
-        failed conversion reports to the status panel and returns None so
-        the picker does not silently load an unusable file.
+        conversion; an existing script from a previous run is reused. The
+        convert-not-overwrite policy is ``srt_ingest.
+        ensure_subtitle_script`` -- the same owner the CLI render path
+        uses -- so the two surfaces cannot convert differently; this
+        wrapper only renders the outcome in the status panel.
         """
-        from the_oracle.cli import _maybe_convert_srt
+        from the_oracle.srt_ingest import ensure_subtitle_script
 
         file_path = Path(path)
         if file_path.suffix.lower() not in (".srt", ".vtt"):
             return path
         try:
-            text = file_path.read_bytes().decode("utf-8-sig")
-            from the_oracle.srt_ingest import looks_like_srt
-
-            if not looks_like_srt(text):
-                self.error_panel.append(
-                    f"{file_path.name} does not contain valid subtitle cues; "
-                    "loading it as-is."
-                )
-                return path
-        except (OSError, UnicodeDecodeError):
-            self.error_panel.append(f"Could not read {file_path.name}.")
+            script_path, outcome = ensure_subtitle_script(path)
+        except (OSError, ValueError) as exc:
+            self.error_panel.append(f"Could not convert {file_path.name}: {exc}")
             return None
-        script_path = _maybe_convert_srt(path)
-        if script_path != path:
+        if outcome is None:
+            self.error_panel.append(
+                f"{file_path.name} does not contain valid subtitle cues; "
+                "loading it as-is."
+            )
+            return path
+        if outcome == "reused":
+            self.error_panel.append(
+                f"Reusing previously converted script {Path(script_path).name}; "
+                "the subtitle file itself was not modified."
+            )
+        else:
             self.error_panel.append(
                 f"Converted {file_path.name} into {Path(script_path).name}; "
                 "the subtitle file itself was not modified."
@@ -5267,11 +5271,11 @@ class MainWindow(QMainWindow):
         the advice cannot read differently depending on where it appears; only
         the bullet is this panel's.
         """
-        from the_oracle.cli import _speaker_ref_report
+        from the_oracle.ingest_transformer import speaker_ref_report_for_file
         from the_oracle.speaker_ref_hints import sentence_lines
 
         try:
-            refs, rejected = _speaker_ref_report(Path(input_file), None)
+            refs, rejected = speaker_ref_report_for_file(Path(input_file), None)
         except Exception:
             return []
         return sentence_lines(refs, rejected, bullet=_SPEAKER_HINT_BULLET)
