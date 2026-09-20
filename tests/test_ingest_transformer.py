@@ -500,3 +500,81 @@ def test_unbracketed_timestamp_detected_by_analyze_and_fixable_via_cli_path() ->
     assert [fix.rule for fix in fixes] == ["timestamp", "timestamp"]
     assert fixed.splitlines()[0] == "Speaker A: Timestamped turn."
     assert fixed.splitlines()[1] == "Speaker B: Bare time turn."
+
+
+# ----------------------------------------------------------------------------
+# Permanent real-world fixture: Input/stream_of_consciousness_dialogue_with_typos.txt
+# ----------------------------------------------------------------------------
+
+#: A tracked 137-line real script whose *content* deliberately contains
+#: typos ("alreayd", "hapens", "reley", "serise") while its *format* is
+#: already canonical. The transformer is a formatting tool, not a spell
+#: checker: every one of these typos must survive a transform untouched,
+#: and the analyzer must report no issues -- pinning both directions
+#: guards against a future rule that rewrites prose it was never given
+#: permission to touch.
+FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "stream_of_consciousness_dialogue_with_typos.txt"
+TYPOS = ("alreayd", "hapens", "reley", "serise")
+
+
+@pytest.fixture(scope="module")
+def stream_fixture_text() -> str:
+    return FIXTURE_PATH.read_text(encoding="utf-8")
+
+
+def test_the_real_fixture_exists_and_carries_its_intended_typos(stream_fixture_text: str) -> None:
+    # Vacuity guard: if the fixture goes missing or the typos are ever
+    # corrected in place, every assertion below would pass vacuously.
+    assert FIXTURE_PATH.is_file()
+    for typo in TYPOS:
+        assert typo in stream_fixture_text, typo
+
+
+def test_analyzer_reports_no_format_issues_on_the_real_fixture(
+    stream_fixture_text: str, tmp_path: Path
+) -> None:
+    # The list-based text API: zero issues found in file order.
+    assert analyze_text(stream_fixture_text) == []
+    # The object-based file API the CLI and GUI drive: no fixables, no
+    # warnings, so has_issues is False and check-input exits clean.
+    target = tmp_path / "stream.txt"
+    target.write_text(stream_fixture_text, encoding="utf-8")
+    analysis = analyze_input_file(str(target))
+    assert not analysis.has_issues
+    assert analysis.fixable_issues == []
+    assert analysis.warning_issues == []
+
+
+def test_transform_leaves_the_real_fixture_byte_identical(stream_fixture_text: str) -> None:
+    fixed, line_fixes = transform_text_detailed(stream_fixture_text)
+    assert fixed == stream_fixture_text
+    assert line_fixes == []
+
+
+def test_every_typo_survives_the_transform_untouched(stream_fixture_text: str) -> None:
+    fixed, _line_fixes = transform_text_detailed(stream_fixture_text)
+    for typo in TYPOS:
+        assert typo in fixed, f"the transformer rewrote prose: {typo!r} disappeared"
+
+
+def test_real_fixture_end_to_end_check_input_reports_clean(
+    stream_fixture_text: str, tmp_path: Path, capsys
+) -> None:
+    """The user-facing command agrees with the analyzer on the real file:
+    the clean verdict goes to stdout, the cast's speaker-ref suggestions
+    to stderr, and no fix is offered."""
+    import argparse
+
+    from the_oracle.cli import handle_check_input
+
+    target = tmp_path / "stream.txt"
+    target.write_text(stream_fixture_text, encoding="utf-8")
+    args = argparse.Namespace(
+        file=str(target), fix=False, json=False, check_refs=False,
+    )
+    assert handle_check_input(args) == 0
+    captured = capsys.readouterr()
+    assert f"{target}: no formatting issues found." in captured.out
+    assert "a -> voice A: use --speakerA-ref PATH" in captured.err
+    assert "b -> voice B: use --speakerB-ref PATH" in captured.err
+    assert "Fix" not in captured.out and "Fix" not in captured.err

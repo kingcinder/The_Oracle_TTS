@@ -862,6 +862,12 @@ rewritten by the loop).
   logic and leave the Qt wiring where the patches reach it — format-health bookkeeping
   (trusted files, format backups) next, then the settings/project payload cluster, then
   the Vulkan/audio.cpp backend cluster (largest, most self-contained).
+- The stream-of-consciousness sample is now a permanent fixture
+  (`tests/fixtures/stream_of_consciousness_dialogue_with_typos.txt`) pinning the
+  transformer's spelling-blindness: format-clean file, typos survive every transform
+  untouched. Typos in *content* are render-time text repair's domain, not the format
+  gate's -- if anyone asks why check-input says "no issues" on a file named
+  "_with_typos", that is the tested contract, not a bug.
 - The same audit question is worth asking of the *GUI*'s readiness surfaces (the
   onboarding/status panels), which report capability to the user but are only covered by
   smoke tests today.
