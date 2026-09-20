@@ -59,7 +59,12 @@ from the_oracle.correction_modes import CORRECTION_MODE_OPTIONS, correction_mode
 from the_oracle.emotion.goemotions import SUPPORTED_EMOTIONS
 from the_oracle.gui_settings import (
     GUISettingsError,
+    PayloadDefaults,
+    WidgetSnapshot,
+    cast_request_from_payload,
     clear_trusted_input_files,
+    current_gui_settings_payload,
+    default_gui_settings_payload,
     drop_next_format_backup,
     input_file_is_trusted,
     list_templates,
@@ -74,6 +79,7 @@ from the_oracle.gui_settings import (
     save_app_settings,
     save_gui_settings,
     save_template,
+    speaker_config_from_payload,
 )
 from the_oracle.gui_utils import (
     MAX_CAST_SPEAKERS,
@@ -4661,30 +4667,8 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _speaker_config_from_payload(key: str, data: dict) -> SpeakerSettings:
-        """Build engine :class:`SpeakerSettings` from one merged profile entry.
-
-        Restores the hybrid (blend) configuration too, so a saved blend target,
-        dominance weight, and combine mode come back instead of resetting.
-        """
-        voice = VoiceSettings.from_mapping(data.get("voice_settings") or {})
-        blend_refs = [str(ref) for ref in (data.get("blend_references") or []) if str(ref).strip()]
-        try:
-            blend_weight = float(data.get("blend_weight", 0.5))
-        except (TypeError, ValueError):
-            blend_weight = 0.5
-        blend_weight = min(1.0, max(0.0, blend_weight))
-        blend_mode = str(data.get("blend_mode", "mix")).strip().lower()
-        if blend_mode not in ("mix", "alternate", "layer"):
-            blend_mode = "mix"
-        emotions = data.get("emotion_reference_paths")
-        return SpeakerSettings(
-            reference_path=str(data.get("reference_path", "")),
-            voice_settings=voice,
-            emotion_reference_paths=dict(emotions) if isinstance(emotions, dict) else {},
-            blend_references=blend_refs,
-            blend_weight=blend_weight,
-            blend_mode=blend_mode,
-        )
+        """Decode via the policy owner, then construct the engine dataclass."""
+        return SpeakerSettings(**speaker_config_from_payload(data))
 
     def _pytorch_device_selection(self) -> tuple[str, int | None]:
         """Return the selected PyTorch device mode and CUDA index."""
@@ -4755,44 +4739,54 @@ class MainWindow(QMainWindow):
         return None
 
     def _default_gui_settings_payload(self) -> dict:
+        return default_gui_settings_payload(str(self._default_output_dir), self._payload_defaults())
+
+    def _payload_defaults(self) -> PayloadDefaults:
+        """Engine defaults, supplied so gui_settings never imports pipeline."""
         default_render = RenderSettings()
         default_voice = VoiceSettings(variant=default_render.model_variant)
-        return {
-            "version": 1,
-            "name": "",
-            "device_mode": default_render.device_mode,
-            # The ordered cast; the loader rebuilds the panels from it.
-            "cast": ["A", "B"],
-            "speaker_names": {},
-            "cuda_device": default_render.cuda_device,
-            "project": {
-                "model_variant": default_render.model_variant,
-                "correction_mode": default_render.correction_mode,
-                "loudness_preset": default_render.loudness_preset,
-                "crossfade_ms": default_render.crossfade_ms,
-                "inference_backend": default_render.inference_backend,
-                "device_mode": default_render.device_mode,
-                "cuda_device": default_render.cuda_device,
-                "audio_cpp_device": default_render.audio_cpp_device,
-                "audio_cpp_threads": default_render.audio_cpp_threads,
-                "audio_cpp_timeout": default_render.audio_cpp_timeout,
-                "audio_cpp_max_batch": default_render.audio_cpp_max_batch,
-                "output_dir": str(self._default_output_dir),
-                "output_filename": "",
-                "export_srt": False,
-                "monologue": False,
-            },
-            "speakers": {
-                speaker: {
-                    "reference_path": "",
-                    "voice_settings": default_voice.to_dict(),
-                    "emotion_reference_paths": {},
-                }
-                for speaker in ("A", "B")
-            },
-        }
+        return PayloadDefaults(
+            model_variant=default_render.model_variant,
+            correction_mode=default_render.correction_mode,
+            loudness_preset=default_render.loudness_preset,
+            crossfade_ms=default_render.crossfade_ms,
+            inference_backend=default_render.inference_backend,
+            device_mode=default_render.device_mode,
+            cuda_device=default_render.cuda_device,
+            audio_cpp_device=default_render.audio_cpp_device,
+            audio_cpp_threads=default_render.audio_cpp_threads,
+            audio_cpp_timeout=default_render.audio_cpp_timeout,
+            audio_cpp_max_batch=default_render.audio_cpp_max_batch,
+            default_voice_dict=default_voice.to_dict(),
+        )
 
-    def _apply_speaker_group(self, group: SpeakerGroup, settings: SpeakerSettings) -> None:
+    def _widget_snapshot(self) -> WidgetSnapshot:
+        """Every widget read the current-payload builder needs, in one place."""
+        device_mode, cuda_device = self._pytorch_device_selection()
+        return WidgetSnapshot(
+            cast_keys=self.cast_keys(),
+            speaker_names=dict(self._speaker_names),
+            model_variant=self.variant_combo.currentText(),
+            correction_mode=self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText(),
+            loudness_preset=self.loudness_combo.currentText(),
+            crossfade_ms=self.crossfade_spin.value(),
+            inference_backend=self.inference_backend_combo.currentData() or "pytorch",
+            device_mode=device_mode,
+            cuda_device=cuda_device,
+            output_dir=self.outdir_path.text() or str(self.paths.output_dir),
+            output_filename=self.output_name.text(),
+            export_srt=self.export_srt_check.isChecked(),
+            monologue=self.monologue_check.isChecked(),
+            delete_confirm_enabled=self.delete_confirm_enabled,
+            output_filename_warning_enabled=self.output_filename_warning_enabled,
+            audio_cpp_values={
+                "audio_cpp_device": self._audio_cpp_device_value(),
+                "audio_cpp_threads": self._audio_cpp_threads_value(),
+                "audio_cpp_timeout": self._audio_cpp_timeout_value(),
+                "audio_cpp_max_batch": self._audio_cpp_max_batch_value(),
+            },
+            speaker_settings=self._speaker_settings(),
+        )
         _apply_speaker_settings_to_group(group, settings)
         self._refresh_reference_pickers()
 
@@ -4846,58 +4840,35 @@ class MainWindow(QMainWindow):
         self._sync_plan_from_table()
         return build_saved_project(self.plan, self._render_settings(), self._speaker_settings())
 
+    def _widget_snapshot(self) -> WidgetSnapshot:
+        """Every widget read the current-payload builder needs, in one place."""
+        return WidgetSnapshot(
+            cast_keys=self.cast_keys(),
+            speaker_names=dict(self._speaker_names),
+            model_variant=self.variant_combo.currentText(),
+            correction_mode=self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText(),
+            loudness_preset=self.loudness_combo.currentText(),
+            crossfade_ms=self.crossfade_spin.value(),
+            inference_backend=self.inference_backend_combo.currentData() or "pytorch",
+            device_mode=self._pytorch_device_selection()[0],
+            cuda_device=self._pytorch_device_selection()[1],
+            output_dir=self.outdir_path.text() or str(self.paths.output_dir),
+            output_filename=self.output_name.text(),
+            export_srt=self.export_srt_check.isChecked(),
+            monologue=self.monologue_check.isChecked(),
+            delete_confirm_enabled=self.delete_confirm_enabled,
+            output_filename_warning_enabled=self.output_filename_warning_enabled,
+            audio_cpp_values={
+                "audio_cpp_device": self._audio_cpp_device_value(),
+                "audio_cpp_threads": self._audio_cpp_threads_value(),
+                "audio_cpp_timeout": self._audio_cpp_timeout_value(),
+                "audio_cpp_max_batch": self._audio_cpp_max_batch_value(),
+            },
+            speaker_settings=self._speaker_settings(),
+        )
+
     def _current_gui_settings_payload(self) -> dict:
-        inference_backend = self.inference_backend_combo.currentData() or "pytorch"
-        # Only persist the Vulkan knobs when the Vulkan backend is selected;
-        # a disabled widget left over from an earlier selection must not be
-        # saved alongside inference_backend: pytorch.
-        is_vulkan = inference_backend == "vulkan"
-        speaker_settings = self._speaker_settings()
-        device_mode, cuda_device = self._pytorch_device_selection()
-        return {
-            "version": 1,
-            "name": "",
-            "device_mode": device_mode,
-            "cuda_device": cuda_device,
-            # The ordered cast; the loader rebuilds the panels from it so a
-            # saved multi-speaker cast restores exactly, and a smaller saved
-            # cast leaves no stale panels behind.
-            "cast": self.cast_keys(),
-            "project": {
-                "model_variant": self.variant_combo.currentText(),
-                "correction_mode": normalize_correction_mode(self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText()),
-                "loudness_preset": self.loudness_combo.currentText(),
-                "crossfade_ms": self.crossfade_spin.value(),
-                "inference_backend": inference_backend,
-                "device_mode": device_mode,
-                "cuda_device": cuda_device,
-                "audio_cpp_device": self._audio_cpp_device_value() if is_vulkan else None,
-                "audio_cpp_threads": self._audio_cpp_threads_value() if is_vulkan else None,
-                "audio_cpp_timeout": self._audio_cpp_timeout_value() if is_vulkan else None,
-                "audio_cpp_max_batch": self._audio_cpp_max_batch_value() if is_vulkan else None,
-                "output_dir": self.outdir_path.text() or str(self.paths.output_dir),
-                "output_filename": normalize_output_filename(self.output_name.text()),
-                "export_srt": self.export_srt_check.isChecked(),
-                "monologue": self.monologue_check.isChecked(),
-                "delete_confirm_enabled": self.delete_confirm_enabled,
-                "output_filename_warning": self.output_filename_warning_enabled,
-            },
-            "speakers": {
-                speaker: {
-                    "reference_path": settings.reference_path,
-                    "voice_settings": VoiceSettings.from_mapping(settings.voice_settings).to_dict(),
-                    "emotion_reference_paths": dict(settings.emotion_reference_paths),
-                    # Optional character name shown in the cast bar / dialog.
-                    "name": self._speaker_names.get(speaker, ""),
-                    # Hybrid (blend) configuration: second reference voice,
-                    # its dominance weight, and how the two are combined.
-                    "blend_references": list(settings.blend_references),
-                    "blend_weight": settings.blend_weight,
-                    "blend_mode": settings.blend_mode,
-                }
-                for speaker, settings in speaker_settings.items()
-            },
-        }
+        return current_gui_settings_payload(self._widget_snapshot())
 
     def _apply_gui_settings_payload(self, payload: dict) -> None:
         defaults = self._default_gui_settings_payload()
@@ -4946,9 +4917,7 @@ class MainWindow(QMainWindow):
         speakers = payload.get("speakers", {})
         if not isinstance(speakers, dict):
             speakers = {}
-        requested = normalize_cast_keys(payload.get("cast")) or sorted(
-            key for key in speakers if isinstance(key, str)
-        ) or ["A", "B"]
+        requested = cast_request_from_payload(payload)
         cast_settings: dict[str, SpeakerSettings] = {}
         names: dict[str, str] = {}
         for key in requested:

@@ -870,17 +870,21 @@ rewritten by the loop).
   manifest via the in-venv PEP 517 hooks (offline). Verified end-to-end on the real repo;
   `tests/test_release.py` pins it. Setuptools' `build_meta` mutates `sys.argv` permanently —
   any future in-process hook caller must not read `sys.argv` after the first hook call.
-- **The MainWindow extraction, slices 1-2 landed.** Slice 1: the transformer popups and
+- **The MainWindow extraction, slices 1-3 landed.** Slice 1: the transformer popups and
   preview dialogs live in `src/the_oracle/gui_ingest.py` (~500 lines), with the Qt classes
   the tests patch injected from MainWindow at call time. Slice 2: the format-health
   bookkeeping (trusted-file approvals, backup records) lives in `gui_settings.py` — which
   already normalized both schemas on load, so one file now owns the full payload
-  lifecycle; `app_gui.py` holds zero references to the two schema keys. Both slices
-  required zero edits to existing tests, which is the seam proof. A full per-cluster
-  review (AST method inventory + exhaustive patch-surface scan) cleared slice 2 and
-  shaped the rest: the settings-payload cluster reads 15 widgets and needs a widget-read
-  injection design; the Vulkan/audio.cpp and render/preview clusters carry
-  wholesale-patched module names (thread classes, workers, dialogs) and must keep the
+  lifecycle; `app_gui.py` holds zero references to the two schema keys. Slice 3 (the
+  cluster slice 2's review had deferred pending a widget-read injection design): the
+  settings-payload POLICY — default/current payload builders, the vulkan-only
+  audio_cpp knob-persistence rule, cast resolution, blend decode — now lives in
+  `gui_settings.py` as pure functions fed by a frozen `WidgetSnapshot` the window builds
+  in one method (`_widget_snapshot`), with `PayloadDefaults` supplied by the window so
+  gui_settings never imports pipeline. All three slices required zero edits to existing
+  tests, which is the seam proof. The review shaped the rest: the Vulkan/audio.cpp and
+  render/preview clusters carry wholesale-patched module names (thread classes, workers,
+  dialogs) and must keep the
   patch surface; those come later, in that order, one verified slice per pass.
 - **The parked `wip/ingest-refactor-hints` branch is finished and merged** (591efa0, fast-forward). Its two still-valid owners landed: `srt_ingest.ensure_subtitle_script` owns the convert-not-overwrite subtitle policy (both `cli._maybe_convert_srt` and `app_gui._convert_subtitle_input` are presentation wrappers; the GUI's old strict-decode copy — which blocked CP1252 subtitles the CLI converted fine — is gone), and the speaker-ref report data lives in `ingest_transformer.speaker_ref_report_for_file` instead of a CLI private the GUI imported. Ownership is pinned by source scans in `tests/test_subtitle_conversion_has_one_owner.py`, both pins mutation-proven. Worktree note: testing a linked worktree against the shared venv requires PYTHONPATH shadowing (the editable install resolves `the_oracle` to the main checkout); verified by probe before trusting any worktree result.
 - The stream-of-consciousness sample is now a permanent fixture

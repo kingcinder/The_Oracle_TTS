@@ -6,6 +6,11 @@ from tests.helpers import isolate_user_config
 
 from the_oracle.gui_settings import (
     GUISettingsError,
+    PayloadDefaults,
+    WidgetSnapshot,
+    cast_request_from_payload,
+    current_gui_settings_payload,
+    default_gui_settings_payload,
     drop_next_format_backup,
     input_file_is_trusted,
     list_templates,
@@ -20,7 +25,9 @@ from the_oracle.gui_settings import (
     save_app_settings,
     save_gui_settings,
     save_template,
+    speaker_config_from_payload,
 )
+from the_oracle.gui_utils import normalize_cast_keys
 
 
 def _payload() -> dict:
@@ -495,3 +502,153 @@ def test_next_and_drop_format_backup_skip_malformed_records() -> None:
     # Dropping past the end leaves an empty list, not a crash.
     drop_next_format_backup(settings)
     assert settings["recent_format_backups"] == []
+
+
+# --- settings-payload policy (the pure builders fed by a WidgetSnapshot) ----
+
+
+def _defaults() -> "PayloadDefaults":
+    from the_oracle.models.project import VoiceSettings
+    from the_oracle.pipeline import RenderSettings
+
+    render = RenderSettings()
+    return PayloadDefaults(
+        model_variant=render.model_variant,
+        correction_mode=render.correction_mode,
+        loudness_preset=render.loudness_preset,
+        crossfade_ms=render.crossfade_ms,
+        inference_backend=render.inference_backend,
+        device_mode=render.device_mode,
+        cuda_device=render.cuda_device,
+        audio_cpp_device=render.audio_cpp_device,
+        audio_cpp_threads=render.audio_cpp_threads,
+        audio_cpp_timeout=render.audio_cpp_timeout,
+        audio_cpp_max_batch=render.audio_cpp_max_batch,
+        default_voice_dict=VoiceSettings(variant=render.model_variant).to_dict(),
+    )
+
+
+def _snapshot(**overrides) -> "WidgetSnapshot":
+    from the_oracle.gui_settings import WidgetSnapshot
+    from the_oracle.pipeline import SpeakerSettings
+    from the_oracle.models.project import VoiceSettings
+
+    base = dict(
+        cast_keys=["A", "B"],
+        speaker_names={"A": "Ada"},
+        model_variant="standard",
+        correction_mode="moderate",
+        loudness_preset="light",
+        crossfade_ms=20,
+        inference_backend="pytorch",
+        device_mode="cpu",
+        cuda_device=None,
+        output_dir="/tmp/out",
+        output_filename="my render",
+        export_srt=False,
+        monologue=False,
+        delete_confirm_enabled=True,
+        output_filename_warning_enabled=True,
+        audio_cpp_values={"audio_cpp_device": 3, "audio_cpp_threads": "4", "audio_cpp_timeout": None, "audio_cpp_max_batch": None},
+        speaker_settings={
+            "A": SpeakerSettings(reference_path="/ref/a.wav", voice_settings=VoiceSettings()),
+            "B": SpeakerSettings(reference_path="", voice_settings=VoiceSettings()),
+        },
+    )
+    base.update(overrides)
+    return WidgetSnapshot(**base)
+
+
+def test_default_payload_schema_threads_the_engine_defaults(tmp_path: Path) -> None:
+    payload = default_gui_settings_payload(str(tmp_path / "out"), _defaults())
+
+    assert payload["version"] == 1
+    assert payload["cast"] == ["A", "B"]
+    assert payload["speaker_names"] == {}
+    assert payload["project"]["output_dir"] == str(tmp_path / "out")
+    assert payload["project"]["model_variant"] == "standard"
+    assert payload["project"]["inference_backend"] == "pytorch"
+    assert set(payload["speakers"]) == {"A", "B"}
+    for entry in payload["speakers"].values():
+        assert entry["reference_path"] == ""
+        assert entry["emotion_reference_paths"] == {}
+        assert entry["voice_settings"]
+
+
+def test_audio_cpp_knobs_persist_only_under_vulkan() -> None:
+    """The disabled-widget rule: knobs left over from an earlier backend must
+    not be saved alongside inference_backend: pytorch."""
+    vulkan = current_gui_settings_payload(
+        _snapshot(inference_backend="vulkan", device_mode="cpu")
+    )["project"]
+    assert vulkan["audio_cpp_device"] == 3
+    assert vulkan["audio_cpp_threads"] == "4"
+
+    pytorch = current_gui_settings_payload(_snapshot())["project"]
+    assert pytorch["inference_backend"] == "pytorch"
+    assert pytorch["audio_cpp_device"] is None
+    assert pytorch["audio_cpp_threads"] is None
+    assert pytorch["audio_cpp_timeout"] is None
+    assert pytorch["audio_cpp_max_batch"] is None
+
+
+def test_current_payload_carries_cast_names_and_speaker_entries() -> None:
+    payload = current_gui_settings_payload(_snapshot())
+
+    assert payload["cast"] == ["A", "B"]
+    assert payload["speakers"]["A"]["name"] == "Ada"
+    assert payload["speakers"]["B"]["name"] == ""
+    assert payload["speakers"]["A"]["reference_path"] == "/ref/a.wav"
+    assert payload["project"]["output_filename"] == "my render.flac"
+    assert payload["project"]["correction_mode"] == "moderate"
+
+
+def test_cast_request_fallback_chain() -> None:
+    # Explicit cast wins, normalized (uppercased, deduped, capped).
+    assert cast_request_from_payload({"cast": ["b", "A", "C"]}) == ["B", "A", "C"]
+    # Missing or invalid cast: normalize_cast_keys floors at the single
+    # narrator ["A"] — it never returns empty, which is exactly what makes
+    # the unreachable saved-speaker-keys/A/B fallbacks safe to have collapsed.
+    assert cast_request_from_payload({"speakers": {"C": {}, "A": {}}}) == ["A"]
+    assert cast_request_from_payload({}) == ["A"]
+    assert cast_request_from_payload({"speakers": "garbage"}) == ["A"]
+    assert cast_request_from_payload({"cast": "garbage"}) == ["A"]
+
+
+def test_cast_keys_floor_property_holds() -> None:
+    """The property the collapsed helper leans on: the normalizer's floor."""
+    for garbage in (None, [], "", {}, ["??"], ["   "]):
+        assert normalize_cast_keys(garbage) == ["A"]
+
+
+def test_speaker_config_decode_validates_blend_fields() -> None:
+    from the_oracle.models.project import VoiceSettings
+
+    decoded = speaker_config_from_payload(
+        {
+            "reference_path": "/ref/x.wav",
+            "voice_settings": VoiceSettings().to_dict(),
+            "blend_references": ["  ", "/second.wav", ""],
+            "blend_weight": 2.0,
+            "blend_mode": "ROTATION",
+            "emotion_reference_paths": "not-a-dict",
+        }
+    )
+    assert decoded["reference_path"] == "/ref/x.wav"
+    assert decoded["blend_references"] == ["/second.wav"]  # blanks dropped
+    assert decoded["blend_weight"] == 1.0  # clamped into [0, 1]
+    assert decoded["blend_mode"] == "mix"  # invalid -> default
+    assert decoded["emotion_reference_paths"] == {}  # non-dict guarded
+
+    garbage = speaker_config_from_payload({"blend_weight": "not-a-number"})
+    assert garbage["blend_weight"] == 0.5
+
+
+def test_current_payload_decodes_back_to_equal_speaker_settings() -> None:
+    """A current-payload speakers entry round-trips through the decoder."""
+    from the_oracle.pipeline import SpeakerSettings
+
+    snapshot = _snapshot()
+    payload = current_gui_settings_payload(snapshot)
+    rebuilt = SpeakerSettings(**speaker_config_from_payload(payload["speakers"]["A"]))
+    assert rebuilt == snapshot.speaker_settings["A"]

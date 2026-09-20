@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from the_oracle.app_paths import normalize_output_filename
 from the_oracle.correction_modes import normalize_correction_mode
 from the_oracle.gui_utils import MAX_CAST_SPEAKERS, normalize_cast_keys
+from the_oracle.models.project import VoiceSettings
 from the_oracle.platform_support import app_config_dir
 
 
@@ -529,3 +532,194 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
 def _safe_name(value: str) -> str:
     safe = "".join(character if character.isalnum() or character in {"-", "_"} else "_" for character in value).strip("_")
     return safe or "template"
+
+
+# ---------------------------------------------------------------------------
+# Settings-payload policy: the default/current payload builders and the
+# widget-state snapshot they are fed. The payload schema lives here with the
+# save/load/normalization policy, so a new project or speaker knob lands in
+# one file, not in the window.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WidgetSnapshot:
+    """Plain data: everything the current-payload builder needs from the UI.
+
+    The window builds this in one place (all widget reads in one method);
+    the payload builder below is pure and testable without Qt.
+    """
+
+    cast_keys: list[str]
+    speaker_names: dict[str, str]
+    model_variant: str
+    correction_mode: str
+    loudness_preset: str
+    crossfade_ms: int
+    inference_backend: str
+    device_mode: str
+    cuda_device: int | None
+    output_dir: str
+    output_filename: str
+    export_srt: bool
+    monologue: bool
+    delete_confirm_enabled: bool
+    output_filename_warning_enabled: bool
+    audio_cpp_values: dict[str, int | str | None]
+    speaker_settings: dict[str, SpeakerSettings]
+
+
+@dataclass(frozen=True)
+class PayloadDefaults:
+    """The engine defaults the payload schema is seeded from.
+
+    Supplied by the caller (the window, from the engine classes) so this
+    settings module never imports the pipeline module.
+    """
+
+    model_variant: str
+    correction_mode: str
+    loudness_preset: str
+    crossfade_ms: int
+    inference_backend: str
+    device_mode: str
+    cuda_device: int | None
+    audio_cpp_device: int | None
+    audio_cpp_threads: int | None
+    audio_cpp_timeout: int | None
+    audio_cpp_max_batch: int | None
+    default_voice_dict: dict
+
+
+def default_gui_settings_payload(default_output_dir: str, defaults: PayloadDefaults) -> dict:
+    """The default settings payload; the schema lives beside the save/load policy."""
+    return {
+        "version": 1,
+        "name": "",
+        "device_mode": defaults.device_mode,
+        # The ordered cast; the loader rebuilds the panels from it.
+        "cast": ["A", "B"],
+        "speaker_names": {},
+        "cuda_device": defaults.cuda_device,
+        "project": {
+            "model_variant": defaults.model_variant,
+            "correction_mode": defaults.correction_mode,
+            "loudness_preset": defaults.loudness_preset,
+            "crossfade_ms": defaults.crossfade_ms,
+            "inference_backend": defaults.inference_backend,
+            "device_mode": defaults.device_mode,
+            "cuda_device": defaults.cuda_device,
+            "audio_cpp_device": defaults.audio_cpp_device,
+            "audio_cpp_threads": defaults.audio_cpp_threads,
+            "audio_cpp_timeout": defaults.audio_cpp_timeout,
+            "audio_cpp_max_batch": defaults.audio_cpp_max_batch,
+            "output_dir": str(default_output_dir),
+            "output_filename": "",
+            "export_srt": False,
+            "monologue": False,
+        },
+        "speakers": {
+            speaker: {
+                "reference_path": "",
+                "voice_settings": dict(defaults.default_voice_dict),
+                "emotion_reference_paths": {},
+            }
+            for speaker in ("A", "B")
+        },
+    }
+
+
+def _audio_cpp_project_fields(snapshot: WidgetSnapshot, is_vulkan: bool) -> dict:
+    """The Vulkan-only knob persistence rule: a disabled widget left over from
+    an earlier backend selection must not be saved alongside
+    inference_backend: pytorch, so the four knobs persist only when Vulkan is
+    the selected backend."""
+    keys = ("audio_cpp_device", "audio_cpp_threads", "audio_cpp_timeout", "audio_cpp_max_batch")
+    if is_vulkan:
+        return {key: snapshot.audio_cpp_values.get(key) for key in keys}
+    return {key: None for key in keys}
+
+
+def cast_request_from_payload(payload: dict) -> list[str]:
+    """The ordered cast a payload asks for.
+
+    ``normalize_cast_keys`` never returns an empty list (it floors at the
+    single narrator ``["A"]``), so the payload's normalized cast always
+    decides. The saved-speaker-keys and A/B fallbacks the window's original
+    expression carried were unreachable and are deliberately not reproduced;
+    the property pinning that collapse lives in the test suite.
+    """
+    return normalize_cast_keys(payload.get("cast"))
+
+
+def speaker_config_from_payload(data: dict) -> dict:
+    """Decode one merged profile entry into plain speaker-config fields.
+
+    The decode/validation policy (blend clamp, mode validation, defaults)
+    lives here; the caller constructs the engine dataclass from the returned
+    fields, so this module never imports the pipeline.
+    """
+    voice = VoiceSettings.from_mapping(data.get("voice_settings") or {})
+    blend_refs = [str(ref) for ref in (data.get("blend_references") or []) if str(ref).strip()]
+    try:
+        blend_weight = float(data.get("blend_weight", 0.5))
+    except (TypeError, ValueError):
+        blend_weight = 0.5
+    blend_mode = str(data.get("blend_mode", "mix")).strip().lower()
+    if blend_mode not in _SUPPORTED_BLEND_MODES:
+        blend_mode = "mix"
+    emotions = data.get("emotion_reference_paths")
+    return {
+        "reference_path": str(data.get("reference_path", "")),
+        "voice_settings": voice,
+        "emotion_reference_paths": dict(emotions) if isinstance(emotions, dict) else {},
+        "blend_references": blend_refs,
+        "blend_weight": min(1.0, max(0.0, blend_weight)),
+        "blend_mode": blend_mode,
+    }
+
+
+def current_gui_settings_payload(snapshot: WidgetSnapshot) -> dict:
+    """The current settings payload from a plain UI snapshot (pure)."""
+    is_vulkan = snapshot.inference_backend == "vulkan"
+    return {
+        "version": 1,
+        "name": "",
+        "device_mode": snapshot.device_mode,
+        "cuda_device": snapshot.cuda_device,
+        # The ordered cast; the loader rebuilds the panels from it so a saved
+        # multi-speaker cast restores exactly, and a smaller saved cast leaves
+        # no stale panels behind.
+        "cast": list(snapshot.cast_keys),
+        "project": {
+            "model_variant": snapshot.model_variant,
+            "correction_mode": normalize_correction_mode(snapshot.correction_mode),
+            "loudness_preset": snapshot.loudness_preset,
+            "crossfade_ms": snapshot.crossfade_ms,
+            "inference_backend": snapshot.inference_backend,
+            "device_mode": snapshot.device_mode,
+            "cuda_device": snapshot.cuda_device,
+            **_audio_cpp_project_fields(snapshot, is_vulkan),
+            "output_dir": snapshot.output_dir,
+            "output_filename": normalize_output_filename(snapshot.output_filename),
+            "export_srt": snapshot.export_srt,
+            "monologue": snapshot.monologue,
+            "delete_confirm_enabled": snapshot.delete_confirm_enabled,
+            "output_filename_warning": snapshot.output_filename_warning_enabled,
+        },
+        "speakers": {
+            speaker: {
+                "reference_path": settings.reference_path,
+                "voice_settings": VoiceSettings.from_mapping(settings.voice_settings).to_dict(),
+                "emotion_reference_paths": dict(settings.emotion_reference_paths),
+                # Optional character name shown in the cast bar / dialog.
+                "name": snapshot.speaker_names.get(speaker, ""),
+                # Hybrid (blend) configuration: second reference voice, its
+                # dominance weight, and how the two are combined.
+                "blend_references": list(settings.blend_references),
+                "blend_weight": settings.blend_weight,
+                "blend_mode": settings.blend_mode,
+            }
+            for speaker, settings in snapshot.speaker_settings.items()
+        },
+    }
