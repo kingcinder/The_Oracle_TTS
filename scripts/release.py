@@ -59,8 +59,12 @@ _ARTIFACT_PREFIX = "ARTIFACT:"
 _BUILD_SNIPPET = (
     "import sys\n"
     "from setuptools import build_meta\n"
-    f"print('{_ARTIFACT_PREFIX}' + build_meta.build_sdist(sys.argv[1]))\n"
-    f"print('{_ARTIFACT_PREFIX}' + build_meta.build_wheel(sys.argv[1]))\n"
+    # Bind the outdir BEFORE any hook call: build_meta reassigns sys.argv in
+    # place (['setup.py', 'sdist', ...]) and never restores it, so a second
+    # hook reading sys.argv[1] would receive a setuptools-internal flag.
+    "outdir = sys.argv[1]\n"
+    f"print('{_ARTIFACT_PREFIX}' + build_meta.build_sdist(outdir))\n"
+    f"print('{_ARTIFACT_PREFIX}' + build_meta.build_wheel(outdir))\n"
 )
 
 

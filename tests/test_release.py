@@ -12,6 +12,7 @@ import hashlib
 import importlib.util
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -152,6 +153,37 @@ def test_write_checksums_manifest_is_sha256sum_compatible(tmp_path: Path) -> Non
     # the hashlib assertion above is the primary pin on every platform.
     if shutil.which("sha256sum"):
         subprocess.run(["sha256sum", "-c", manifest.name], cwd=str(tmp_path), check=True)
+
+
+def test_build_snippet_binds_outdir_before_setuptools_mutates_argv(tmp_path: Path) -> None:
+    """setuptools' build_meta reassigns sys.argv in place without restoring it;
+    the snippet must bind the outdir to a local before the first hook call, or
+    build_wheel receives a setuptools-internal flag as its directory."""
+    project = tmp_path / "proj"
+    (project / "src" / "tiny_pkg").mkdir(parents=True)
+    (project / "src" / "tiny_pkg" / "__init__.py").write_text('__version__ = "0.0.1"\n', encoding="utf-8")
+    (project / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["setuptools>=75.8.0", "wheel"]\n'
+        'build-backend = "setuptools.build_meta"\n\n'
+        '[project]\nname = "tiny-pkg"\nversion = "0.0.1"\n',
+        encoding="utf-8",
+    )
+    outdir = tmp_path / "out"
+
+    result = subprocess.run(
+        [sys.executable, "-c", release._BUILD_SNIPPET, str(outdir)],
+        cwd=str(project),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    names = [line[len("ARTIFACT:"):].strip() for line in result.stdout.splitlines() if line.startswith("ARTIFACT:")]
+    assert len(names) == 2
+    for name in names:
+        assert (outdir / name).is_file(), f"{name} never landed in {outdir}"
+    # The old bug's signature: the cwd gains a stray hook-named directory.
+    assert not (project / "sdist").exists()
 
 
 def test_build_artifacts_rejects_unversioned_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
