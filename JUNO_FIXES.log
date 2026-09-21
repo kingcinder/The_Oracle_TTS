@@ -156,3 +156,22 @@ failed check instead of crashing the doctor. Cross-module pin: the
 doctor's verdict is asserted byte-identical to release.check() on the
 real repo (currently: 1.2.0 changelog dated 2026-09-20 — correctly
 surfaced as drift). Full suite: 1228 passed / 0 failed (1215 + 13).
+
+2026-09-21 | tests/test_app_gui_patch_surface.py
+The patch-surface net catches string-form patch targets, closing the
+bypass: monkeypatch.setattr("the_oracle.app_gui.X", ...) / delattr, the
+abbreviated mock string patch("app_gui.X") (documented but never
+implemented), and patch.multiple("the_oracle.app_gui", name=...) with
+each keyword as an individual site. Probe of the live suite found zero
+existing offenders, so the extension bites only on future bypasses. The
+work also exposed two latent scanner bugs, both real and both fixed: the
+method set tested "patch.multiple"/"patch.object" but ast exposes only
+the last component ("multiple"/"object"), so those documented forms were
+dead code since the net was committed — classification now rebuilds
+two-component methods; and patch.multiple's string is the BARE module
+(no .name), so the module.name splitter silently rejected it. Mutation
+check: appending a string-form setattr of an owned name to a live test
+file fails the net with the full owner-repoint message; reverted
+byte-identically. Six new form tests on synthetic files (dedented —
+the first run's IndentationError was my helper's bug, not the scanner's).
+Full suite: 1234 passed / 0 failed (1228 + 6).
