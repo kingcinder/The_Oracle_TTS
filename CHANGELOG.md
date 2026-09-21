@@ -3,6 +3,49 @@
 Notable user-facing changes to The Oracle. The version number itself lives in
 one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
+## [1.3.0] — 2026-09-21
+
+### Added
+
+**Self-healing synthesis**
+- A one-shot fresh-seed retry when the engine-output sanitizer rejects a
+  generation (flat silence, DC tone, NaNs): the utterance re-synthesizes once
+  at `seed + 1` instead of failing the render. On the batched Vulkan path
+  only the rejected requests re-run in a fresh subprocess — successful audio
+  is kept and progress accounting is untouched. A second rejection still
+  fails loudly so the stem is never cached.
+
+**Input-salvage diagnostics (doctor)**
+- The doctor now scans `Input/` for subtitle files and reports which would
+  take the CP1252 fallback, which would convert, and — critically — which
+  would be **blocked** by bytes CP1252 cannot decode (they pass the lossy
+  pre-check but fail the strict conversion re-decode, surfacing only as the
+  GUI's "Could not convert"). Read-only; never creates `Input/`.
+
+**Release tooling**
+- `release.py --check` verifies the CHANGELOG too: exactly one
+  `## [<version>] — <YYYY-MM-DD>` section for the current version, dated the
+  release day, so a version bump cannot land without its user-facing notes.
+- `release.py --sync-changelog` performs that day's edit as one command:
+  retitles the `[Unreleased]` body into the dated section and re-inserts an
+  empty `[Unreleased]` placeholder. Idempotent.
+- The doctor surfaces release-metadata drift (version, pyproject, banners,
+  changelog) by reusing the release check's probes.
+- The committed patch-surface net also catches string-form patch targets
+  (`setattr("the_oracle.app_gui.X", ...)`, `patch("app_gui.X")`,
+  `patch.multiple`), so future extraction slices cannot be silently
+  undermined by either patch spelling.
+
+### Fixed
+
+- The GUI suite's intermittent shutdown-time `RuntimeError: cannot join
+  current thread` — a GC-triggered destructor self-join in
+  `language_tool_python`; defused at construction.
+- The stem cache can no longer serve pre-hardening degenerate entries: all
+  three read routes validate content (with the sanctioned pause-only silence
+  exception), and the batched path banks pause silence itself instead of
+  asking the engine to synthesize empty text.
+
 ## [Unreleased]
 
 ### Changed
