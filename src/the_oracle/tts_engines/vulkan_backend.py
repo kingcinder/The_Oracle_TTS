@@ -35,6 +35,7 @@ knobs work without environment variables.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -51,10 +52,22 @@ import soundfile as sf
 
 from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.project import VoiceSettings, strip_pain_point_markers
-from the_oracle.utils.audio import ensure_mono, sanitize_engine_audio
+from the_oracle.utils.audio import (
+    DegenerateEngineOutput,
+    ensure_mono,
+    sanitize_engine_audio,
+)
 from the_oracle.utils.hashing import hash_file, hash_payload
 
 SUPPORTED_BACKENDS = ("pytorch", "vulkan")
+
+LOGGER = logging.getLogger(__name__)
+
+# Sentinel for the ``seed`` parameter of the private synthesis helpers:
+# "resolve the engine's configured seed" (constructor arg / ORACLE_AUDIOCPP_SEED).
+# The one-shot hiccup retry passes an explicit value instead — where ``None``
+# means "no --seed flag", since None is also a legitimate configured state.
+_USE_CONFIGURED_SEED = object()
 
 # Chatterbox 0.5B native sample rate. Used as the engine's reported rate until
 # the first real audio.cpp output is synthesized (its actual rate then takes
@@ -442,6 +455,35 @@ class AudioCppVulkanEngine:
         conditioning: VulkanConditioning,
         settings: VoiceSettings,
     ) -> np.ndarray:
+        """Synthesize one utterance, retrying one hiccup at a fresh seed.
+
+        The output gate (:func:`sanitize_engine_audio`) rejects recognized
+        degenerate generations — a bad audio.cpp decode, not an input
+        problem. When it fires, synthesis runs exactly once more with
+        ``seed + 1`` (or no ``--seed`` when unseeded): re-running at the
+        SAME seed would deterministically reproduce the same degenerate
+        output, since the seed is a CLI flag. A second rejection propagates
+        so the caller's failure path reports it and the stem is never
+        cached.
+        """
+        try:
+            return self._synthesize_once(text, conditioning, settings)
+        except DegenerateEngineOutput as first_error:
+            retry_seed = None if self.seed is None else self.seed + 1
+            LOGGER.warning(
+                "Engine gate rejected Vulkan synthesis output (%s); retrying once at %s.",
+                first_error,
+                f"seed {retry_seed}" if retry_seed is not None else "fresh randomness (no seed flag)",
+            )
+            return self._synthesize_once(text, conditioning, settings, seed=retry_seed)
+
+    def _synthesize_once(
+        self,
+        text: str,
+        conditioning: VulkanConditioning,
+        settings: VoiceSettings,
+        seed: int | None = _USE_CONFIGURED_SEED,
+    ) -> np.ndarray:
         # Keep the annotation out of audio.cpp as well as PyTorch. Its text
         # normalizer preserves '~', which can cause a token boundary hitch.
         text = strip_pain_point_markers(text)
@@ -453,7 +495,7 @@ class AudioCppVulkanEngine:
             )
         with tempfile.TemporaryDirectory(prefix="oracle_vulkan_") as temp_dir:
             out_wav = Path(temp_dir) / "synthesis.wav"
-            command = self._build_command(text, reference_path, out_wav, settings)
+            command = self._build_command(text, reference_path, out_wav, settings, seed=seed)
             completed = self._run_command(command)
             if completed.returncode != 0:
                 self._raise_for_failure(completed)
@@ -476,6 +518,7 @@ class AudioCppVulkanEngine:
         reference_path: Path,
         out_wav: Path,
         settings: VoiceSettings,
+        seed: int | None = _USE_CONFIGURED_SEED,
     ) -> list[str]:
         command = [
             str(self.binary),
@@ -494,7 +537,8 @@ class AudioCppVulkanEngine:
         threads = self.threads
         if threads is not None:
             command += ["--threads", str(threads)]
-        seed = self.seed
+        if seed is _USE_CONFIGURED_SEED:
+            seed = self.seed
         if seed is not None:
             command += ["--seed", str(seed)]
         command += self._tuning_flags(settings)
@@ -547,7 +591,12 @@ class AudioCppVulkanEngine:
                 flags += [f"--{key.replace('_', '-')}", value]
         return flags
 
-    def _build_batch_command(self, sequence_path: Path, out_dir: Path) -> list[str]:
+    def _build_batch_command(
+        self,
+        sequence_path: Path,
+        out_dir: Path,
+        seed: int | None = _USE_CONFIGURED_SEED,
+    ) -> list[str]:
         """argv for one audio.cpp process serving many utterances via --request-sequence.
 
         Device/threads stay CLI-level (they configure the model load); every
@@ -574,7 +623,8 @@ class AudioCppVulkanEngine:
         threads = self.threads
         if threads is not None:
             command += ["--threads", str(threads)]
-        seed = self.seed
+        if seed is _USE_CONFIGURED_SEED:
+            seed = self.seed
         if seed is not None:
             command += ["--seed", str(seed)]
         command += ["--request-sequence", str(sequence_path), "--out-dir", str(out_dir)]
@@ -611,6 +661,14 @@ class AudioCppVulkanEngine:
         unbounded requests.json, so even a direct caller that skips the
         pipeline's grouping (e.g. a future server mode) can never ship one
         gigantic request sequence to audio.cpp.
+
+        Hiccup recovery: the per-request output gate
+        (:func:`sanitize_engine_audio`) runs while outputs are collected. A
+        recognized degenerate generation does NOT fail the batch — the
+        successful outputs are kept, and the rejected requests are retried
+        exactly once through a fresh subprocess at ``seed + 1`` (or no seed
+        flag when unseeded). A second rejection propagates, failing the
+        render for that utterance so the stem is never cached.
         """
         if not entries:
             return []
@@ -625,6 +683,48 @@ class AudioCppVulkanEngine:
                 "ORACLE_AUDIOCPP_MAX_BATCH."
             )
         self.ensure_model_ready()
+        retry_seed = None if self.seed is None else self.seed + 1
+        outputs, rejected = self._synthesize_batch_uncapped(entries, on_request_complete)
+        if not rejected:
+            return outputs
+        retry_indexes = sorted(rejected)
+        LOGGER.warning(
+            "Engine gate rejected %d of %d batched outputs (%s); retrying them once at %s.",
+            len(retry_indexes),
+            len(entries),
+            "; ".join(f"request {i}: {rejected[i]}" for i in retry_indexes),
+            f"seed {retry_seed}" if retry_seed is not None else "fresh randomness (no seed flag)",
+        )
+        retry_outputs, still_rejected = self._synthesize_batch_uncapped(
+            [entries[i] for i in retry_indexes], None, retry_seed=retry_seed
+        )
+        for slot, index in enumerate(retry_indexes):
+            outputs[index] = retry_outputs[slot]
+        if still_rejected:
+            raise still_rejected[min(still_rejected)]
+        return outputs
+
+    def _synthesize_batch_uncapped(
+        self,
+        entries: list[tuple[str, VulkanConditioning, VoiceSettings]],
+        on_request_complete: Callable[[int], None] | None,
+        retry_seed: int | None = _USE_CONFIGURED_SEED,
+    ) -> tuple[list[tuple[np.ndarray, int, float] | None], dict[int, DegenerateEngineOutput]]:
+        """Run one batch subprocess; return successful outputs and gate rejections.
+
+        Split out of :meth:`synthesize_batch` so the one-shot hiccup retry can
+        re-run ONLY the rejected requests through a fresh subprocess: the
+        successful outputs are kept, so a single degenerate generation costs
+        one small retry instead of failing the whole batch. The retry pass
+        never fires ``on_request_complete`` — the first pass already reported
+        every index, and progress maps batch-local indexes to tasks, so
+        retry-local indexes would corrupt the accounting and double-count
+        completions.
+
+        ``retry_seed`` follows the sentinel protocol: :data:`_USE_CONFIGURED_SEED`
+        resolves to the engine's configured seed; ``None`` forces no ``--seed``
+        flag (audio.cpp's per-process fresh randomness).
+        """
         with tempfile.TemporaryDirectory(prefix="oracle_vulkan_batch_") as temp_dir:
             temp = Path(temp_dir)
             requests: list[dict[str, Any]] = []
@@ -651,7 +751,7 @@ class AudioCppVulkanEngine:
             sequence_path.write_text(json.dumps({"requests": requests}), encoding="utf-8")
             out_dir = temp / "out"
             out_dir.mkdir()
-            command = self._build_batch_command(sequence_path, out_dir)
+            command = self._build_batch_command(sequence_path, out_dir, seed=retry_seed)
             # The per-synthesis timeout (default 600s) bounds ONE utterance;
             # a batch of N requests legitimately needs N times the headroom,
             # otherwise long renders would time out as one subprocess even
@@ -668,7 +768,8 @@ class AudioCppVulkanEngine:
             wall_ms: dict[int, float] = {}
             for match in _BATCH_TIMING_LINE.finditer(completed.stdout or ""):
                 wall_ms[int(match.group(1))] = float(match.group(2))
-            outputs: list[tuple[np.ndarray, int, float]] = []
+            outputs: list[tuple[np.ndarray, int, float] | None] = [None] * len(entries)
+            rejected: dict[int, DegenerateEngineOutput] = {}
             for index in range(len(entries)):
                 wav = out_dir / f"request_{index}.wav"
                 if not wav.exists():
@@ -681,18 +782,18 @@ class AudioCppVulkanEngine:
                 self._last_sample_rate = int(rate)
                 audio_array = np.asarray(ensure_mono(audio), dtype=np.float32).squeeze()
                 # Batch hiccup gate: one degenerate request in a sequence must
-                # fail loudly, not cache a silent stem mid-render.
-                audio_array = sanitize_engine_audio(
-                    audio_array, text=entries[index][0], sample_rate=int(rate)
-                )
-                outputs.append(
-                    (
-                        audio_array,
-                        int(rate),
-                        wall_ms.get(index, 0.0),
+                # not cache a silent stem mid-render. Rejections are collected
+                # instead of raised so synthesize_batch can retry exactly the
+                # rejected requests at a fresh seed.
+                try:
+                    audio_array = sanitize_engine_audio(
+                        audio_array, text=entries[index][0], sample_rate=int(rate)
                     )
-                )
-            return outputs
+                except DegenerateEngineOutput as error:
+                    rejected[index] = error
+                    continue
+                outputs[index] = (audio_array, int(rate), wall_ms.get(index, 0.0))
+            return outputs, rejected
 
     def _run_batch_command_streaming(
         self,

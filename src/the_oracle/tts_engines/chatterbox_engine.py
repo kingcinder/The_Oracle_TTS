@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from time import perf_counter, time
@@ -34,7 +35,7 @@ from the_oracle.models.pins import (
 )
 from the_oracle.models.project import VoiceSettings, strip_pain_point_markers
 from the_oracle.platform_support import repo_python_display
-from the_oracle.utils.audio import sanitize_engine_audio
+from the_oracle.utils.audio import DegenerateEngineOutput, sanitize_engine_audio
 from the_oracle.utils.hashing import hash_payload
 
 
@@ -42,6 +43,8 @@ SUPPORTED_VARIANTS = ("standard", "multilingual", "turbo")
 TURBO_REPO_ID = _PINNED_TURBO_REPO
 TURBO_REVISION = pin_for(TURBO_REPO_ID)
 TURBO_ALLOW_PATTERNS = _PINNED_TURBO_PATTERNS
+
+LOGGER = logging.getLogger(__name__)
 
 
 class TurboModelError(RuntimeError):
@@ -272,6 +275,36 @@ class ChatterboxEngine:
         )
 
     def synthesize(self, text: str, conditioning: ChatterboxConditioning, settings: VoiceSettings) -> np.ndarray:
+        """Synthesize one utterance, retrying one hiccup at a fresh seed.
+
+        The output gate (:func:`sanitize_engine_audio`) rejects recognized
+        degenerate generations — the model's own documented pathology, not an
+        input problem. When it fires, synthesis runs exactly once more: an
+        unseeded engine's second draw is already fresh randomness, and a
+        seeded one retries at ``seed + 1`` — re-running at the SAME seed
+        would deterministically reproduce the same degenerate output, since
+        ``generate()`` re-seeds torch's global RNG before every call. A
+        second rejection propagates so the caller's failure path reports it
+        and the stem is never cached.
+        """
+        try:
+            return self._generate_once(text, conditioning, settings, self.seed)
+        except DegenerateEngineOutput as first_error:
+            retry_seed = None if self.seed is None else self.seed + 1
+            LOGGER.warning(
+                "Engine gate rejected synthesis output (%s); retrying once at %s.",
+                first_error,
+                f"seed {retry_seed}" if retry_seed is not None else "fresh randomness (no seed configured)",
+            )
+            return self._generate_once(text, conditioning, settings, retry_seed)
+
+    def _generate_once(
+        self,
+        text: str,
+        conditioning: ChatterboxConditioning,
+        settings: VoiceSettings,
+        seed: int | None,
+    ) -> np.ndarray:
         # Final engine-boundary guard: author pain-point tildes are review
         # annotations, not prosody. Chatterbox's own punc_norm preserves '~'
         # and can turn it into the exact hitch this marker is meant to flag.
@@ -309,7 +342,7 @@ class ChatterboxEngine:
             if self.variant == "turbo":
                 kwargs["top_k"] = settings.top_k
                 kwargs["norm_loudness"] = settings.norm_loudness
-            if self.seed is not None:
+            if seed is not None:
                 # Chatterbox samples via torch.multinomial, which draws from
                 # torch's global RNG. Seeding right before generate() makes every
                 # utterance bit-reproducible across runs (same inputs -> same
@@ -318,7 +351,7 @@ class ChatterboxEngine:
                 try:
                     import torch
 
-                    torch.manual_seed(self.seed)
+                    torch.manual_seed(seed)
                 except Exception:
                     pass
             audio = self.model.generate(**kwargs)
