@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import weakref
 from pathlib import Path
 
 from the_oracle.offline import is_offline_install
@@ -30,6 +31,11 @@ except ValueError:
 # process. A fresh process picks the tool up once the download completes and
 # populates the cache.
 _LANGUAGE_TOOL_ABANDONED = threading.Event()
+
+# Per-base-class cache of the self-join-defused subclass built by
+# _guarded_language_tool(). Weakly keyed so test doubles are never
+# kept alive or polluted by an entry.
+_GUARDED_LANGUAGE_TOOL_CACHE: "weakref.WeakKeyDictionary[type, type]" = weakref.WeakKeyDictionary()
 
 
 def _language_tool_download_ready() -> bool:
@@ -212,6 +218,54 @@ def _capitalize_first(text: str) -> str:
     return text
 
 
+def _guarded_language_tool(base: type) -> type:
+    """Return *base* wrapped so its destructor cannot join its own thread.
+
+    Why this exists: language_tool_python's stdout consumer thread targets a
+    lambda closing over the LanguageTool object, so when that thread
+    finishes, threading's run() epilogue (``del self._target``) can drop the
+    LAST reference to the tool and run ``LanguageTool.__del__`` on the
+    consumer thread itself. The destructor chains into ``close() ->
+    _terminate_server() -> _consumer_thread.join(timeout=5)`` — a thread
+    joining itself — raising ``RuntimeError: cannot join current thread``
+    nondeterministically at teardown. The exact stack was captured verbatim
+    with an instrumented ``threading.Thread.join`` during a full GUI-suite
+    run (see JUNO_FIXES.log 2026-09-20): the raise fired at threading.py's
+    ``del self._target`` via language_tool_python/server.py ``__del__`` ->
+    ``_terminate_server``.
+
+    The join is pointless in that context — the only thread that could
+    observe the stop event is already exiting — so the wrapped destructor
+    clears the consumer-thread handle first (skipping ONLY the self-join;
+    the stop event and the server kill below it run as before) and then
+    delegates to the library's destructor. An explicit close() from any
+    other thread is untouched.
+
+    *base* is resolved from the live ``language_tool_python.LanguageTool``
+    symbol at each use, so monkeypatched test classes are honored too. A
+    non-class *base* (test doubles are often plain callables) is returned
+    unchanged — a callable with no destructor has nothing to defuse.
+    """
+    if not isinstance(base, type):
+        return base
+    cached = _GUARDED_LANGUAGE_TOOL_CACHE.get(base)
+    if cached is not None:
+        return cached
+
+    class _GuardedLanguageTool(base):
+        def __del__(self) -> None:
+            consumer = getattr(self, "_consumer_thread", None)
+            if consumer is not None and consumer is threading.current_thread():
+                # Running on the consumer thread itself: the join below
+                # would raise "cannot join current thread". Drop the
+                # handle so _terminate_server skips only the join.
+                self._consumer_thread = None
+            super().__del__()
+
+    _GUARDED_LANGUAGE_TOOL_CACHE[base] = _GuardedLanguageTool
+    return _GuardedLanguageTool
+
+
 class GrammarCorrector:
     def __init__(self, *, use_language_tool: bool = True) -> None:
         self._tool = self._try_load_language_tool() if use_language_tool else None
@@ -244,7 +298,9 @@ class GrammarCorrector:
 
         def _load() -> None:
             try:
-                result["tool"] = language_tool_python.LanguageTool("en-US")
+                result["tool"] = _guarded_language_tool(
+                    language_tool_python.LanguageTool
+                )("en-US")
             except Exception:
                 pass
 
