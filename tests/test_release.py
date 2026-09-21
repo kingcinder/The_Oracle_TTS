@@ -3,7 +3,9 @@
 The contract under test: ``src/the_oracle/__init__.py`` is the only tracked
 place a release version is written; pyproject.toml reads it dynamically and
 the README / STATE.md banners agree with it. scripts/release.py enforces that
-invariant and produces versioned artifacts with a sha256 manifest.
+invariant and produces versioned artifacts with a sha256 manifest. The
+invariant also covers CHANGELOG.md: the current version must have exactly one
+section, dated the release day.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -41,8 +44,16 @@ def _write_fake_repo(
     state_version: str | None = None,
     pyproject_literal: bool = False,
     banner_in_state: bool = True,
+    changelog_version: str | None = None,
+    changelog_date: str | None = None,
+    changelog_text: str | None = None,
 ) -> Path:
-    """A minimal tracked tree with the same shape the script expects."""
+    """A minimal tracked tree with the same shape the script expects.
+
+    The CHANGELOG defaults to a section for ``version`` dated *today*, which
+    is what a release-morning tree looks like; the date parameters let tests
+    build yesterday's tree and drift scenarios.
+    """
     (tmp_path / "src" / "the_oracle").mkdir(parents=True)
     (tmp_path / "src" / "the_oracle" / "__init__.py").write_text(
         f'__all__ = ["__version__"]\n\n__version__ = "{version}"\n', encoding="utf-8"
@@ -64,6 +75,16 @@ def _write_fake_repo(
     (tmp_path / "STATE.md").write_text(
         "# State\n\n" + state_banner + "\nMore body text.\n", encoding="utf-8"
     )
+    if changelog_text is None:
+        stamped_version = changelog_version if changelog_version is not None else version
+        stamped_date = changelog_date if changelog_date is not None else date.today().isoformat()
+        changelog_text = (
+            "# Changelog\n\n"
+            "## [Unreleased]\n\n### Changed\n\n- (nothing yet)\n\n"
+            f"## [{stamped_version}] — {stamped_date}\n\n### Added\n\n- Something.\n"
+        )
+    if changelog_text != "":
+        (tmp_path / "CHANGELOG.md").write_text(changelog_text, encoding="utf-8")
     return tmp_path
 
 
@@ -77,8 +98,28 @@ def test_pyproject_is_generated_from_the_package_version() -> None:
     assert attr == "the_oracle.__version__"
 
 
-def test_check_passes_on_this_repo() -> None:
-    assert release.check(REPO_ROOT) == []
+def test_check_passes_on_this_repo_on_its_own_release_day() -> None:
+    """The full invariant, evaluated on the day the changelog itself records.
+
+    Undated --check (real ``date.today()``) passes only on the release day by
+    design; between releases the tree legitimately fails it. This pin runs
+    the real repo's check at the date stamped on its current section, so the
+    invariant itself (pyproject + banners + changelog heading) is verified on
+    real content without being hostage to the calendar.
+    """
+    version = release.read_version(REPO_ROOT)
+    assert version, "the real repo must carry a __version__"
+    headings = [
+        match
+        for match in (
+            release._CHANGELOG_HEADING_RE.match(line)
+            for line in (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+        )
+        if match
+    ]
+    stamped = {match.group("version"): match.group("date") for match in headings}
+    assert version in stamped, f"CHANGELOG.md has no section for the current version {version}"
+    assert release.check(REPO_ROOT, today=date.fromisoformat(stamped[version])) == []
 
 
 def test_check_flags_banner_drift(tmp_path: Path) -> None:
@@ -94,6 +135,186 @@ def test_check_flags_pyproject_version_literal(tmp_path: Path) -> None:
     repo = _write_fake_repo(tmp_path, pyproject_literal=True)
     problems = release.check(repo)
     assert any("pyproject.toml" in problem for problem in problems)
+
+
+def test_check_flags_missing_changelog_section(tmp_path: Path) -> None:
+    """A version bump without a changelog section for the new version fails."""
+    repo = _write_fake_repo(tmp_path, changelog_version="8.0.0")
+    problems = release.check(repo)
+    assert len(problems) == 1
+    assert "CHANGELOG.md" in problems[0]
+    assert "9.9.9" in problems[0]
+    assert date.today().isoformat() in problems[0], (
+        "the fix message must name the exact heading to add"
+    )
+
+
+def test_check_flags_stale_changelog_date(tmp_path: Path) -> None:
+    """The section exists but is not dated the release day."""
+    yesterday = date.today().toordinal() - 1
+    yesterday_iso = date.fromordinal(yesterday).isoformat()
+    repo = _write_fake_repo(tmp_path, changelog_date=yesterday_iso)
+    problems = release.check(repo)
+    assert len(problems) == 1
+    assert yesterday_iso in problems[0]
+    assert date.today().isoformat() in problems[0]
+
+
+def test_check_flags_duplicate_changelog_sections(tmp_path: Path) -> None:
+    repo = _write_fake_repo(
+        tmp_path,
+        changelog_text=(
+            "# Changelog\n\n"
+            "## [9.9.9] — 2026-01-01\n\n- First.\n\n"
+            "## [9.9.9] — 2026-01-02\n\n- Second.\n"
+        ),
+    )
+    problems = release.check(repo)
+    assert len(problems) == 1
+    assert "2 sections" in problems[0]
+    assert "lines 3, 7" in problems[0]
+
+
+def test_check_flags_missing_changelog_file(tmp_path: Path) -> None:
+    repo = _write_fake_repo(tmp_path, changelog_text="")
+    problems = release.check(repo)
+    assert any("CHANGELOG.md: missing" in problem for problem in problems)
+
+
+def test_check_flags_invalid_changelog_date(tmp_path: Path) -> None:
+    """The heading shape matches but the date is not a real calendar day."""
+    repo = _write_fake_repo(
+        tmp_path,
+        changelog_text="# Changelog\n\n## [9.9.9] — 2026-13-45\n\n- Something.\n",
+    )
+    problems = release.check(repo)
+    assert len(problems) == 1
+    assert "not a valid calendar date" in problems[0]
+
+
+def test_check_tolerates_unreleased_and_other_versions(tmp_path: Path) -> None:
+    """Only the CURRENT version's section is date-checked; [Unreleased] and
+    older sections are none of --check's business."""
+    repo = _write_fake_repo(
+        tmp_path,
+        changelog_text=(
+            "# Changelog\n\n"
+            "## [Unreleased]\n\n### Changed\n\n- (nothing yet)\n\n"
+            "## [9.9.9] — " + date.today().isoformat() + "\n\n### Added\n\n- Now.\n\n"
+            "## [0.9.0] — 2025-12-25\n\n### Added\n\n- Before.\n"
+        ),
+    )
+    assert release.check(repo) == []
+
+
+def test_check_changelog_date_follows_injected_today(tmp_path: Path) -> None:
+    """The date comparison evaluates against the injected release day.
+
+    Undated --check uses the real calendar, so a section dated tomorrow
+    legitimately fails it; only the matching injected ``today`` passes.
+    """
+    tomorrow = date.fromordinal(date.today().toordinal() + 1)
+    repo = _write_fake_repo(tmp_path, changelog_date=tomorrow.isoformat())
+    assert release.check(repo) != []
+    assert release.check(repo, today=tomorrow) == []
+    assert release.check(repo, today=date.today()) != []
+
+
+def test_changelog_heading_requires_the_canonical_form(tmp_path: Path) -> None:
+    """A near-miss heading (hyphen, bolded, missing brackets) is 'missing',
+    so hand-written variants cannot silently satisfy the invariant."""
+    for index, bad_heading in enumerate(
+        (
+            "## [9.9.9] - 2026-01-01",
+            "**## [9.9.9] — 2026-01-01**",
+            "## 9.9.9 — 2026-01-01",
+            "## [9.9.9] — 2026-1-1",
+        )
+    ):
+        repo = _write_fake_repo(
+            tmp_path / f"case-{index}",
+            changelog_text=f"# Changelog\n\n{bad_heading}\n\n- Something.\n",
+        )
+        problems = release.check(repo)
+        assert len(problems) == 1, bad_heading
+        assert "no section for version 9.9.9" in problems[0], bad_heading
+
+
+def test_sync_changelog_retitles_unreleased_body(tmp_path: Path) -> None:
+    """The release-day edit, as one command: [Unreleased]'s body (including
+    its ### sub-headings) becomes the dated version section, and [Unreleased]
+    survives below as an empty placeholder for future work."""
+    repo = _write_fake_repo(tmp_path)
+    (repo / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "## [Unreleased]\n\n### Added\n\n- New thing.\n- Another.\n\n"
+        "## [1.0.0] — 2026-01-01\n\n### Added\n\n- Old.\n",
+        encoding="utf-8",
+    )
+
+    changed = release.sync_changelog(repo, "9.9.9", today=date(2026, 9, 21))
+
+    assert changed == ["CHANGELOG.md"]
+    text = (repo / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert text.startswith(
+        "# Changelog\n\n"
+        "## [9.9.9] — 2026-09-21\n\n### Added\n\n- New thing.\n- Another.\n\n"
+        "## [Unreleased]\n\n### Changed\n\n- (nothing yet)\n\n"
+        "## [1.0.0] — 2026-01-01"
+    )
+    # The stamped tree must satisfy the full invariant on the stamped day.
+    assert release.check(repo, today=date(2026, 9, 21)) == []
+
+
+def test_sync_changelog_rewrites_an_existing_sections_date(tmp_path: Path) -> None:
+    """When the section already exists (e.g. written ahead), only its date
+    moves; the body and any neighbors are untouched."""
+    repo = _write_fake_repo(tmp_path, changelog_date="2026-01-01")
+    changed = release.sync_changelog(repo, "9.9.9", today=date(2026, 9, 21))
+    assert changed == ["CHANGELOG.md"]
+    text = (repo / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [9.9.9] — 2026-09-21" in text
+    assert "2026-01-01" not in text
+    assert release.check(repo, today=date(2026, 9, 21)) == []
+
+
+def test_sync_changelog_is_idempotent(tmp_path: Path) -> None:
+    repo = _write_fake_repo(tmp_path, changelog_date="2026-01-01")
+    assert release.sync_changelog(repo, "9.9.9", today=date(2026, 9, 21)) == ["CHANGELOG.md"]
+    assert release.sync_changelog(repo, "9.9.9", today=date(2026, 9, 21)) == []
+
+
+def test_sync_changelog_refuses_when_nothing_to_retitle(tmp_path: Path) -> None:
+    repo = _write_fake_repo(tmp_path, changelog_text="")
+    (repo / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.0.0] — 2026-01-01\n\n- Old.\n", encoding="utf-8"
+    )
+    with pytest.raises(release.ReleaseError, match="Unreleased"):
+        release.sync_changelog(repo, "9.9.9", today=date(2026, 9, 21))
+
+
+def test_sync_changelog_refuses_missing_file(tmp_path: Path) -> None:
+    repo = _write_fake_repo(tmp_path, changelog_text="")
+    (repo / "CHANGELOG.md").write_text("placeholder", encoding="utf-8")  # ensure it existed
+    (repo / "CHANGELOG.md").unlink()
+    with pytest.raises(release.ReleaseError, match="missing"):
+        release.sync_changelog(repo, "9.9.9", today=date(2026, 9, 21))
+
+
+def test_main_sync_changelog_stamps_and_then_check_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real CLI mode: sync_changelog actually runs, and the follow-up
+    --check report inside the same invocation holds (evaluated today, since
+    main stamps with the real calendar)."""
+    repo = _write_fake_repo(tmp_path, changelog_date="2026-01-01")
+    reports: list[list[str]] = []
+    monkeypatch.setattr(release, "_report", lambda problems: reports.append(problems) or 0)
+
+    status = release.main(["--sync-changelog", "--repo-root", str(repo)])
+
+    assert status == 0
+    assert reports == [[]], f"check inside the CLI run must hold: {reports}"
+    text = (repo / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## [9.9.9] — {date.today().isoformat()}" in text
 
 
 def test_sync_banners_updates_only_the_version(tmp_path: Path) -> None:
