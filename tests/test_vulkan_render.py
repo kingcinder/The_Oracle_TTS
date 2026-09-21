@@ -590,7 +590,10 @@ def test_vulkan_render_mixed_cache_progress_never_rewinds(tmp_path: Path) -> Non
         ordered = sorted(vulkan_expected)
         for index, chunk_hash in enumerate(ordered):
             if index % 2 == 0:
-                sf.write(project_cache.stem_path(chunk_hash), np.zeros(2400, dtype=np.float32), 24000)
+                # Speech-shaped content: the read-side servable gate rejects
+                # degenerate (all-zero/DC) cache entries for spoken text, so
+                # a seeded hit must hold audio a real render would serve.
+                sf.write(project_cache.stem_path(chunk_hash), np.linspace(-0.25, 0.25, 2400, dtype=np.float32), 24000)
         seeded_hits = set(ordered[::2])
         misses = vulkan_expected - seeded_hits
         assert misses, "seeding left no misses to synthesize"

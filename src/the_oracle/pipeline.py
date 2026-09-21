@@ -35,6 +35,7 @@ from the_oracle.tts_engines.vulkan_backend import (
 )
 from the_oracle.utils.chunking import chunk_utterance, TextChunk
 from the_oracle.utils.hashing import build_chunk_hash, hash_file, hash_payload
+from the_oracle.utils.audio import stem_is_speech_like
 from the_oracle.utils.pacing import chunk_seam_pause_ms, pause_for_utterance
 from the_oracle.utils.logging import get_logger
 from the_oracle.correction_modes import normalize_correction_mode
@@ -431,6 +432,12 @@ class NoAudioToAssembleError(RuntimeError):
 # directive-only text). The turn still owns its pause in assembly, so we
 # cache a short silence instead of sending empty text to the engine.
 _PAUSE_ONLY_STEM_SECONDS = 0.5
+#: Sample rate for pause-only stems banked where no engine is in hand (the
+#: Vulkan batched path). Chatterbox's canonical output rate — the same fallback
+#: assemble_dialogue uses — and the rate the stock model's engine banks
+#: sequential pause stems at. A custom model at a different rate would still
+#: assemble-fail loudly ("All stems must share a sample rate"), never silently.
+_PAUSE_STEM_FALLBACK_SAMPLE_RATE = 24000
 
 
 def _write_pause_only_stem(stem_path: Path, sample_rate: int) -> None:
@@ -458,6 +465,40 @@ def _load_cached_stem(stem_path: Path) -> tuple[np.ndarray, int] | None:
         except OSError:
             pass
         return None
+
+
+def _load_servable_stem(
+    stem_path: Path, *, allow_silence: bool = False
+) -> tuple[np.ndarray, int] | None:
+    """Load a cached stem only when its content may serve the request.
+
+    The cache's trust boundary is now the engine-output gate (both engines
+    pass synthesis through :func:`sanitize_engine_audio` before any stem is
+    written), but entries written before that hardening — or produced by any
+    future writer that bypasses the gate — are still on disk. This read-side
+    gate re-classifies cached content with the same taxonomy and deletes
+    entries it cannot serve, so a degenerate stem becomes a cache miss and
+    re-synthesizes instead of hardening into every later render.
+
+    ``allow_silence=True`` exempts pause-only stems, which are legitimately
+    all-zero by construction.
+    """
+    loaded = _load_cached_stem(stem_path)
+    if loaded is None:
+        return None
+    audio, sample_rate = loaded
+    if stem_is_speech_like(audio, allow_silence=allow_silence):
+        return audio, sample_rate
+    LOGGER.warning(
+        "Cached stem %s holds degenerate content (pre-hardening entry or silent decode); "
+        "deleting and re-synthesizing.",
+        stem_path,
+    )
+    try:
+        stem_path.unlink()
+    except OSError:
+        pass
+    return None
 
 
 def synthesize_task(
@@ -488,7 +529,12 @@ def synthesize_task(
             _write_pause_only_stem(stem_path, engine.sample_rate)
     else:
         cache_hit = stem_path.exists()
-        if cache_hit and _load_cached_stem(stem_path) is None:
+        if cache_hit and _load_servable_stem(stem_path) is None:
+            # The cached stem was corrupt or degenerate (e.g. a pre-hardening
+            # entry, or any future writer that bypassed the engine gate) and
+            # has been deleted; fall through to synthesis instead of serving
+            # silence where speech was asked for.
+            cache_hit = False
             # The cached stem was corrupt and has been deleted; fall through
             # to synthesis instead of crashing on it.
             cache_hit = False
@@ -638,7 +684,21 @@ def synthesize_tasks_batched(
             reference_audio_hash=task.reference_audio_hash,
         )
         stem_path = project_cache.stem_path(chunk_hash)
-        if stem_path.exists():
+        if not task.text.strip():
+            # Pause-only task on the batched path: bank the silent stem here
+            # (same as the sequential path) instead of shipping empty text to
+            # audio.cpp, whose silent decode would then fail the engine gate
+            # and fail the whole batch. Silence is only ever banked where
+            # silence is the expected product, and the pause task completes
+            # its result here — it never joins the pending engine group.
+            cache_hit = stem_path.exists()
+            if not cache_hit:
+                _write_pause_only_stem(stem_path, _PAUSE_STEM_FALLBACK_SAMPLE_RATE)
+            results.append(
+                _build_stem_result(task, stem_path, chunk_hash, project_cache, cache_hit=cache_hit, synthesize_seconds=0.0)
+            )
+            continue
+        if _load_servable_stem(stem_path) is not None:
             results.append(
                 _build_stem_result(task, stem_path, chunk_hash, project_cache, cache_hit=True, synthesize_seconds=0.0)
             )
@@ -1433,11 +1493,12 @@ class OraclePipeline:
             for task in raw_tasks:
                 chunk_hash = task_chunk_hashes[task.utterance_index]
                 stem_path = project_cache.stem_path(chunk_hash)
-                loaded = _load_cached_stem(stem_path)
+                loaded = _load_servable_stem(stem_path)
                 if loaded is None:
-                    # Corrupt cached stem: it has been deleted above. Abandon
-                    # the fast path so the normal dispatch below re-synthesizes
-                    # the missing stem (and reuses the remaining valid ones).
+                    # Corrupt or degenerate cached stem: it has been deleted
+                    # above. Abandon the fast path so the normal dispatch
+                    # below re-synthesizes the missing stem (and reuses the
+                    # remaining valid ones).
                     fast_path_ok = False
                     break
                 load_start = perf_counter()

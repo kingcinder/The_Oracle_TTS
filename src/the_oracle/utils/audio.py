@@ -120,6 +120,44 @@ def _text_preview(text: str) -> str:
     return f" ({preview!r}{'…' if len(stripped) > 60 else ''})"
 
 
+def stem_is_speech_like(
+    audio: np.ndarray, *, allow_silence: bool = False, sample_rate: int | None = None
+) -> bool:
+    """Read-side counterpart of :func:`sanitize_engine_audio`.
+
+    Classifies cached stem content with the same taxonomy the write-side gate
+    enforces for engine output, minus the in-place repair: an entry is
+    servable for spoken text only when it is finite, non-empty, and carries
+    speech-shaped content (peak above the degenerate threshold, zero-duty
+    cycle below the silence ceiling).
+
+    ``allow_silence=True`` exempts pause-only stems, which are legitimately
+    all-zero by construction (``_write_pause_only_stem``) — silence is only
+    ever accepted where silence is the expected product.
+
+    Honest scope note: this gate defends every entry written AFTER the
+    hardening (2026-09-20) and any entry a future engine hiccup might produce.
+    Stems cached before the hardening that already contain degenerate audio
+    are not distinguishable from pause stems by content alone, so they are
+    still servable until the utterance is re-rendered; cache keys include the
+    text, seed, and engine parameters, so any edit to an affected utterance
+    re-synthesizes from scratch.
+    """
+    array = np.asarray(audio, dtype=np.float32)
+    if array.size == 0:
+        return False
+    if not np.isfinite(array).all():
+        return False
+    if allow_silence:
+        return True
+    centered = array - np.mean(array, dtype=np.float64)
+    peak = float(np.max(np.abs(centered)))
+    if peak < _MIN_PEAK_AMPLITUDE:
+        return False
+    zero_duty = float(np.count_nonzero(np.abs(centered) < _MIN_PEAK_AMPLITUDE) / array.size)
+    return zero_duty <= _MAX_ZERO_DUTY_CYCLE
+
+
 def apply_fade(audio: np.ndarray, sample_rate: int, fade_ms: int) -> np.ndarray:
     if fade_ms <= 0 or audio.size == 0:
         return audio
