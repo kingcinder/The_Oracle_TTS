@@ -1,6 +1,6 @@
 # The Oracle
 
-**Release V1.2.0** — CUDA inference support, guided onboarding, and complete first-run workspace persistence.
+**Release V1.3.0** — Self-healing synthesis, input-salvage diagnostics, and release tooling with a verified changelog gate.
 
 Changes between releases: [CHANGELOG.md](CHANGELOG.md). Upgrading an
 existing install: [docs/UPGRADING.md](docs/UPGRADING.md). Problems:

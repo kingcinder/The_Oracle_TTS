@@ -258,7 +258,13 @@ def test_vulkan_engine_rejects_silent_wav(tmp_path, monkeypatch) -> None:
     import soundfile as sf
     from the_oracle.tts_engines.vulkan_backend import AudioCppVulkanEngine, VulkanConditioning
 
+    # The gate under test runs BEFORE _run_command (the stubbed boundary),
+    # but constructing the engine's _build_command resolves self.binary /
+    # self.model first, which fails on a machine without the gitignored
+    # audio.cpp build — skip like test_vulkan_backend's hardware smoke does.
     engine, reference = _vulkan_engine(tmp_path, b"")
+    if engine.binary is None or engine.model is None:
+        pytest.skip("audiocpp_cli binary/model not built; the Vulkan engine-gate tests need the audio.cpp build")
     with pytest.raises(ValueError, match="degenerate audio"):
         _run_vulkan_synthesize_with_wav(tmp_path, engine, reference, _silent_wav(tmp_path), monkeypatch)
 
@@ -302,6 +308,8 @@ def test_vulkan_engine_passes_healthy_wav_through(tmp_path, monkeypatch) -> None
     import soundfile as sf
 
     engine, reference = _vulkan_engine(tmp_path, b"")
+    if engine.binary is None or engine.model is None:
+        pytest.skip("audiocpp_cli binary/model not built; the Vulkan engine-gate tests need the audio.cpp build")
     good = tmp_path / "good.wav"
     sf.write(str(good), _speech(0.5), SAMPLE_RATE, format="WAV")
     out = _run_vulkan_synthesize_with_wav(tmp_path, engine, reference, good, monkeypatch)
