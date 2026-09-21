@@ -139,3 +139,20 @@ test_check_passes_on_this_repo_on_its_own_release_day: it evaluates the real
 repo's check at the date stamped on its current section, so the invariant is
 pinned on real content without being hostage to the calendar. Full suite:
 1209 passed / 0 failed (1201 + 8).
+
+2026-09-21 | scripts/doctor.py | tests/test_doctor_release_metadata.py (13)
+The doctor folds in the release --check probes: a release_metadata check
+loads release.py from beside doctor.py (importlib, explicitly added to
+the top-level imports — the first draft worked only via transitive
+import luck) and runs its check() read-only, so version/pyproject/
+banner/CHANGELOG drift appears in the doctor report before a release
+attempt fails on it mid-flight. Verdict policy mirrors input_subtitles:
+problems set ok=False, render as WARN drift detail in the human report
+(older reports without the key render nothing), and drive next-steps —
+but deliberately do NOT join required_checks, since a changelog not
+dated today is the release-day gate working as designed, not a broken
+install. A probe-level try/except degrades a broken release module to a
+failed check instead of crashing the doctor. Cross-module pin: the
+doctor's verdict is asserted byte-identical to release.check() on the
+real repo (currently: 1.2.0 changelog dated 2026-09-20 — correctly
+surfaced as drift). Full suite: 1228 passed / 0 failed (1215 + 13).
