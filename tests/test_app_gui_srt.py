@@ -149,7 +149,7 @@ def test_render_worker_fallback_uses_gui_safe_pipeline(
     its safe pipeline, the worker's fallback constructed the feature-rich
     pipeline in the QThread and could crash while importing native backends.
     """
-    import the_oracle.app_gui as app_gui
+    import the_oracle.gui_render as gui_render
     from the_oracle.app_gui import RenderWorker
 
     renderer = _FakeRenderer(tmp_path / "render_out.flac")
@@ -159,7 +159,11 @@ def test_render_worker_fallback_uses_gui_safe_pipeline(
         pipeline_kwargs.update(kwargs)
         return renderer
 
-    monkeypatch.setattr(app_gui, "OraclePipeline", make_pipeline)
+    # The worker's direct (non-subprocess) fallback resolves OraclePipeline
+    # from its owner module's globals since the gui_render extraction — an
+    # app_gui-level patch would be a silent no-op (the patch-surface test
+    # enforces this for future slices).
+    monkeypatch.setattr(gui_render, "OraclePipeline", make_pipeline)
     worker = RenderWorker(
         _plan_with_utterance(tmp_path),
         RenderSettings(model_variant="standard"),
