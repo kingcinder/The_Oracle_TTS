@@ -39,7 +39,14 @@ handles both):
   * ``monkeypatch.setattr(app_gui, name_var, ...)`` — non-literal names are
     reported as unresolved so nothing slips through unreviewed
   * ``mock.patch("the_oracle.app_gui.name")`` / ``patch("app_gui.name")``
+  * ``monkeypatch.setattr("the_oracle.app_gui.name", ...)`` — the string
+    form resolves ``the_oracle.app_gui`` by import; identical hazard, and
+    invisible to any scan that only handles module-object first arguments
   * ``mock.patch.object(app_gui, "name")``
+  * ``mock.patch.multiple("the_oracle.app_gui", name=value, ...)`` — each
+    keyword is one patch site (the string form again); the module-object
+    form would need the target as a *value*, which AST cannot bind, so
+    only the string form is scanned
   * keyword form ``monkeypatch.setattr(app_gui, name="x")``
 """
 
@@ -48,6 +55,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
+from textwrap import dedent
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -164,15 +172,42 @@ def _string_constants(call: ast.Call) -> list[str]:
     ]
 
 
+def _patch_string_target(value: str) -> tuple[str, str] | None:
+    """Split a dotted patch string into (module, name) if it targets app_gui.
+
+    Both the fully-qualified ``the_oracle.app_gui.X`` and the abbreviated
+    ``app_gui.X`` (mock's string form also resolves the last two components
+    against the calling namespace) route through app_gui's globals — the
+    same silent-no-op hazard as ``setattr(app_gui, "X", ...)``. Everything
+    else returns None.
+    """
+    if value.startswith("the_oracle.app_gui."):
+        module, _, name = value.rpartition(".")
+        return module, name
+    if value.startswith("app_gui."):
+        module, _, name = value.rpartition(".")
+        return module, name
+    return None
+
+
 def _scan_call(path: str, call: ast.Call) -> list[PatchTarget]:
     """Classify one call node as an app_gui patch target, or not."""
     func = call.func
     if not isinstance(func, ast.Attribute):
         return []
+    root = _root_name(func.value)
     method = func.attr
+    # ast exposes only the LAST attribute component (mock.patch.object ->
+    # "object"), so the mock API's two-component methods must be rebuilt —
+    # otherwise the patch.object/patch.multiple handling below is dead code
+    # and those forms bypass the net entirely.
+    if method in {"object", "multiple"} and (
+        root in {"patch", "mock"}
+        or (isinstance(func.value, ast.Attribute) and func.value.attr == "patch")
+    ):
+        method = f"patch.{method}"
     if method not in {"setattr", "delattr", "patch", "patch.object", "patch.multiple"}:
         return []
-    root = _root_name(func.value)
     is_monkeypatch = root == "monkeypatch"
     is_mock_api = root in {"mock", "patch", "pytest"} or (
         isinstance(func.value, ast.Attribute) and func.value.attr in {"mock"}
@@ -201,11 +236,24 @@ def _scan_call(path: str, call: ast.Call) -> list[PatchTarget]:
             else:
                 target_desc = ast.dump(name_arg) if name_arg is not None else "?"
                 targets.append(PatchTarget(path, call.lineno, f"monkeypatch.{method}(app_gui, ...)", target_desc, False))
+        elif args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str):
+            # setattr("the_oracle.app_gui.name", value): the string form
+            # imports the module and sets the attribute on it — identical
+            # hazard to the module-object form, and invisible to any scan
+            # that only inspects first-argument expressions.
+            target = _patch_string_target(args[0].value)
+            if target is not None:
+                module, name = target
+                targets.append(PatchTarget(path, call.lineno, f"monkeypatch.{method}({module!r}, ...)", name, True))
     elif method == "patch":
-        # patch("the_oracle.app_gui.name") / patch("app_gui.name")
+        # patch("the_oracle.app_gui.name") / patch("app_gui.name") — mock's
+        # string form imports the module, so both spellings hit app_gui's
+        # globals (the abbreviated form resolves the last two components
+        # against the calling module's namespace).
         for s in _string_constants(call):
-            if s.startswith("the_oracle.app_gui."):
-                targets.append(PatchTarget(path, call.lineno, "patch(string)", s.rsplit(".", 1)[-1], True))
+            target = _patch_string_target(s)
+            if target is not None:
+                targets.append(PatchTarget(path, call.lineno, "patch(string)", target[1], True))
     elif method == "patch.object":
         if args and _is_app_gui(args[0]):
             name_arg = args[1] if len(args) >= 2 else None
@@ -214,6 +262,16 @@ def _scan_call(path: str, call: ast.Call) -> list[PatchTarget]:
             else:
                 target_desc = ast.dump(name_arg) if name_arg is not None else "?"
                 targets.append(PatchTarget(path, call.lineno, "patch.object(app_gui, ...)", target_desc, False))
+    elif method == "patch.multiple":
+        # patch.multiple("the_oracle.app_gui", name=value, ...): the string is
+        # the BARE module (names come from the keywords), so the module.name
+        # splitter does not apply — only the exact module spellings route
+        # through app_gui's globals. (The module-object form would need the
+        # target bound to a value AST cannot statically know.)
+        if any(s in {"the_oracle.app_gui", "app_gui"} for s in _string_constants(call)):
+            for kw in call.keywords:
+                if kw.arg is not None:
+                    targets.append(PatchTarget(path, call.lineno, "patch.multiple(app_gui)", kw.arg, True))
     return targets
 
 
@@ -263,6 +321,111 @@ def test_scan_finds_the_known_app_gui_surface() -> None:
     resolved_names = {t.name for t in targets if t.resolved}
     # Names the suite demonstrably patches today (subset spot-checks).
     assert {"find_audiocpp_binary", "OraclePipeline", "QMediaPlayer"} <= resolved_names
+    # The string form is part of the live surface: this very module patches
+    # 'the_oracle.app_gui.QFileDialog.getOpenFileName' by string.
+    assert any(t.form.startswith("monkeypatch.setattr('") or t.form.startswith('monkeypatch.setattr("') for t in targets), (
+        "no string-form setattr target was found; the string-form scan went blind"
+    )
+
+
+def _scanner(tmp_path: Path, source: str) -> list[PatchTarget]:
+    """Run the scanner over a single synthetic test file."""
+    source = dedent(source)
+    test_file = tmp_path / "test_synthetic_patch_forms.py"
+    test_file.write_text(source, encoding="utf-8")
+    tree = ast.parse(source)
+    targets: list[PatchTarget] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            targets.extend(_scan_call(test_file.name, node))
+    return targets
+
+
+def test_string_form_setattr_is_caught(tmp_path: Path) -> None:
+    """The bypass this extension closes: monkeypatch's string form imports
+    'the_oracle.app_gui' and patches it — invisible to any scan that only
+    inspects module-object first arguments."""
+    targets = _scanner(
+        tmp_path,
+        """
+        import monkeypatch_target as app_gui
+
+        def test_uses_string_form(monkeypatch):
+            monkeypatch.setattr("the_oracle.app_gui.OraclePipeline", object)
+            monkeypatch.setattr("app_gui.find_audiocpp_binary", lambda: None)
+            monkeypatch.delattr("the_oracle.app_gui.QMediaPlayer")
+        """,
+    )
+    names = {t.name for t in targets}
+    assert names == {"OraclePipeline", "find_audiocpp_binary", "QMediaPlayer"}
+    assert all(t.resolved for t in targets)
+
+
+def test_string_form_owned_name_is_an_offender(tmp_path: Path) -> None:
+    """The caught string-form patch feeds the SAME offender logic: an owned
+    name patched by string is flagged exactly like the module-object form."""
+    targets = _scanner(
+        tmp_path,
+        """
+        def test_offender(monkeypatch):
+            monkeypatch.setattr("the_oracle.app_gui.default_gui_settings_payload", lambda: {})
+        """,
+    )
+    offenders = [t.as_offender() for t in targets]
+    assert len(offenders) == 1 and offenders[0] is not None
+    assert "default_gui_settings_payload" in offenders[0]
+    assert "gui_settings" in offenders[0]
+
+
+def test_bare_app_gui_prefix_is_caught(tmp_path: Path) -> None:
+    """mock's abbreviated string form ('app_gui.X') also resolves through
+    app_gui — the old scanner comment claimed it, the code never did it."""
+    targets = _scanner(
+        tmp_path,
+        """
+        def test_abbreviated(monkeypatch):
+            mock.patch("app_gui.QMediaPlayer")
+        """,
+    )
+    assert [t.name for t in targets] == ["QMediaPlayer"]
+
+
+def test_patch_multiple_keywords_are_individual_targets(tmp_path: Path) -> None:
+    """patch.multiple("the_oracle.app_gui", a=1, b=2) is two patch sites; an
+    owned name hidden in a keyword must not escape the net."""
+    targets = _scanner(
+        tmp_path,
+        """
+        def test_multiple(monkeypatch):
+            mock.patch.multiple("the_oracle.app_gui", QMediaPlayer=object, OraclePipeline=object)
+        """,
+    )
+    names = {t.name for t in targets}
+    assert names == {"QMediaPlayer", "OraclePipeline"}
+    assert all("patch.multiple" in t.form for t in targets)
+
+
+def test_unrelated_strings_are_ignored(tmp_path: Path) -> None:
+    """Strings that merely contain 'app_gui' without patching through it —
+    other modules, unrelated imports — must not produce targets."""
+    targets = _scanner(
+        tmp_path,
+        """
+        def test_unrelated(monkeypatch):
+            monkeypatch.setattr("the_oracle.gui_render.RenderWorker", object)
+            monkeypatch.setattr("the_oracle.pipeline.OraclePipeline", object)
+            mock.patch("the_oracle.app_gui_render.Thing")
+        """,
+    )
+    assert targets == []
+
+
+def test_string_form_scan_matches_the_live_suite(tmp_path: Path) -> None:
+    """End-to-end: the real suite contains one string-form setattr today
+    (QFileDialog.getOpenFileName); the scanner must see it unflagged."""
+    targets = scan_app_gui_patch_surface(REPO_ROOT / "tests")
+    string_form = [t for t in targets if "setattr(" in t.form and ("'" in t.form or '"' in t.form)]
+    assert any(t.name == "getOpenFileName" for t in string_form)
 
 
 def test_moved_owner_names_are_current() -> None:
