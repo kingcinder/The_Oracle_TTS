@@ -404,7 +404,7 @@ class _FakeGenerateModel:
 
     def generate(self, **kwargs):
         self.seen_conds.append(self.conds)
-        return np.zeros(8, dtype=np.float32)
+        return np.linspace(-0.25, 0.25, 8, dtype=np.float32)
 
 
 class TestSynthesizeLock:

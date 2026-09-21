@@ -255,7 +255,7 @@ def _recorded_command(tmp_path: Path, monkeypatch, engine: AudioCppVulkanEngine 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
         recorded["command"] = command
         out = Path(command[command.index("--out") + 1])
-        sf.write(out, np.zeros(4800, dtype=np.float32), 24000)
+        sf.write(out, np.linspace(-0.25, 0.25, 4800, dtype=np.float32), 24000)
         return _fake_completed(0)
 
     monkeypatch.setattr(engine, "_run_command", fake_run)
@@ -277,7 +277,7 @@ def test_seed_flag_forwarded_to_audio_cpp(tmp_path: Path, monkeypatch) -> None:
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
         recorded["command"] = command
         out = Path(command[command.index("--out") + 1])
-        sf.write(out, np.zeros(4800, dtype=np.float32), 24000)
+        sf.write(out, np.linspace(-0.25, 0.25, 4800, dtype=np.float32), 24000)
         return _fake_completed(0)
 
     monkeypatch.setattr(engine, "_run_command", fake_run)
@@ -312,7 +312,7 @@ def test_tuning_settings_forwarded_to_audio_cpp(tmp_path: Path, monkeypatch) -> 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
         recorded["command"] = command
         out = Path(command[command.index("--out") + 1])
-        sf.write(out, np.zeros(4800, dtype=np.float32), 24000)
+        sf.write(out, np.linspace(-0.25, 0.25, 4800, dtype=np.float32), 24000)
         return _fake_completed(0)
 
     monkeypatch.setattr(engine, "_run_command", fake_run)
@@ -337,7 +337,7 @@ def test_language_forwarded_only_for_multilingual(tmp_path: Path, monkeypatch) -
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
         recorded["command"] = command
         out = Path(command[command.index("--out") + 1])
-        sf.write(out, np.zeros(4800, dtype=np.float32), 24000)
+        sf.write(out, np.linspace(-0.25, 0.25, 4800, dtype=np.float32), 24000)
         return _fake_completed(0)
 
     monkeypatch.setattr(engine, "_run_command", fake_run)
@@ -576,7 +576,7 @@ def test_synthesize_batch_embeds_language_for_multilingual(tmp_path: Path, monke
         sequence_path = Path(command[command.index("--request-sequence") + 1])
         recorded["sequence"] = json.loads(sequence_path.read_text(encoding="utf-8"))
         out_dir = Path(command[command.index("--out-dir") + 1])
-        sf.write(out_dir / "request_0.wav", np.zeros(4800, dtype=np.float32), 24000)
+        sf.write(out_dir / "request_0.wav", np.linspace(-0.25, 0.25, 4800, dtype=np.float32), 24000)
         return _fake_completed(0)
 
     monkeypatch.setattr(engine, "_run_command", fake_run)
@@ -692,7 +692,7 @@ def test_synthesize_batch_accepts_exactly_the_cap(tmp_path: Path, monkeypatch) -
     def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
         out_dir = Path(command[command.index("--out-dir") + 1])
         for index in range(2):
-            sf.write(out_dir / f"request_{index}.wav", np.zeros(2400, dtype=np.float32), 24000)
+            sf.write(out_dir / f"request_{index}.wav", np.linspace(-0.25, 0.25, 2400, dtype=np.float32), 24000)
         return _fake_completed(0)
 
     monkeypatch.setattr(engine, "_run_command", fake_run)
@@ -865,9 +865,9 @@ def test_synthesize_batch_streams_progress_per_request(tmp_path: Path, monkeypat
             if self._polls == 1:
                 return None
             if self._polls == 2:
-                sf.write(self.out_dir / "request_0.wav", np.zeros(2400, dtype=np.float32), 24000)
+                sf.write(self.out_dir / "request_0.wav", np.linspace(-0.25, 0.25, 2400, dtype=np.float32), 24000)
                 return None
-            sf.write(self.out_dir / "request_1.wav", np.zeros(2400, dtype=np.float32), 24000)
+            sf.write(self.out_dir / "request_1.wav", np.linspace(-0.25, 0.25, 2400, dtype=np.float32), 24000)
             self.returncode = 0
             return 0
 
@@ -969,7 +969,7 @@ def test_synthesize_batch_failure_is_visible_and_rdna1_detected(tmp_path: Path, 
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
         out = Path(command[command.index("--out") + 1])
-        sf.write(out, np.zeros(9600, dtype=np.float32), 24000)
+        sf.write(out, np.linspace(-0.25, 0.25, 9600, dtype=np.float32), 24000)
         return _fake_completed(0)
 
     monkeypatch.setattr(engine, "_run_command", fake_run)

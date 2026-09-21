@@ -111,8 +111,13 @@ def test_turbo_revision_is_pinned(monkeypatch) -> None:
     _stub_chatterbox_engine_imports(monkeypatch)
     from the_oracle.models.pins import MODEL_PINS, TURBO_REPO_ID
 
+    # Load under a UNIQUE module name: exec-ing the engine under the real
+    # module's name while numpy/huggingface_hub are stubbed would poison the
+    # real engine's module globals (its `import numpy as np` binds the stub)
+    # for every later test in the process. The pin constants do not depend on
+    # the stubs, so a private alias module is sufficient here.
     spec = importlib.util.spec_from_file_location(
-        "the_oracle.tts_engines.chatterbox_engine",
+        "oracle_test_chatterbox_engine_pins",
         REPO_ROOT / "src" / "the_oracle" / "tts_engines" / "chatterbox_engine.py",
     )
     module = importlib.util.module_from_spec(spec)

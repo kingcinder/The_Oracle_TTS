@@ -41,6 +41,85 @@ def ensure_mono(audio: np.ndarray) -> np.ndarray:
     return audio.mean(axis=1).astype(np.float32)
 
 
+# --- TTS output sanitizer: one owner for engine-boundary hiccup defense ---
+# Chatterbox generation occasionally hiccups (a documented model pathology,
+# not an input problem): NaN/Inf samples from a diverged S3Gen pass, a
+# constant DC "tone" from a degenerate decode, or a near-silent/empty stem
+# when the token stream truncated right after SOT. Each failure mode used to
+# fall through this boundary silently and became a one-way cached stem (the
+# stem cache trusts whatever was written), so one bad sample hardened into a
+# permanent defect in every later render. sanitize_engine_audio catches the
+# recognizable modes at the single chokepoint both engines return through;
+# unrecognizable audio passes through byte-identical.
+
+#: A stem whose peak stays below this after DC removal is treated as empty
+#: generation (truncation right after SOT), not speech.
+_MIN_PEAK_AMPLITUDE = 1e-4
+
+#: Fraction of samples at (near-)zero amplitude above which a stem is read as
+#: a constant-DC tone (or its inverse: silence with a lone spike) rather than
+#: speech. Real speech sits far below this duty cycle.
+_MAX_ZERO_DUTY_CYCLE = 0.99
+
+
+def sanitize_engine_audio(audio: np.ndarray, *, text: str = "", sample_rate: int | None = None) -> np.ndarray:
+    """Return *audio* with recognized TTS hiccups repaired or rejected.
+
+    Repaired in place (returns a cleaned array):
+      * non-finite samples (NaN/Inf) -> zeroed. A diverged pass usually
+        corrupts a span, not the whole stem; zeroing is the least-destructive
+        repair and cannot clip or distort the healthy remainder.
+    Rejected with ``ValueError`` (the caller's failure path reports it, the
+    stem is never cached, and a retry with a fresh seed can succeed):
+      * all-non-finite audio — nothing salvageable;
+      * constant-DC tone / near-total silence (a degenerate decode or an
+        empty token stream) — no repair recovers speech from it.
+
+    ``text`` and ``sample_rate`` only enrich the error messages.
+    """
+    array = np.asarray(audio, dtype=np.float32)
+    if array.size == 0:
+        raise ValueError(_empty_error(text))
+    finite = np.isfinite(array)
+    if not finite.all():
+        if not finite.any():
+            raise ValueError(_degenerate_error(text, sample_rate, "every sample is NaN or infinite"))
+        array = np.where(finite, array, np.float32(0.0))
+    centered = array - np.mean(array, dtype=np.float64)
+    peak = float(np.max(np.abs(centered)))
+    if peak < _MIN_PEAK_AMPLITUDE:
+        # A perfectly flat line: DC tone (constant offset decode) or pure
+        # silence. The distinction does not change the remedy — neither
+        # carries speech — so one message covers both shapes.
+        raise ValueError(_degenerate_error(text, sample_rate, "the stem is a constant DC tone with no speech content"))
+    zero_duty = float(np.count_nonzero(np.abs(centered) < _MIN_PEAK_AMPLITUDE) / array.size)
+    if zero_duty > _MAX_ZERO_DUTY_CYCLE:
+        raise ValueError(_degenerate_error(text, sample_rate, "the stem is silence with no speech content"))
+    return array
+
+
+def _empty_error(text: str) -> str:
+    preview = _text_preview(text)
+    return f"TTS engine returned no audio for the utterance{preview}. "
+
+
+def _degenerate_error(text: str, sample_rate: int | None, detail: str) -> str:
+    preview = _text_preview(text)
+    hint = f" at sample rate {sample_rate}" if sample_rate else ""
+    return (
+        f"TTS engine produced degenerate audio ({detail}){hint} for the utterance{preview}. "
+        "The stem was not cached; re-render the segment (a different seed or temperature often clears it)."
+    )
+
+
+def _text_preview(text: str) -> str:
+    stripped = " ".join((text or "").split())
+    if not stripped:
+        return ""
+    preview = stripped[:60]
+    return f" ({preview!r}{'…' if len(stripped) > 60 else ''})"
+
+
 def apply_fade(audio: np.ndarray, sample_rate: int, fade_ms: int) -> np.ndarray:
     if fade_ms <= 0 or audio.size == 0:
         return audio

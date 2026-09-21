@@ -30,7 +30,7 @@ def test_engine_boundaries_strip_markers_before_synthesis(monkeypatch, tmp_path)
 
         def generate(self, **kwargs):
             seen["text"] = kwargs["text"]
-            return np.zeros((1, 16), dtype=np.float32)
+            return np.linspace(-0.25, 0.25, 16, dtype=np.float32).reshape(1, 16)
 
     import threading
     seen: dict[str, str] = {}
