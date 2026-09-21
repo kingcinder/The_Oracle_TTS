@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path
 from time import perf_counter, time
 import difflib
@@ -4747,36 +4746,6 @@ class MainWindow(QMainWindow):
             default_voice_dict=default_voice.to_dict(),
         )
 
-    def _widget_snapshot(self) -> WidgetSnapshot:
-        """Every widget read the current-payload builder needs, in one place."""
-        device_mode, cuda_device = self._pytorch_device_selection()
-        return WidgetSnapshot(
-            cast_keys=self.cast_keys(),
-            speaker_names=dict(self._speaker_names),
-            model_variant=self.variant_combo.currentText(),
-            correction_mode=self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText(),
-            loudness_preset=self.loudness_combo.currentText(),
-            crossfade_ms=self.crossfade_spin.value(),
-            inference_backend=self.inference_backend_combo.currentData() or "pytorch",
-            device_mode=device_mode,
-            cuda_device=cuda_device,
-            output_dir=self.outdir_path.text() or str(self.paths.output_dir),
-            output_filename=self.output_name.text(),
-            export_srt=self.export_srt_check.isChecked(),
-            monologue=self.monologue_check.isChecked(),
-            delete_confirm_enabled=self.delete_confirm_enabled,
-            output_filename_warning_enabled=self.output_filename_warning_enabled,
-            audio_cpp_values={
-                "audio_cpp_device": self._audio_cpp_device_value(),
-                "audio_cpp_threads": self._audio_cpp_threads_value(),
-                "audio_cpp_timeout": self._audio_cpp_timeout_value(),
-                "audio_cpp_max_batch": self._audio_cpp_max_batch_value(),
-            },
-            speaker_settings=self._speaker_settings(),
-        )
-        _apply_speaker_settings_to_group(group, settings)
-        self._refresh_reference_pickers()
-
     def _load_project_into_ui(self, saved_project) -> None:
         self.current_project_path = None
         self.plan = saved_project.plan
@@ -4829,6 +4798,7 @@ class MainWindow(QMainWindow):
 
     def _widget_snapshot(self) -> WidgetSnapshot:
         """Every widget read the current-payload builder needs, in one place."""
+        device_mode, cuda_device = self._pytorch_device_selection()
         return WidgetSnapshot(
             cast_keys=self.cast_keys(),
             speaker_names=dict(self._speaker_names),
@@ -4837,8 +4807,8 @@ class MainWindow(QMainWindow):
             loudness_preset=self.loudness_combo.currentText(),
             crossfade_ms=self.crossfade_spin.value(),
             inference_backend=self.inference_backend_combo.currentData() or "pytorch",
-            device_mode=self._pytorch_device_selection()[0],
-            cuda_device=self._pytorch_device_selection()[1],
+            device_mode=device_mode,
+            cuda_device=cuda_device,
             output_dir=self.outdir_path.text() or str(self.paths.output_dir),
             output_filename=self.output_name.text(),
             export_srt=self.export_srt_check.isChecked(),

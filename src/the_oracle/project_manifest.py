@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -51,26 +51,14 @@ class SavedProject:
 
 
 def _render_settings_to_dict(settings: RenderSettings) -> dict[str, Any]:
-    return {
-        "correction_mode": settings.correction_mode,
-        "model_variant": settings.model_variant,
-        "language": settings.language,
-        "export_stems": settings.export_stems,
-        "loudness_preset": settings.loudness_preset,
-        "pause_between_turns_ms": settings.pause_between_turns_ms,
-        "crossfade_ms": settings.crossfade_ms,
-        "device_mode": settings.device_mode,
-        "cuda_device": settings.cuda_device,
-        "inference_backend": settings.inference_backend,
-        "audio_cpp_device": settings.audio_cpp_device,
-        "audio_cpp_threads": settings.audio_cpp_threads,
-        "audio_cpp_timeout": settings.audio_cpp_timeout,
-        "audio_cpp_max_batch": settings.audio_cpp_max_batch,
-        "seed": settings.seed,
-        "target_wpm": settings.target_wpm,
-        "monologue": settings.monologue,
-        "metadata": dict(settings.metadata),
-    }
+    # dataclasses.asdict is the single-source serialization: a hand-copied
+    # field list silently drops any field added to RenderSettings later
+    # (exactly the schema drift the payload policy exists to prevent).
+    # "anchors" is runtime attribution state, not manifest state, so it is
+    # excluded to keep the historical manifest schema.
+    payload = asdict(settings)
+    payload.pop("anchors", None)
+    return payload
 
 
 def _speaker_settings_to_dict(settings: SpeakerSettings) -> dict[str, Any]:
