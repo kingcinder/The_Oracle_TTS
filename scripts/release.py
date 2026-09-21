@@ -9,11 +9,19 @@ the number — ``--check`` enforces that invariant.
 
 Usage:
     python scripts/release.py --check
-        Verify the single-source invariant only (read-only; CI-safe).
+        Verify the single-source invariant only (read-only; CI-safe):
+        pyproject/banners agree with ``__version__`` AND CHANGELOG.md has a
+        section for the current version dated the release day (today).
+
+    python scripts/release.py --sync-changelog
+        Stamp the release into CHANGELOG.md: retitle the ``## [Unreleased]``
+        body into ``## [<version>] — <today>`` (or rewrite an existing
+        section's date to today). The release-day changelog edit --check
+        requires, as one command.
 
     python scripts/release.py --sync-banners
         Rewrite the version inside the README / STATE.md release banners
-        from ``__version__``. The only metadata-writing mode.
+        from ``__version__``. The only other metadata-writing mode.
 
     python scripts/release.py [--outdir DIR] [--skip-tests]
         Full release: check, refuse a dirty tree, run the test suite,
@@ -32,6 +40,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from datetime import date
 from pathlib import Path
 
 
@@ -48,6 +57,12 @@ BANNER_SITES: tuple[tuple[str, str], ...] = (
 )
 
 _BANNER_VERSION_RE = re.compile(r"V(\d+\.\d+\.\d+)")
+
+#: A released-version heading in CHANGELOG.md: ``## [1.2.0] — 2026-09-20``
+#: (em dash, single spaces). The date is the release day; --check requires
+#: the current version's section to be dated today, so a version bump can
+#: never land without its user-facing changelog entry.
+_CHANGELOG_HEADING_RE = re.compile(r"^## \[(?P<version>\d+\.\d+\.\d+)\] — (?P<date>\d{4}-\d{2}-\d{2})\s*$")
 
 #: The single source of truth, as setuptools must read it.
 _VERSION_ATTR = "the_oracle.__version__"
@@ -132,8 +147,120 @@ def banner_problems(repo_root: Path, version: str) -> list[str]:
     return problems
 
 
-def check(repo_root: Path) -> list[str]:
-    """Every way the tracked tree disagrees about the version."""
+def changelog_problems(repo_root: Path, version: str, today: date) -> list[str]:
+    """Drift between CHANGELOG.md and the single source + the release day."""
+    path = repo_root / "CHANGELOG.md"
+    if not path.is_file():
+        return [
+            "CHANGELOG.md: missing (expected a '## [<version>] — <YYYY-MM-DD>' "
+            "heading for the release)"
+        ]
+    sections: list[tuple[int, str]] = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        match = _CHANGELOG_HEADING_RE.match(line)
+        if match and match.group("version") == version:
+            sections.append((lineno, match.group("date")))
+    if not sections:
+        return [
+            f"CHANGELOG.md: no section for version {version} — add a heading "
+            f"'## [{version}] — {today.isoformat()}' above the release notes"
+        ]
+    if len(sections) > 1:
+        return [
+            f"CHANGELOG.md: {len(sections)} sections for version {version} "
+            f"(lines {', '.join(str(lineno) for lineno, _ in sections)}); expected exactly one"
+        ]
+    lineno, stamped = sections[0]
+    try:
+        stamped_date = date.fromisoformat(stamped)
+    except ValueError:
+        return [
+            f"CHANGELOG.md:{lineno}: {stamped!r} is not a valid calendar date "
+            f"(expected YYYY-MM-DD, e.g. {today.isoformat()})"
+        ]
+    if stamped_date != today:
+        return [
+            f"CHANGELOG.md:{lineno}: the {version} section is dated {stamped} but today is "
+            f"{today.isoformat()}; a release section must be dated the day the release "
+            f"runs — update the heading to '## [{version}] — {today.isoformat()}'"
+        ]
+    return []
+
+
+def sync_changelog(repo_root: Path, version: str, *, today: date | None = None) -> list[str]:
+    """Stamp the release into CHANGELOG.md; return changed file names.
+
+    The release-day edit --check demands, as one command: an existing
+    ``## [<version>] — <date>`` heading is rewritten to today's date, and
+    when the version has no section at all, the ``## [Unreleased]`` block's
+    body (up to the next heading) is retitled into ``## [<version>] —
+    <today>`` with ``[Unreleased]`` re-inserted below as an empty
+    placeholder, so subsequent work accumulates there again. Missing file,
+    or no heading AND no ``[Unreleased]`` section to retitle, raises
+    :class:`ReleaseError`. Idempotent: a second run on the same day rewrites
+    nothing and returns an empty list.
+    """
+    if today is None:
+        today = date.today()
+    changed: list[str] = []
+    path = repo_root / "CHANGELOG.md"
+    if not path.is_file():
+        raise ReleaseError("CHANGELOG.md: missing; cannot stamp the release into it")
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    heading_hit: int | None = None
+    unreleased_hit: int | None = None
+    for index, line in enumerate(lines):
+        match = _CHANGELOG_HEADING_RE.match(line)
+        if match and match.group("version") == version:
+            heading_hit = index
+        elif line.startswith("## [Unreleased]"):
+            unreleased_hit = index
+
+    stamped = False
+    if heading_hit is not None:
+        new_line = _CHANGELOG_HEADING_RE.sub(
+            f"## [{version}] — {today.isoformat()}", lines[heading_hit], count=1
+        )
+        if new_line != lines[heading_hit]:
+            lines[heading_hit] = new_line
+            stamped = True
+    else:
+        if unreleased_hit is None:
+            raise ReleaseError(
+                "CHANGELOG.md: no '## [<version>]' heading and no '## [Unreleased]' "
+                f"section to retitle — add the heading '## [{version}] — {today.isoformat()}' manually"
+            )
+        # The section runs to the next SIBLING '## ' heading; '###' sub-headings
+        # inside the body belong to the section being moved.
+        next_heading = next(
+            (i for i in range(unreleased_hit + 1, len(lines)) if lines[i].startswith("## ")),
+            len(lines),
+        )
+        body = lines[unreleased_hit + 1 : next_heading]
+        while body and body[-1] == "":
+            body.pop()
+        new_section = [f"## [{version}] — {today.isoformat()}", *body]
+        placeholder = ["", "## [Unreleased]", "", "### Changed", "", "- (nothing yet)", ""]
+        lines[unreleased_hit:next_heading] = [*new_section, *placeholder]
+        stamped = True
+
+    if stamped:
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        changed.append("CHANGELOG.md")
+    return changed
+
+
+def check(repo_root: Path, *, today: date | None = None) -> list[str]:
+    """Every way the tracked tree disagrees about the version.
+
+    ``today`` defaults to ``date.today()``: the CHANGELOG section for the
+    current version must be dated the release day, so --check passes only on
+    a release day (or with an explicitly injected date, which is what the
+    tests pin the invariant with between releases).
+    """
+    if today is None:
+        today = date.today()
     problems: list[str] = []
     version = read_version(repo_root)
     if not version:
@@ -141,6 +268,7 @@ def check(repo_root: Path) -> list[str]:
     problems.extend(pyproject_problems(repo_root))
     if version:
         problems.extend(banner_problems(repo_root, version))
+        problems.extend(changelog_problems(repo_root, version, today))
     return problems
 
 
@@ -278,8 +406,9 @@ def _release(repo: Path, outdir_arg: str, *, skip_tests: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build verified release artifacts for The Oracle.")
-    parser.add_argument("--check", action="store_true", help="verify the single-source version invariant only")
+    parser.add_argument("--check", action="store_true", help="verify the version invariant: pyproject/banners/CHANGELOG heading (dated today) match __version__")
     parser.add_argument("--sync-banners", action="store_true", help="rewrite README/STATE release banners from __version__")
+    parser.add_argument("--sync-changelog", action="store_true", help="stamp/insert the CHANGELOG.md section for the current version, dated today")
     parser.add_argument("--outdir", default="release_artifacts", help="artifact output directory, relative to the repo root")
     parser.add_argument("--skip-tests", action="store_true", help="skip the pytest run before building")
     parser.add_argument("--repo-root", type=Path, default=None, help="repo root (default: the checkout this script lives in)")
@@ -288,6 +417,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.check:
+            return _report(check(repo))
+        if args.sync_changelog:
+            version = _require_version(repo)
+            changed = sync_changelog(repo, version)
+            print(f"stamped CHANGELOG.md for {version}" if changed else f"CHANGELOG.md already carries the {version} section dated today")
             return _report(check(repo))
         if args.sync_banners:
             version = _require_version(repo)
