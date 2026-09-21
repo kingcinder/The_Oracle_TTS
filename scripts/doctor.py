@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import importlib.util
 import json
 import os
 import platform
@@ -362,6 +363,44 @@ def _input_subtitles_status(repo_root: Path) -> dict[str, Any]:
             [f"{entry['path']}: {entry['error']}" for entry in report["blocked"]]
             + [f"{entry['path']}: {entry['error']}" for entry in report["unreadable"]]
         )
+    return report
+
+
+def _release_metadata_status(repo_root: Path) -> dict[str, Any]:
+    """Surface release-metadata drift (scripts/release.py --check) in the report.
+
+    The release invariant — ``__version__`` is the single version source and
+    pyproject.toml, the README/STATE banners, and the CHANGELOG section for
+    the current version must all agree (the changelog dated the release day)
+    — is exactly the kind of per-project drift a doctor should surface before
+    a release attempt fails on it. The probes are reused, not reimplemented:
+    ``release.py`` is loaded from beside this script and its ``check()`` runs
+    read-only (ast/toml/text reads; no writes, no imports of the package).
+
+    Verdict policy: problems make ``ok`` False and drive next-steps, but the
+    check deliberately does NOT join ``required_checks`` — a changelog not
+    dated today is expected between releases (the release-day gate), not a
+    broken install.
+    """
+    report: dict[str, Any] = {"ok": True, "problems": [], "version": "", "error": ""}
+    release_script = Path(__file__).resolve().parent / "release.py"
+    spec = importlib.util.spec_from_file_location("oracle_release_tool", release_script)
+    if spec is None or spec.loader is None:
+        report["ok"] = False
+        report["error"] = f"release.py could not be loaded from {release_script}"
+        return report
+    release = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(release)
+        report["version"] = release.read_version(repo_root)
+        report["problems"] = release.check(repo_root)
+    except Exception as exc:  # a broken probe must never crash the doctor
+        report["ok"] = False
+        report["error"] = f"release check failed to run: {exc}"
+        return report
+    report["ok"] = not report["problems"]
+    if report["problems"]:
+        report["error"] = "; ".join(report["problems"])
     return report
 
 
@@ -1026,6 +1065,12 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
     for entry in input_subs.get("unreadable") or []:
         steps.append(f"Input/ {entry['path']}: could not be read ({entry['error']}).")
 
+    release_meta = report.get("release_metadata") or {}
+    for problem in release_meta.get("problems") or []:
+        steps.append(f"Release metadata: {problem}")
+    if release_meta.get("error") and not release_meta.get("problems"):
+        steps.append(f"Release metadata: {release_meta['error']}")
+
     if report["voice_sources"]["primary_source"] != "seashells":
         steps.append("Add curated local reference clips to ./Seashells so the GUI stops defaulting to smoke/build fallback voices.")
 
@@ -1076,6 +1121,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "vulkan_backend": _vulkan_backend_status(repo_root),
         "dependency_pins": _dependency_pin_status(repo_root),
         "input_subtitles": _input_subtitles_status(repo_root),
+        "release_metadata": _release_metadata_status(repo_root),
     }
     required_checks = [
         report["python"]["ok"],
@@ -1247,6 +1293,20 @@ def _print_human_report(report: dict[str, Any]) -> None:
         if len(audio_cpp_devices) > 1 and not vulkan.get("device_index_env"):
             indexes = ", ".join(str(device["index"]) for device in audio_cpp_devices)
             print(f"      Multi-GPU: set ORACLE_AUDIOCPP_DEVICE to one of [{indexes}] to pick a device.")
+
+    release_meta = report.get("release_metadata")
+    if release_meta is not None:
+        if release_meta.get("ok"):
+            print(
+                f"PASS Release metadata: version {release_meta.get('version') or '?'} "
+                "consistent (pyproject, banners, CHANGELOG section dated today)"
+            )
+        elif release_meta.get("problems"):
+            print("WARN Release metadata drift:")
+            for problem in release_meta["problems"]:
+                print(f"      {problem}")
+        else:
+            print(f"WARN Release metadata: {release_meta.get('error', 'probe failed')}")
 
     subtitles = report.get("input_subtitles")
     if subtitles is None:
