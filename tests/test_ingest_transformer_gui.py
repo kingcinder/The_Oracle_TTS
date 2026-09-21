@@ -1029,6 +1029,96 @@ def test_analyze_path_converts_typed_subtitle_path(qt_app, monkeypatch, tmp_path
     assert "Converted" in window.error_panel.toPlainText()
 
 
+def test_cp1252_srt_converts_offscreen(qt_app, monkeypatch, tmp_path) -> None:
+    """Real offscreen GUI smoke test: a legacy-encoded .srt converts.
+
+    The full MainWindow is constructed on the offscreen Qt platform with the
+    engine fakes, exactly as a user session would build it, and the picked
+    subtitle file is driven through the window's real conversion path. The
+    file is written as CP1252 (Windows-1252, the legacy Windows default):
+    pure-ASCII bytes with em dashes and accented names, which are invalid
+    UTF-8, so the decode chain must fall back to CP1252 for conversion to
+    happen at all.
+    """
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    srt = tmp_path / "episode.srt"
+    srt.write_bytes(
+        "1\n00:00:01,000 --> 00:00:03,000\nWinston: Bonjour\u2014it\u2019s a fine caf\u00e9.\n\n"
+        "2\n00:00:04,000 --> 00:00:06,000\n- Indeed.\n- Agreed.\n"
+        "".encode("cp1252")
+    )
+    assert b"caf\xe9" in srt.read_bytes()  # CP1252 \xe9 = é, not valid UTF-8
+    script = window._convert_subtitle_input(str(srt))
+    assert script == str(tmp_path / "episode.srt.txt")
+    converted = Path(script).read_text(encoding="utf-8")
+    assert "winston: Bonjour\u2014it\u2019s a fine caf\u00e9. Indeed." in converted
+    assert "Narrator: Agreed." in converted
+    assert "Converted" in window.error_panel.toPlainText()
+    # The subtitle file itself is untouched (convert-not-overwrite).
+    assert srt.read_bytes().decode("cp1252").startswith("1\n")
+
+
+def test_utf8_bom_srt_converts_offscreen(qt_app, monkeypatch, tmp_path) -> None:
+    """Real offscreen GUI smoke test: a UTF-8 .srt carrying a BOM converts.
+
+    Editors on Windows routinely save UTF-8 subtitles with an EF BB BF
+    prefix; the decode chain's ``utf-8-sig`` step must swallow it, so the
+    conversion succeeds AND the BOM never leaks into the converted script
+    (a leading U+FEFF would otherwise ride along into the first utterance).
+    """
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    srt = tmp_path / "bom.srt"
+    srt.write_bytes(
+        b"\xef\xbb\xbf"
+        + "1\n00:00:01,000 --> 00:00:03,000\nWinston: Bonjour\u2014it\u2019s a fine caf\u00e9.\n\n"
+        "2\n00:00:04,000 --> 00:00:06,000\nJulia: Agreed.\n".encode("utf-8")
+    )
+    assert srt.read_bytes().startswith(b"\xef\xbb\xbf")  # the BOM is really there
+    script = window._convert_subtitle_input(str(srt))
+    assert script == str(tmp_path / "bom.srt.txt")
+    converted = Path(script).read_text(encoding="utf-8")
+    assert converted.startswith("winston: Bonjour\u2014it\u2019s a fine caf\u00e9.")
+    assert "\ufeff" not in converted, "BOM must be stripped, not copied into the script"
+    assert "julia: [pause=1000] Agreed." in converted
+    assert "Converted" in window.error_panel.toPlainText()
+    # The subtitle file itself is untouched (convert-not-overwrite).
+    assert srt.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_mixed_encoding_vtt_converts_offscreen(qt_app, monkeypatch, tmp_path) -> None:
+    """Real offscreen GUI smoke test: a mixed-encoding .vtt still converts.
+
+    Cue 1 is UTF-8-encoded and cue 2 CP1252-encoded (the classic concatenat
+    of files saved by two different editors). The strict ``utf-8-sig``
+    decode fails on the whole file (cue 2's lone \xe8), so the chain falls
+    back to CP1252 and salvages: the CP1252 cue decodes exactly, while the
+    UTF-8 cue arrives in its deterministic CP1252 re-decoding (mojibake).
+    The smoke contract is that this converts instead of blocking or
+    raising; the lossy salvage semantics for the mis-encoded cue are
+    pinned deliberately — changing them is a behavior change, not an
+    accident.
+    """
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    vtt = tmp_path / "mixed.vtt"
+    vtt.write_bytes(
+        "WEBVTT\n\n00:00:01.000 --> 00:00:04.000\n<v Winston>Bonjour\u2014it\u2019s a fine caf\u00e9.\n\n".encode("utf-8")
+        + "00:00:05.000 --> 00:00:08.000\n<v Julia>Tr\u00e8s bien, indeed.\n".encode("cp1252")
+    )
+    assert b"\xe8" in vtt.read_bytes()  # the CP1252-only byte that breaks strict UTF-8
+    script = window._convert_subtitle_input(str(vtt))
+    assert script == str(tmp_path / "mixed.vtt.txt")
+    converted = Path(script).read_text(encoding="utf-8")
+    # The CP1252 cue survives byte-exact (\xe8 -> \u00e8).
+    assert "julia: [pause=1000] Tr\u00e8s bien, indeed." in converted
+    # The UTF-8 cue is salvaged under CP1252: its UTF-8 bytes re-decode
+    # deterministically (\u00e9 -> \xc3\xa9 -> \u00c3\u00a9), still attributed to winston.
+    assert converted.startswith("winston: ")
+    assert "caf\u00c3\u00a9" in converted
+    assert "Converted" in window.error_panel.toPlainText()
+    # The subtitle file itself is untouched (convert-not-overwrite).
+    assert b"WEBVTT" in vtt.read_bytes()
+
+
 def test_analyze_path_leaves_non_subtitle_alone(qt_app, monkeypatch, tmp_path) -> None:
     window, _paths = _build_window(monkeypatch, tmp_path)
     plain = tmp_path / "script.txt"
