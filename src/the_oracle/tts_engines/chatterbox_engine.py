@@ -34,6 +34,7 @@ from the_oracle.models.pins import (
 )
 from the_oracle.models.project import VoiceSettings, strip_pain_point_markers
 from the_oracle.platform_support import repo_python_display
+from the_oracle.utils.audio import sanitize_engine_audio
 from the_oracle.utils.hashing import hash_payload
 
 
@@ -324,4 +325,8 @@ class ChatterboxEngine:
         if hasattr(audio, "detach"):
             audio = audio.detach().cpu().numpy()
         audio_array = np.asarray(audio, dtype=np.float32).squeeze()
-        return audio_array
+        # Hiccup gate: NaN spans are repaired, degenerate stems (DC tone /
+        # silence / empty) are rejected here so a defect is never cached as a
+        # good stem and hardened into every later render. See
+        # sanitize_engine_audio for the failure taxonomy.
+        return sanitize_engine_audio(audio_array, text=text)

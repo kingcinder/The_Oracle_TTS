@@ -51,7 +51,7 @@ import soundfile as sf
 
 from the_oracle.models.cache import CachedReference, ProjectCache
 from the_oracle.models.project import VoiceSettings, strip_pain_point_markers
-from the_oracle.utils.audio import ensure_mono
+from the_oracle.utils.audio import ensure_mono, sanitize_engine_audio
 from the_oracle.utils.hashing import hash_file, hash_payload
 
 SUPPORTED_BACKENDS = ("pytorch", "vulkan")
@@ -464,7 +464,11 @@ class AudioCppVulkanEngine:
                 )
             audio, rate = sf.read(str(out_wav), dtype="float32")
             self._last_sample_rate = int(rate)
-            return np.asarray(ensure_mono(audio), dtype=np.float32).squeeze()
+            audio_array = np.asarray(ensure_mono(audio), dtype=np.float32).squeeze()
+            # Same hiccup gate as the PyTorch engine: audio.cpp can also emit
+            # a silent/DC degenerate wav on a bad decode. See
+            # sanitize_engine_audio.
+            return sanitize_engine_audio(audio_array, text=text, sample_rate=int(rate))
 
     def _build_command(
         self,
@@ -675,9 +679,15 @@ class AudioCppVulkanEngine:
                     )
                 audio, rate = sf.read(str(wav), dtype="float32")
                 self._last_sample_rate = int(rate)
+                audio_array = np.asarray(ensure_mono(audio), dtype=np.float32).squeeze()
+                # Batch hiccup gate: one degenerate request in a sequence must
+                # fail loudly, not cache a silent stem mid-render.
+                audio_array = sanitize_engine_audio(
+                    audio_array, text=entries[index][0], sample_rate=int(rate)
+                )
                 outputs.append(
                     (
-                        np.asarray(ensure_mono(audio), dtype=np.float32).squeeze(),
+                        audio_array,
                         int(rate),
                         wall_ms.get(index, 0.0),
                     )

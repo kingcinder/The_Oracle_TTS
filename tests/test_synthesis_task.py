@@ -150,7 +150,7 @@ def test_chatterbox_engine_seed_seeds_torch_rng(monkeypatch) -> None:
     )
 
     fake_model = Mock()
-    fake_model.generate.return_value = Mock(detach=Mock(return_value=Mock(cpu=Mock(return_value=Mock(numpy=Mock(return_value=__import__("numpy").zeros(5, dtype=__import__("numpy").float32)))))))
+    fake_model.generate.return_value = Mock(detach=Mock(return_value=Mock(cpu=Mock(return_value=Mock(numpy=Mock(return_value=__import__("numpy").linspace(-0.25, 0.25, 5, dtype=__import__("numpy").float32)))))))
     fake_model.sr = 24000
     engine._model = fake_model
     engine._condition_cls = Mock()
@@ -178,7 +178,7 @@ def test_chatterbox_engine_without_seed_does_not_seed(monkeypatch) -> None:
     )
 
     fake_model = Mock()
-    fake_model.generate.return_value = Mock(detach=Mock(return_value=Mock(cpu=Mock(return_value=Mock(numpy=Mock(return_value=__import__("numpy").zeros(5, dtype=__import__("numpy").float32)))))))
+    fake_model.generate.return_value = Mock(detach=Mock(return_value=Mock(cpu=Mock(return_value=Mock(numpy=Mock(return_value=__import__("numpy").linspace(-0.25, 0.25, 5, dtype=__import__("numpy").float32)))))))
     fake_model.sr = 24000
     engine._model = fake_model
     engine._condition_cls = Mock()
