@@ -288,6 +288,83 @@ def _dependency_pin_status(repo_root: Path) -> dict[str, Any]:
     }
 
 
+def _input_subtitles_status(repo_root: Path) -> dict[str, Any]:
+    """Scan Input/ for subtitle files that would take the CP1252 fallback.
+
+    The subtitle decode chain (``srt_ingest``) reads UTF-8 with BOM first and
+    falls back to CP1252. A cleanly legacy-encoded ``.srt``/``.vtt`` converts
+    fine, but two encoding shapes are worth surfacing *before* a render: a
+    mixed-encoding file salvages only lossily (the whole file re-decodes under
+    CP1252, so a UTF-8 cue arrives as deterministic mojibake), and a file
+    containing bytes CP1252 does not define (0x81, 0x8D, 0x8F, 0x90, 0x9D)
+    passes the lossy pre-check and then BLOCKS the strict re-decode inside
+    ``convert_srt_file`` — the GUI reports "Could not convert".
+
+    Read-only by contract: the path is computed without
+    ``ensure_repo_default_paths`` (which mkdirs), and a missing Input/ is
+    reported, never created. Verdict policy: fallback files are fine
+    (informational); blocked or unreadable files make ``ok`` False so the
+    human report and next-steps flag them.
+    """
+    input_dir = repo_root / "Input"
+    report: dict[str, Any] = {
+        "ok": True,
+        "input_dir": str(input_dir),
+        "exists": input_dir.is_dir(),
+        "scanned": 0,
+        "utf8_count": 0,
+        "fallback": [],
+        "blocked": [],
+        "unreadable": [],
+        "error": "",
+    }
+    if not input_dir.is_dir():
+        return report
+    subtitle_files = sorted(
+        path
+        for path in input_dir.rglob("*")
+        if path.is_file() and path.suffix.lower() in (".srt", ".vtt")
+    )
+    report["scanned"] = len(subtitle_files)
+    for path in subtitle_files:
+        rel = path.relative_to(repo_root).as_posix()
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            report["unreadable"].append({"path": rel, "error": str(exc)})
+            continue
+        try:
+            raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            # Would take the CP1252 fallback. Mirror convert_srt_file's strict
+            # re-decode to distinguish convertible fallback files from ones
+            # the conversion gate would reject.
+            try:
+                raw.decode("cp1252")
+            except UnicodeDecodeError:
+                report["blocked"].append(
+                    {
+                        "path": rel,
+                        "error": (
+                            "contains byte(s) CP1252 cannot decode; subtitle "
+                            "conversion would fail after the fallback pre-check. "
+                            "Re-save the file as UTF-8."
+                        ),
+                    }
+                )
+            else:
+                report["fallback"].append({"path": rel})
+        else:
+            report["utf8_count"] += 1
+    report["ok"] = not report["blocked"] and not report["unreadable"]
+    if report["blocked"] or report["unreadable"]:
+        report["error"] = "; ".join(
+            [f"{entry['path']}: {entry['error']}" for entry in report["blocked"]]
+            + [f"{entry['path']}: {entry['error']}" for entry in report["unreadable"]]
+        )
+    return report
+
+
 def _python_status() -> dict[str, Any]:
     version_tuple = sys.version_info[:3]
     ok = SUPPORTED_PYTHON_MIN <= version_tuple < SUPPORTED_PYTHON_MAX
@@ -941,6 +1018,14 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
             f"{cuda_update_command}, or replace an undersized GPU."
         )
 
+    input_subs = report.get("input_subtitles") or {"blocked": [], "unreadable": []}
+    for entry in input_subs.get("blocked") or []:
+        steps.append(
+            f"Input/ {entry['path']}: {entry['error']}"
+        )
+    for entry in input_subs.get("unreadable") or []:
+        steps.append(f"Input/ {entry['path']}: could not be read ({entry['error']}).")
+
     if report["voice_sources"]["primary_source"] != "seashells":
         steps.append("Add curated local reference clips to ./Seashells so the GUI stops defaulting to smoke/build fallback voices.")
 
@@ -990,6 +1075,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "real_engine_smoke": _real_engine_smoke_status(repo_root),
         "vulkan_backend": _vulkan_backend_status(repo_root),
         "dependency_pins": _dependency_pin_status(repo_root),
+        "input_subtitles": _input_subtitles_status(repo_root),
     }
     required_checks = [
         report["python"]["ok"],
@@ -1161,6 +1247,27 @@ def _print_human_report(report: dict[str, Any]) -> None:
         if len(audio_cpp_devices) > 1 and not vulkan.get("device_index_env"):
             indexes = ", ".join(str(device["index"]) for device in audio_cpp_devices)
             print(f"      Multi-GPU: set ORACLE_AUDIOCPP_DEVICE to one of [{indexes}] to pick a device.")
+
+    subtitles = report.get("input_subtitles")
+    if subtitles is None:
+        # An older report predating this check: render nothing rather than a
+        # misleading SKIP (the check never ran for it).
+        return
+    if not subtitles.get("exists"):
+        print(f"SKIP Input subtitle encoding: Input/ not present ({subtitles.get('input_dir', '')})")
+    else:
+        parts = [f"{subtitles['scanned']} subtitle file(s) scanned"]
+        if subtitles["utf8_count"]:
+            parts.append(f"{subtitles['utf8_count']} UTF-8")
+        fallback_names = [entry["path"] for entry in subtitles["fallback"]]
+        if fallback_names:
+            parts.append("CP1252 fallback: " + ", ".join(fallback_names))
+        label = "PASS" if subtitles["ok"] else "WARN"
+        print(f"{label} Input subtitle encoding: {'; '.join(parts)}")
+        for entry in subtitles["blocked"]:
+            print(f"      {entry['path']}: {entry['error']}")
+        for entry in subtitles["unreadable"]:
+            print(f"      {entry['path']}: {entry['error']}")
 
     print("")
     print("Next steps:")
