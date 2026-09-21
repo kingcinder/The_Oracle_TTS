@@ -62,6 +62,17 @@ _MIN_PEAK_AMPLITUDE = 1e-4
 _MAX_ZERO_DUTY_CYCLE = 0.99
 
 
+class DegenerateEngineOutput(ValueError):
+    """The engine gate rejected synthesis output as degenerate.
+
+    A subclass of ``ValueError`` because every existing caller treated these
+    rejections as plain ValueErrors; the marker exists so the engines can
+    distinguish a recognized one-off hiccup (worth one automatic re-synthesis
+    at a fresh seed) from unrelated value errors with the same type. The
+    message content is unchanged.
+    """
+
+
 def sanitize_engine_audio(audio: np.ndarray, *, text: str = "", sample_rate: int | None = None) -> np.ndarray:
     """Return *audio* with recognized TTS hiccups repaired or rejected.
 
@@ -69,8 +80,9 @@ def sanitize_engine_audio(audio: np.ndarray, *, text: str = "", sample_rate: int
       * non-finite samples (NaN/Inf) -> zeroed. A diverged pass usually
         corrupts a span, not the whole stem; zeroing is the least-destructive
         repair and cannot clip or distort the healthy remainder.
-    Rejected with ``ValueError`` (the caller's failure path reports it, the
-    stem is never cached, and a retry with a fresh seed can succeed):
+    Rejected with :class:`DegenerateEngineOutput` (a ``ValueError`` subclass;
+    the caller's failure path reports it, the stem is never cached, and the
+    engine retries once with a fresh seed before giving up):
       * all-non-finite audio — nothing salvageable;
       * constant-DC tone / near-total silence (a degenerate decode or an
         empty token stream) — no repair recovers speech from it.
@@ -79,11 +91,13 @@ def sanitize_engine_audio(audio: np.ndarray, *, text: str = "", sample_rate: int
     """
     array = np.asarray(audio, dtype=np.float32)
     if array.size == 0:
-        raise ValueError(_empty_error(text))
+        raise DegenerateEngineOutput(_empty_error(text))
     finite = np.isfinite(array)
     if not finite.all():
         if not finite.any():
-            raise ValueError(_degenerate_error(text, sample_rate, "every sample is NaN or infinite"))
+            raise DegenerateEngineOutput(
+                _degenerate_error(text, sample_rate, "every sample is NaN or infinite")
+            )
         array = np.where(finite, array, np.float32(0.0))
     centered = array - np.mean(array, dtype=np.float64)
     peak = float(np.max(np.abs(centered)))
@@ -91,10 +105,14 @@ def sanitize_engine_audio(audio: np.ndarray, *, text: str = "", sample_rate: int
         # A perfectly flat line: DC tone (constant offset decode) or pure
         # silence. The distinction does not change the remedy — neither
         # carries speech — so one message covers both shapes.
-        raise ValueError(_degenerate_error(text, sample_rate, "the stem is a constant DC tone with no speech content"))
+        raise DegenerateEngineOutput(
+            _degenerate_error(text, sample_rate, "the stem is a constant DC tone with no speech content")
+        )
     zero_duty = float(np.count_nonzero(np.abs(centered) < _MIN_PEAK_AMPLITUDE) / array.size)
     if zero_duty > _MAX_ZERO_DUTY_CYCLE:
-        raise ValueError(_degenerate_error(text, sample_rate, "the stem is silence with no speech content"))
+        raise DegenerateEngineOutput(
+            _degenerate_error(text, sample_rate, "the stem is silence with no speech content")
+        )
     return array
 
 
