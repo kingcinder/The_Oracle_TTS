@@ -572,6 +572,8 @@ silently.
 - `Output/` rendered audio, stems, and caches (runtime-generated, gitignored)
 - `user_settings/` GUI settings persistence (runtime-generated, gitignored)
 - `release_artifacts/` release-script output (generated, gitignored)
+- `release_checksums/` each release's sha256 manifest, tracked so a published
+  artifact can be verified from a clone rather than the build folder
 - `scripts/` install, doctor, smoke, and model utility entrypoints
 - `src/the_oracle/` application code
 - `tests/` unit and integration-style coverage
