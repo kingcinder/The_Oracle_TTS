@@ -97,6 +97,7 @@ from the_oracle.inference_wizard import InferenceSetupWizard
 from the_oracle.recording_wizard import RecordingStudioSetupWizard
 from the_oracle.gui_widgets import PerceptualSlider
 from the_oracle.gui_render import PreviewWorker, RenderProgressDialog, RenderWorker, _render_child_environment
+from the_oracle.gui_chrome import LivePanel, build_live_section
 from the_oracle.gui_sections import QHSectionGroup, collapsible_section
 from the_oracle.models.project import RenderPlan, VoiceProfile, VoiceSettings, Utterance
 from the_oracle.models.settings import RenderSettings, SpeakerSettings
@@ -358,96 +359,6 @@ class VulkanSetupThread(QThread):
             self.completed.emit(result)
         else:
             self.failed.emit(result.error or "Vulkan backend setup failed.")
-
-
-class LivePanel(QWidget):
-    """Persistent right-side sidebar that mirrors the render progress dialog
-    so the user always sees the last backend/render state without a modal.
-    """
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        # Resizable, not fixed: the Live column is now one arm of the main
-        # splitter, so users can widen it (or collapse it via its section
-        # header) without losing the rest of the layout.
-        self.setMinimumWidth(240)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-
-        header = QLabel("Live")
-        header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px 0;")
-        outer.addWidget(header)
-
-        self.backend_label = QLabel("Backend: idle")
-        self.backend_label.setWordWrap(True)
-        self.synth_label = QLabel("")
-        self.synth_label.setWordWrap(True)
-        self.stage_label = QLabel("")
-        self.stage_label.setWordWrap(True)
-        self.segment_label = QLabel("")
-        self.eta_label = QLabel("")
-        self.eta_label.setWordWrap(True)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
-
-        outer.addWidget(self.backend_label)
-        outer.addWidget(self.synth_label)
-        outer.addWidget(self.stage_label)
-        outer.addWidget(self.segment_label)
-        outer.addWidget(self.eta_label)
-        outer.addWidget(self.progress_bar)
-        outer.addStretch(1)
-
-    def update_from_progress(self, progress: RenderProgress) -> None:
-        """Update the sidebar with live render data (same logic as
-        RenderProgressDialog.update_progress but writes to our own labels)."""
-        if progress.fraction is not None:
-            percent = int(round(progress.fraction * 100))
-        else:
-            percent = 0 if progress.total_steps <= 0 else int(round((progress.current_step / progress.total_steps) * 100))
-        self.progress_bar.setValue(max(0, min(100, percent)))
-
-        # Backend line
-        if progress.backend:
-            label = "Vulkan (audio.cpp)" if progress.backend == "vulkan" else "PyTorch"
-            if progress.device_label:
-                label += f" — {progress.device_label}"
-            self.backend_label.setText(f"Backend: {label}")
-
-        # Render time
-        if progress.synth_seconds_total is not None:
-            text = f"Render time: {RenderProgressDialog._format_seconds(progress.synth_seconds_total)} total"
-            if progress.synth_seconds_latest is not None:
-                text += f"\nlast {RenderProgressDialog._format_seconds(progress.synth_seconds_latest)}"
-            self.synth_label.setText(text)
-
-        self.stage_label.setText(f"{progress.stage}: {progress.detail}")
-
-        if progress.total_segments > 0:
-            self.segment_label.setText(f"Segments: {progress.current_segment}/{progress.total_segments}")
-        elif progress.total_steps > 0:
-            self.segment_label.setText(f"Steps: {progress.current_step}/{progress.total_steps}")
-        else:
-            self.segment_label.setText("Segments: preparing...")
-
-        if progress.eta_seconds is None:
-            self.eta_label.setText(f"Elapsed: {RenderProgressDialog._format_seconds(progress.elapsed_seconds)}\nETA: calculating...")
-        else:
-            self.eta_label.setText(
-                f"Elapsed: {RenderProgressDialog._format_seconds(progress.elapsed_seconds)}\n"
-                f"ETA: {RenderProgressDialog._format_seconds(progress.eta_seconds)}"
-            )
-
-    def set_idle(self) -> None:
-        """Reset to the idle state after a render finishes or fails."""
-        self.backend_label.setText("Backend: idle")
-        self.synth_label.setText("")
-        self.stage_label.setText("")
-        self.segment_label.setText("")
-        self.eta_label.setText("")
-        self.progress_bar.setValue(0)
 
 
 class RecordStudioWorker(QThread):
@@ -1978,12 +1889,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._lower_splitter, stretch=1)
 
         # Live progress column: its own section so it can be resized (slider
-        # or handle) and collapsed like every other section.
-        live_section = QHSectionGroup("Live", collapsible=True, resizable=True)
-        live_section.setMinimumWidth(220)
-        live_layout = QVBoxLayout(live_section)
-        live_layout.setContentsMargins(0, 0, 0, 0)
-        live_layout.addWidget(self.live_panel)
+        # or handle) and collapsed like every other section. The section
+        # chrome lives in gui_chrome alongside the panel it wraps.
+        live_section = build_live_section(self.live_panel)
         self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._main_splitter.setHandleWidth(6)
         self._main_splitter.setChildrenCollapsible(False)
