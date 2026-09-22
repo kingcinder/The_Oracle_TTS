@@ -27,7 +27,12 @@ Usage:
         Full release: check, refuse a dirty tree, run the test suite,
         build the sdist + wheel with the in-venv setuptools PEP 517 hooks
         (no network, no ``build`` package needed), and write a versioned
-        ``checksums-<version>.sha256`` manifest beside the artifacts.
+        ``checksums-<version>.sha256`` manifest beside the artifacts. A copy
+        of that manifest is written into the tracked ``release_checksums/``
+        directory, so a published artifact can be verified against this
+        repository instead of against the gitignored build folder it came
+        from. Commit that copy (the script prints the path); a manifest
+        already recorded for the version is never rewritten silently.
 """
 
 from __future__ import annotations
@@ -70,6 +75,11 @@ _VERSION_ATTR = "the_oracle.__version__"
 # Printed by the build subprocess so artifact names survive any unrelated
 # setuptools chatter on stdout.
 _ARTIFACT_PREFIX = "ARTIFACT:"
+
+#: Tracked directory holding a copy of each release's checksums manifest, so a
+#: published artifact stays verifiable from a clone. Deliberately NOT the
+#: gitignored build folder (``release_artifacts/``).
+RELEASE_CHECKSUMS_DIR = "release_checksums"
 
 _BUILD_SNIPPET = (
     "import sys\n"
@@ -363,6 +373,39 @@ def write_checksums(outdir: Path, version: str, artifacts: list[Path]) -> Path:
     return manifest
 
 
+def store_release_checksums(repo_root: Path, version: str, manifest: Path) -> Path:
+    """Record the run's manifest in the tracked ``release_checksums/`` folder.
+
+    The build folder is gitignored, so a manifest living only there can never
+    verify a published artifact from a clone — whoever downloaded
+    ``the_oracle-<version>.tar.gz`` has nothing in the repository to check it
+    against. This copy is the record git carries: the manifest is written
+    verbatim (byte-identical to the outdir manifest, so ``sha256sum -c`` reads
+    the same file either way).
+
+    An existing record for the version is never rewritten silently: changed
+    hashes for an already-published artifact are exactly the thing a checksum
+    manifest exists to prevent anyone from doing unnoticed, so that is a
+    refusal with instructions, not an overwrite. A rebuild that reproduces the
+    same bytes is a no-op.
+    """
+    tracked_dir = repo_root / RELEASE_CHECKSUMS_DIR
+    content = manifest.read_bytes()
+    tracked = tracked_dir / manifest.name
+    if tracked.is_file():
+        if tracked.read_bytes() == content:
+            return tracked
+        raise ReleaseError(
+            f"{Path(RELEASE_CHECKSUMS_DIR, manifest.name).as_posix()}: already "
+            f"records different hashes for {version}. A published artifact's "
+            "recorded checksums must not be rewritten silently — delete that "
+            "file deliberately if this build supersedes the published one."
+        )
+    tracked_dir.mkdir(parents=True, exist_ok=True)
+    tracked.write_bytes(content)
+    return tracked
+
+
 def _require_version(repo_root: Path) -> str:
     version = read_version(repo_root)
     if not version:
@@ -397,10 +440,17 @@ def _release(repo: Path, outdir_arg: str, *, skip_tests: bool) -> int:
     print(f"building sdist + wheel into {outdir} ...")
     artifacts = build_artifacts(repo, outdir, version)
     manifest = write_checksums(outdir, version, artifacts)
+    tracked = store_release_checksums(repo, version, manifest)
+    tracked_rel = tracked.relative_to(repo).as_posix()
     print("artifacts:")
     for path in artifacts:
         print(f"  {path}")
     print(f"checksums: {manifest}")
+    print(f"checksums (tracked copy): {tracked_rel}")
+    print(
+        "next: commit the tracked manifest so the published hashes live in the "
+        f"repo — git add {tracked_rel}"
+    )
     return 0
 
 

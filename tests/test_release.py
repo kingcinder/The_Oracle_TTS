@@ -455,3 +455,126 @@ def test_main_refuses_dirty_tree_before_building_or_testing(
     assert status == 1
     assert tested == []  # the refusal happens before any expensive step
     assert not (repo / "release_artifacts").exists()
+
+
+def test_store_release_checksums_records_a_copy_verifiable_from_a_clone(tmp_path: Path) -> None:
+    """The point of the tracked copy: a published artifact must be verifiable
+    from the repository alone. The build folder is gitignored, so a manifest
+    that only lives there proves nothing to someone who cloned the repo."""
+    repo = _write_fake_repo(tmp_path / "repo")
+    outdir = repo / "release_artifacts"
+    outdir.mkdir()
+    (outdir / "the_oracle-9.9.9.tar.gz").write_bytes(b"sdist bytes")
+    (outdir / "the_oracle-9.9.9-py3-none-any.whl").write_bytes(b"wheel bytes")
+    artifacts = [outdir / "the_oracle-9.9.9.tar.gz", outdir / "the_oracle-9.9.9-py3-none-any.whl"]
+    manifest = release.write_checksums(outdir, "9.9.9", artifacts)
+
+    tracked = release.store_release_checksums(repo, "9.9.9", manifest)
+
+    assert tracked == repo / "release_checksums" / "checksums-9.9.9.sha256"
+    # Byte-identical, so `sha256sum -c` reads the same manifest either way.
+    assert tracked.read_bytes() == manifest.read_bytes()
+
+    # The real workflow: both files downloaded into an unrelated folder,
+    # verified against the manifest that came with the repository.
+    if not shutil.which("sha256sum"):
+        return
+    downloads = tmp_path / "downloads"
+    downloads.mkdir()
+    for artifact in artifacts:
+        shutil.copy2(artifact, downloads / artifact.name)
+    subprocess.run(["sha256sum", "-c", str(tracked)], cwd=str(downloads), check=True)
+
+
+def test_store_release_checksums_is_idempotent_for_identical_content(tmp_path: Path) -> None:
+    repo = _write_fake_repo(tmp_path)
+    outdir = tmp_path / "release_artifacts"
+    outdir.mkdir()
+    artifact = outdir / "the_oracle-9.9.9.tar.gz"
+    artifact.write_bytes(b"same bytes")
+    manifest = release.write_checksums(outdir, "9.9.9", [artifact])
+
+    first = release.store_release_checksums(repo, "9.9.9", manifest)
+    recorded = first.read_bytes()
+    second = release.store_release_checksums(repo, "9.9.9", manifest)
+
+    assert first == second
+    assert second.read_bytes() == recorded
+
+
+def test_store_release_checksums_refuses_to_rewrite_a_recorded_manifest(tmp_path: Path) -> None:
+    """Changed hashes for an already-published version are exactly what a
+    checksum manifest exists to make impossible to do unnoticed."""
+    repo = _write_fake_repo(tmp_path)
+    tracked_dir = repo / "release_checksums"
+    tracked_dir.mkdir()
+    published = tracked_dir / "checksums-9.9.9.sha256"
+    published.write_text("deadbeef  the_oracle-9.9.9.tar.gz\n", encoding="utf-8")
+
+    outdir = tmp_path / "release_artifacts"
+    outdir.mkdir()
+    artifact = outdir / "the_oracle-9.9.9.tar.gz"
+    artifact.write_bytes(b"rebuilt from different inputs")
+    manifest = release.write_checksums(outdir, "9.9.9", [artifact])
+    assert manifest.read_bytes() != published.read_bytes()
+
+    with pytest.raises(release.ReleaseError, match="must not be rewritten"):
+        release.store_release_checksums(repo, "9.9.9", manifest)
+
+    # The refusal leaves the recorded manifest exactly as it was.
+    assert published.read_text(encoding="utf-8") == "deadbeef  the_oracle-9.9.9.tar.gz\n"
+
+
+def test_the_tracked_checksums_path_is_not_gitignored() -> None:
+    """The feature's premise: this directory has to be committable.
+
+    A broad ignore rule would quietly reduce the tracked copy to a local file
+    that never reaches git — the release would look successful while the
+    hashes stayed as unverifiable as before. (``release_artifacts/**/*.sha256``
+    covers the build folder; this is the other half.)
+    """
+    if shutil.which("git") is None or not (REPO_ROOT / ".git").exists():
+        pytest.skip("needs a git checkout")
+    path = f"{release.RELEASE_CHECKSUMS_DIR}/checksums-9.9.9.sha256"
+    result = subprocess.run(
+        ["git", "check-ignore", "--quiet", "--", path],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    # check-ignore exits 1 when nothing matched, 0 when the path is ignored.
+    assert result.returncode == 1, (
+        f"{path} is gitignored, so a release's recorded hashes would never "
+        "reach the repository"
+    )
+
+
+def test_release_mode_records_the_tracked_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tail of the release path: build -> outdir manifest -> tracked copy."""
+    repo = _write_fake_repo(tmp_path)
+    outdir = repo / "release_artifacts"
+    monkeypatch.setattr(release, "tree_is_dirty", lambda _repo: False)
+    monkeypatch.setattr(release, "run_tests", lambda _repo: None)
+
+    def _fake_build(_repo_root, out, version):
+        out.mkdir(parents=True, exist_ok=True)
+        written = []
+        for name, payload in (
+            (f"the_oracle-{version}.tar.gz", b"sdist"),
+            (f"the_oracle-{version}-py3-none-any.whl", b"wheel"),
+        ):
+            path = out / name
+            path.write_bytes(payload)
+            written.append(path)
+        return written
+
+    monkeypatch.setattr(release, "build_artifacts", _fake_build)
+
+    status = release.main(["--repo-root", str(repo)])
+
+    assert status == 0
+    tracked = repo / "release_checksums" / "checksums-9.9.9.sha256"
+    assert tracked.is_file()
+    assert tracked.read_bytes() == (outdir / "checksums-9.9.9.sha256").read_bytes()

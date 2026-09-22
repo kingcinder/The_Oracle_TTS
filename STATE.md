@@ -870,11 +870,16 @@ rewritten by the loop).
   only tracked version literal; `pyproject.toml` reads it via `[tool.setuptools.dynamic]` and
   `scripts/release.py` enforces the invariant (`--check`), rewrites the README/STATE banners
   from it (`--sync-banners`), and builds versioned sdist+wheel with a `checksums-<version>.sha256`
-  manifest via the in-venv PEP 517 hooks (offline). `--check` also requires CHANGELOG.md to
+  manifest via the in-venv PEP 517 hooks (offline). A copy of that manifest is written into
+  the tracked `release_checksums/` folder, so a published artifact is verifiable from a clone
+  rather than only from the gitignored build folder; an existing record for a version is never
+  rewritten silently (a rebuild producing different hashes is a refusal with instructions, not
+  an overwrite). `--check` also requires CHANGELOG.md to
   carry exactly one `## [<version>] — <YYYY-MM-DD>` section for the current version, dated
   the release day — so a version bump cannot land without its changelog entry, and a release
   is: bump version → `--sync-changelog` (retitles the `[Unreleased]` body into the dated
-  section) → `--sync-banners` → commit → build. Undated `--check` therefore passes only on
+  section) → `--sync-banners` → commit → build → commit the tracked
+  `release_checksums/checksums-<version>.sha256`. Undated `--check` therefore passes only on
   the release day; `tests/test_release.py` pins the heading shape, drift, duplicates,
   injected-date semantics, and the sync-changelog mode. Verified end-to-end
   on the real repo; `tests/test_release.py` pins it. Setuptools' `build_meta` mutates
