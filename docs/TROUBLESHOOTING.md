@@ -40,6 +40,18 @@ On Windows the Start Menu / desktop shortcuts are rebuilt the same way.
   networked machine fetches it on first use; an offline install must get it
   from its bundle (`update --offline-bundle <dir>`).
 
+## A render fails with a rejected take (silence, DC tone, NaNs)
+
+The engine-output gate refuses audio that is not usable speech — flat
+silence, a DC offset, NaNs — because caching or serving such a take would
+poison the stem cache. A single hiccup self-heals: the first rejection is
+retried automatically once at a fresh seed. A **second** rejection is real
+and fails the render with the reason, so the take is never cached.
+
+Stems cached before this gate existed (or by an older build) are validated
+on read, so a stale degenerate entry is discarded and re-synthesized rather
+than served. There is nothing to clean up by hand.
+
 ## "setup-vulkan" refuses on an offline install
 
 The Vulkan GGUF model is not part of the offline bundle, and an offline

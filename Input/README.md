@@ -12,8 +12,12 @@ Place dialogue source files here for rendering.
 - `cli_short.txt` - Short CLI test input
 - `local_audio_test.txt` - Local-audio render test input
 - `test.txt` - Basic test input
+- `READ_THIS_TO_RECORD_SEASHELLS.txt` - the teleprompter script the Recording
+  Studio reads aloud when recording a new reference voice; it lives here so
+  the GUI's script picker finds it, and is not a dialogue sample.
 
 ## Runtime Subdirectories
 
-The `test/` subdirectory contains cache and runtime artifacts from test renders.
-These are ignored by Git.
+`test/` is created on demand by test renders to hold their cache and runtime
+artifacts. It, and the other runtime outputs under this directory (`*.pkl`,
+`*.json`, `*.diff`, `*.log`, `*.flac`, `*.wav`), are ignored by Git.

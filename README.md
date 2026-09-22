@@ -130,9 +130,31 @@ The doctor checks:
 - managed launcher health
 - Chatterbox and Perth importability
 - Chatterbox CPU model initialization
-- Qt GUI readiness
+- `turbo` variant readiness
+- CUDA usability: detected cards, VRAM, driver, and whether the installed
+  runtime can actually use them
+- Qt GUI readiness — imports PySide6, resolves the xcb platform plugin, and
+  loads the multimedia/audio stack offscreen
+- reference voice clips under `Seashells/`
 - deterministic smoke render readiness
-- real-engine smoke prerequisites
+- real-engine smoke prerequisites — an import/prerequisite probe that never
+  runs the render, and says so
+- Vulkan (audio.cpp) readiness: the CLI, the GGUF model, and a real
+  `--list-devices` enumeration (plus the RDNA1 caveat when relevant)
+- the installed dependencies against the `pyproject.toml` pins, so an
+  out-of-band `pip install` is caught by the gate rather than by a
+  mysterious test failure days later
+- subtitle files under `Input/` that would take the CP1252 fallback, and the
+  ones it would **block** outright
+- release-metadata drift (version, banners, and the `CHANGELOG.md` gate)
+
+With `--ci` the environment-only checks (`ffmpeg`, launcher `PATH`, `turbo`
+prefetch) are skipped; everything else runs as usual. Only `python`,
+`dependency_pins`, the Chatterbox/Perth probes, `qt`, and the two smoke checks
+gate `overall_ready` (plus `ffmpeg` and the launcher outside `--ci`). The
+capability reports — `turbo`, `cuda_backend`, `voice_sources`,
+`vulkan_backend`, `input_subtitles`, `release_metadata` — are informational
+and never block readiness.
 
 ## Optional Model Prefetch
 
