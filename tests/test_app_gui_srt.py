@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication
 
 from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile, VoiceSettings
 from the_oracle.models.settings import RenderSettings, SpeakerSettings; 
+from the_oracle.pipeline import RenderProgress
 from the_oracle.project_manifest import build_saved_project
 
 from tests.test_app_gui_profiles import _build_window
@@ -208,6 +209,89 @@ def test_failed_render_preserves_partial_row_state(
         assert window.plan.utterances[0].status == "success"
         assert window.plan.utterances[0].duration_seconds == 1.25
         assert window.plan.metadata["failed_rows"] == "2"
+    finally:
+        window.render_worker = None
+        window.close()
+
+
+def test_finish_render_returns_the_live_sidebar_to_idle(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A completed render must not leave the sidebar on its last frame.
+
+    The progress dialog is dismissed on completion, but the sidebar is the
+    *persistent* half of the same mirror: without a reset it keeps showing the
+    finished render's final state (100%, "Complete: done") indefinitely.
+    """
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        plan = _plan_with_utterance(paths.output_dir)
+        window._update_render_progress(
+            RenderProgress(
+                stage="Complete",
+                detail="done",
+                current_step=4,
+                total_steps=4,
+                current_segment=4,
+                total_segments=4,
+                elapsed_seconds=12.0,
+                fraction=1.0,
+                backend="vulkan",
+                device_label="AMD RX 5700 XT",
+            )
+        )
+        assert window.live_panel.progress_bar.value() == 100
+        assert "Vulkan" in window.live_panel.backend_label.text()
+
+        window._finish_render(plan.to_dict(), str(tmp_path / "render_out.flac"))
+
+        assert window.live_panel.progress_bar.value() == 0
+        assert window.live_panel.backend_label.text() == "Backend: idle"
+        assert window.live_panel.synth_label.text() == ""
+        assert window.live_panel.stage_label.text() == ""
+        assert window.live_panel.segment_label.text() == ""
+        assert window.live_panel.eta_label.text() == ""
+    finally:
+        window.close()
+
+
+def test_failed_render_returns_the_live_sidebar_to_idle(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed render must not leave the sidebar frozen on its last frame."""
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        plan = _plan_with_utterance(paths.output_dir)
+        window.plan = RenderPlan.from_dict(plan.to_dict())
+        window.render_worker = SimpleNamespace(plan=plan)
+        monkeypatch.setattr(
+            "the_oracle.app_gui.QMessageBox.critical",
+            lambda *_args, **_kwargs: None,
+        )
+        window._update_render_progress(
+            RenderProgress(
+                stage="Synthesizing",
+                detail="utterance 1/4",
+                current_step=1,
+                total_steps=4,
+                current_segment=1,
+                total_segments=4,
+                elapsed_seconds=3.0,
+                fraction=0.25,
+                eta_seconds=9.0,
+                backend="pytorch",
+                device_label="CPU",
+            )
+        )
+        assert window.live_panel.progress_bar.value() == 25
+        assert "PyTorch" in window.live_panel.backend_label.text()
+
+        window._fail_render(plan.to_dict(), "Synthesis failed.")
+
+        assert window.live_panel.progress_bar.value() == 0
+        assert window.live_panel.backend_label.text() == "Backend: idle"
+        assert window.live_panel.stage_label.text() == ""
+        assert window.live_panel.eta_label.text() == ""
     finally:
         window.render_worker = None
         window.close()

@@ -5,7 +5,7 @@
 slice relies on (``test_app_gui_patch_surface``, ``test_payload_policy_ownership``)
 ran green as this slice's pre-flight gates; these tests pin the slice itself.
 
-Three contracts keep the move honest:
+Four contracts keep the move honest:
 
 1. ONE OWNER — ``gui_chrome`` defines the Live chrome and no other module
    defines a competing ``LivePanel``.
@@ -18,6 +18,10 @@ Three contracts keep the move honest:
    splitter and ``_register_section`` persistence wiring stay in ``app_gui``.
    That is the split-readership the patch-surface net registers as
    ``PARTIAL_OWNED``.
+4. MIRROR — the sidebar is the *persistent* half of the progress mirror, so
+   wherever MainWindow dismisses the render progress dialog it must reset the
+   sidebar with it; a dismissal site that forgets ``set_idle()`` leaves the
+   finished render's last frame on screen indefinitely.
 """
 
 from __future__ import annotations
@@ -163,6 +167,63 @@ def test_main_window_builds_the_live_column_from_gui_chrome() -> None:
         and c.args[0].value == "live"
     ]
     assert len(register_calls) == 1, "the 'live' section must stay registered for persistence"
+
+
+def test_dismissing_the_progress_dialog_also_idles_the_sidebar() -> None:
+    """Every progress-dialog dismissal resets the persistent sidebar with it.
+
+    The sidebar mirrors the dialog but is the half that stays on screen, so a
+    dismissal site that forgets ``live_panel.set_idle()`` freezes the finished
+    or failed render's last frame there forever — the bug fixed in
+    ``_finish_render``/``_fail_render``. Pinning the shape keeps the next
+    dismissal site (or the next mirror) from re-introducing it.
+    """
+    tree = ast.parse(APP_GUI.read_text(encoding="utf-8"))
+    main_window = _class(tree, "MainWindow")
+    assert main_window is not None
+
+    dismissers: list[str] = []
+    offenders: list[str] = []
+    for method in main_window.body:
+        if not isinstance(method, ast.FunctionDef):
+            continue
+        clears_dialog = False
+        idles_sidebar = False
+        for node in ast.walk(method):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and target.attr == "progress_dialog"
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "self"
+                        and isinstance(node.value, ast.Constant)
+                        and node.value.value is None
+                    ):
+                        clears_dialog = True
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "set_idle"
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "live_panel"
+            ):
+                idles_sidebar = True
+        if clears_dialog:
+            dismissers.append(method.name)
+            if not idles_sidebar:
+                offenders.append(f"{method.name} (line {method.lineno})")
+
+    assert dismissers, (
+        "no MainWindow method dismisses the progress dialog; the scan went "
+        "blind — fix the scanner, not this assertion."
+    )
+    assert offenders == [], (
+        "these MainWindow methods dismiss the progress dialog but leave the "
+        "persistent Live sidebar showing stale progress:\n  "
+        + "\n  ".join(offenders)
+        + "\nAdd live_panel.set_idle() alongside the dismissal."
+    )
 
 
 @pytest.mark.slow
