@@ -17,7 +17,7 @@ any test patches a name through the ``app_gui`` module object that the moved
 owner modules now define for themselves. ``app_gui`` re-exports those names,
 so patching them *there* is a silent no-op for the owner's code.
 
-Two rules, both born from real slices:
+Three rules, all born from real slices:
 
 1. MOVED_OWNERS — a name one owner module defines for itself and nothing in
    ``app_gui`` reads anymore. ANY app_gui-level patch of it is a silent
@@ -27,6 +27,9 @@ Two rules, both born from real slices:
    app_gui globals AND by the workers' direct fallback from gui_render
    globals. app_gui-level patches stay legitimate for window-assembly tests
    and are REQUIRED to be gui_render-level in the worker-path test files.
+3. PARTIAL_OWNED — a name with construction/read sites in two modules after
+   the gui_chrome slice: an app_gui-level patch is not a no-op but is
+   PARTIAL, covering app_gui's sites and silently missing the owner's.
 
 An offender must be fixed by repointing the patch at the owner module (or by
 un-moving the name). Adding names to the maps as slices land keeps the net
@@ -109,6 +112,17 @@ WORKER_PATH_TESTS: frozenset[str] = frozenset(
     }
 )
 
+#: PARTIAL-readership names: construction/read sites live in BOTH modules, so
+#: an app_gui-level patch is neither live-everywhere nor a no-op — it covers
+#: app_gui's sites and silently misses the owner module's. (The gui_chrome
+#: slice: ``build_live_section`` builds the Live column's ``QHSectionGroup``
+#: from gui_chrome's globals, while the shared-settings and status sections
+#: are still built from app_gui's.) Unlike SPLIT_OWNED this is not scoped to
+#: worker-path files: every app_gui-level patch of the name is partial.
+PARTIAL_OWNED: dict[str, tuple[str, str]] = {
+    "QHSectionGroup": ("the_oracle.app_gui", "the_oracle.gui_chrome"),
+}
+
 #: Every name the scan must catch, for the failure message.
 OWNED_BY_MOVERS: dict[str, str] = {
     name: owner for owner, names in MOVED_OWNERS.items() for name in names
@@ -146,6 +160,16 @@ class PatchTarget:
                 f"{workers_owner}. (app_gui-level patches stay correct for "
                 "window-assembly tests; MainWindow still constructs from "
                 "app_gui globals.)"
+            )
+        if self.name in PARTIAL_OWNED:
+            _window_owner, owner_module = PARTIAL_OWNED[self.name]
+            return (
+                f"{self.file}:{self.line} {self.form} patches app_gui.{self.name} — "
+                f"PARTIAL coverage: {self.name} has construction/read sites in "
+                f"both app_gui's globals and {owner_module}'s, so this patch "
+                f"covers only app_gui's sites and silently misses "
+                f"{owner_module}'s. Patch the site you mean, or patch both "
+                "modules."
             )
         return None
 
@@ -420,6 +444,25 @@ def test_unrelated_strings_are_ignored(tmp_path: Path) -> None:
     assert targets == []
 
 
+def test_partial_owned_name_patch_is_flagged(tmp_path: Path) -> None:
+    """An app_gui-level patch of a name built in two modules is PARTIAL, not a
+    no-op: it stubs app_gui's construction sites and silently misses the
+    owner module's (the gui_chrome Live column). The net must say so rather
+    than let the patch look complete."""
+    targets = _scanner(
+        tmp_path,
+        """
+        def test_partial(monkeypatch):
+            monkeypatch.setattr(app_gui, "QHSectionGroup", FakeSection)
+        """,
+    )
+    offenders = [t.as_offender() for t in targets]
+    assert len(offenders) == 1, offenders
+    assert offenders[0] is not None
+    assert "PARTIAL" in offenders[0]
+    assert "gui_chrome" in offenders[0]
+
+
 def test_string_form_scan_matches_the_live_suite(tmp_path: Path) -> None:
     """End-to-end: the real suite contains one string-form setattr today
     (QFileDialog.getOpenFileName); the scanner must see it unflagged."""
@@ -449,3 +492,11 @@ def test_moved_owner_names_are_current() -> None:
         workers_mod = importlib.import_module(workers_module)
         assert hasattr(window_mod, name), f"{window_module} lost the window-side {name}"
         assert hasattr(workers_mod, name), f"{workers_module} lost the worker-side {name}"
+
+    # Partial-owned names must also exist on both sides — a split that loses a
+    # side stops being partial (and the map entry would then over-flag).
+    for name, (window_module, owner_module) in PARTIAL_OWNED.items():
+        window_mod = importlib.import_module(window_module)
+        owner_mod = importlib.import_module(owner_module)
+        assert hasattr(window_mod, name), f"{window_module} lost its {name} site"
+        assert hasattr(owner_mod, name), f"{owner_module} lost the {name} it owns"
