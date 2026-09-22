@@ -5148,6 +5148,10 @@ class MainWindow(QMainWindow):
         if self.progress_dialog is not None:
             self.progress_dialog.close()
             self.progress_dialog = None
+        # The sidebar is the persistent half of the same progress mirror: it
+        # must return to idle with the dialog, or the finished render's last
+        # frame (100%, its final stage) stays on screen indefinitely.
+        self.live_panel.set_idle()
 
     def _fail_render(self, plan_payload: object, message: str | None = None) -> None:
         # RenderWorker includes its defensive plan copy in the failure signal.
@@ -5165,6 +5169,9 @@ class MainWindow(QMainWindow):
         if self.progress_dialog is not None:
             self.progress_dialog.close()
             self.progress_dialog = None
+        # A failed render would otherwise leave the sidebar frozen on its last
+        # frame — the same persistent-mirror rule as _finish_render.
+        self.live_panel.set_idle()
 
         # Refresh the table to show truthful row state after failure:
         # completed rows show their status/duration, failed rows show failed,
