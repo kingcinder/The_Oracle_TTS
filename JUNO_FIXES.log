@@ -195,3 +195,48 @@ the gate ran on the exact tagged content: 1231 passed / 3 skipped (all
 documented hardware/build skips). Process note for next time: write the
 release notes BEFORE --sync-changelog, or the section inherits the
 empty placeholder body.
+
+2026-09-21 | src/the_oracle/gui_chrome.py | tests/test_gui_chrome_ownership.py (6), tests/test_app_gui_patch_surface.py (+1 net pin)
+MainWindow extraction slice: the sidebar/LivePanel chrome moves to
+gui_chrome. LivePanel (82 lines) is verbatim out of app_gui; the Live
+column's section chrome becomes gui_chrome.build_live_section(panel, *,
+minimum_width=220) — a QHSectionGroup factory mirroring the house
+precedent gui_sections.collapsible_section — so the module owns the
+column's chrome, not just the bare widget. app_gui re-imports both names,
+and MainWindow._build_ui drops six assembly lines for
+build_live_section(self.live_panel); app_gui keeps the splitter assembly
+and the _register_section("live", ...) persistence wiring, where the
+layout state lives. No import cycle: gui_chrome -> gui_render
+(RenderProgressDialog._format_seconds, unchanged) -> pipeline/models, and
+gui_render imports neither gui_chrome nor app_gui.
+
+PRE-FLIGHT: both gates ran green before any edit (patch-surface 9,
+payload-policy 4). Their verdict shaped the design: the live app_gui
+patch surface (159 targets) contains NO QHSectionGroup / LivePanel /
+QProgressBar / QLabel patch, so the move introduces no silent no-op for
+the existing suite. It does introduce one *new* split, though, and the
+net now says so: PARTIAL_OWNED["QHSectionGroup"] = (app_gui, gui_chrome).
+build_live_section constructs the Live section from gui_chrome's globals
+while the shared-settings and status sections are still built from
+app_gui's, so an app_gui-level QHSectionGroup patch covers those sections
+and silently misses the Live column — neither live-everywhere nor a
+no-op, which is why it is a third rule rather than a SPLIT_OWNED entry
+(that one is file-scoped to worker-path tests and would not have fired).
+One net pin added for the form; the existing 9 net tests, the map-drift
+guard (extended to PARTIAL_OWNED), and a zero-offender run on the live
+suite all hold.
+
+An honest test-authoring bug worth keeping: my first behavior test built
+the section and dropped the reference, and Qt then deleted the whole
+subtree — build_live_section reparents the panel into the section, so
+the section OWNS it. The failure surfaced as "Internal C++ object
+(QProgressBar) already deleted" inside LivePanel.update_from_progress,
+i.e. the production code was right and the test had to hold the section
+(MainWindow does, via its splitter). Noted in the test itself.
+
+Noticed, not actioned: gui_sections.collapsible_section is imported into
+app_gui but never called (dead import) — spotted while confirming the
+section-factory precedent, unrelated to this slice.
+
+Full suite: 1241 passed / 0 failed (1234 + 6 ownership/behavior + 1 net).
+Uncommitted; the user's five unrelated files untouched.
