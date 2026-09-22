@@ -857,11 +857,14 @@ rewritten by the loop).
   README links all three. The offline audit's two recommended fixes also
   landed (fd302d7): `setup-vulkan` refuses on an offline install and the
   LanguageTool warm download skips when the marker is present.
-- **Watch the venv against the declared pins.** A 2026-09-20 incident:
-  an out-of-band pip event replaced transformers/huggingface_hub/chatterbox
-  with incompatible majors and broke two offline-guarantee tests; restored
-  to the pyproject pins. A future `update`/doctor pass could add a
-  pin-verification check.
+- **The venv is checked against the declared pins.** The 2026-09-20 incident —
+  an out-of-band pip event that replaced transformers/huggingface_hub/chatterbox
+  with incompatible majors and broke two offline-guarantee tests — is now a gate
+  rather than a watch item: the doctor's `dependency_pins` check compares every
+  pinned requirement in `pyproject.toml` (runtime plus each optional group)
+  against the installed distribution metadata and reports missing or
+  mismatching packages, so drift surfaces in the doctor report instead of as a
+  mysterious test failure days later.
 
 - **Release metadata is single-sourced.** `__version__` in `src/the_oracle/__init__.py` is the
   only tracked version literal; `pyproject.toml` reads it via `[tool.setuptools.dynamic]` and
@@ -877,7 +880,7 @@ rewritten by the loop).
   on the real repo; `tests/test_release.py` pins it. Setuptools' `build_meta` mutates
   `sys.argv` permanently — any future in-process hook caller must not read `sys.argv` after
   the first hook call.
-- **The MainWindow extraction, slices 1-3 landed.** Slice 1: the transformer popups and
+- **The MainWindow extraction, slices 1-6 landed.** Slice 1: the transformer popups and
   preview dialogs live in `src/the_oracle/gui_ingest.py` (~500 lines), with the Qt classes
   the tests patch injected from MainWindow at call time. Slice 2: the format-health
   bookkeeping (trusted-file approvals, backup records) lives in `gui_settings.py` — which
@@ -888,11 +891,22 @@ rewritten by the loop).
   audio_cpp knob-persistence rule, cast resolution, blend decode — now lives in
   `gui_settings.py` as pure functions fed by a frozen `WidgetSnapshot` the window builds
   in one method (`_widget_snapshot`), with `PayloadDefaults` supplied by the window so
-  gui_settings never imports pipeline. All three slices required zero edits to existing
-  tests, which is the seam proof. The review shaped the rest: the Vulkan/audio.cpp and
-  render/preview clusters carry wholesale-patched module names (thread classes, workers,
-  dialogs) and must keep the
-  patch surface; those come later, in that order, one verified slice per pass.
+  gui_settings never imports pipeline. Slice 4 (render/preview cluster): `gui_render.py`
+  owns `RenderWorker`, `PreviewWorker`, `RenderProgressDialog` and the isolated-render
+  child-environment builder, with `OraclePipeline` split-owned between window assembly
+  (app_gui) and the workers' direct non-subprocess fallback (gui_render). Slice 5
+  (Vulkan cluster): `gui_vulkan.py` owns the device-row text and model-path parsing.
+  Slice 6 (sidebar/LivePanel chrome): `gui_chrome.py` owns `LivePanel` and
+  `build_live_section`, the Live column's collapsible/resizable section chrome; app_gui
+  re-imports both, so MainWindow's construction, the two progress handlers that drive it,
+  and the existing test import keep resolving to the identical objects, while the splitter
+  assembly and the `_register_section("live", ...)` persistence wiring stay in app_gui
+  where the layout state lives. All six slices required zero edits to existing tests,
+  which is the seam proof. What the review predicted held: the later clusters carry
+  wholesale-patched module names (thread classes, workers, dialogs), and the committed
+  patch-surface net is what kept that surface intact — it now enforces three rules
+  (MOVED_OWNERS, SPLIT_OWNED, and PARTIAL_OWNED, added for the `QHSectionGroup`
+  construction split slice 6 created) plus string-form patch targets.
 - **The parked `wip/ingest-refactor-hints` branch is finished and merged** (591efa0, fast-forward). Its two still-valid owners landed: `srt_ingest.ensure_subtitle_script` owns the convert-not-overwrite subtitle policy (both `cli._maybe_convert_srt` and `app_gui._convert_subtitle_input` are presentation wrappers; the GUI's old strict-decode copy — which blocked CP1252 subtitles the CLI converted fine — is gone), and the speaker-ref report data lives in `ingest_transformer.speaker_ref_report_for_file` instead of a CLI private the GUI imported. Ownership is pinned by source scans in `tests/test_subtitle_conversion_has_one_owner.py`, both pins mutation-proven. Worktree note: testing a linked worktree against the shared venv requires PYTHONPATH shadowing (the editable install resolves `the_oracle` to the main checkout); verified by probe before trusting any worktree result.
 - The stream-of-consciousness sample is now a permanent fixture
   (`tests/fixtures/stream_of_consciousness_dialogue_with_typos.txt`) pinning the
