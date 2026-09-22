@@ -240,3 +240,35 @@ section-factory precedent, unrelated to this slice.
 
 Full suite: 1241 passed / 0 failed (1234 + 6 ownership/behavior + 1 net).
 Uncommitted; the user's five unrelated files untouched.
+
+2026-09-21 | src/the_oracle/app_gui.py | tests/test_app_gui_srt.py (2), tests/test_gui_chrome_ownership.py (+1 scan)
+The Live sidebar no longer keeps a finished render's last frame. The
+progress dialog and the LivePanel are two halves of one mirror, but only
+the dialog was dismissed on completion/failure — the persistent sidebar
+sat at 100% / "Complete: done" (or the failed run's last stage) until the
+next render's first progress event. set_idle() now lands beside the
+dismissal in _finish_render and _fail_render (2 call sites, +7 lines),
+which keeps the rule explicit and greppable: wherever the render mirror
+is dismissed, the persistent half goes idle with it. Deliberately NOT in
+_cleanup_render_worker — that method owns worker teardown (deleteLater)
+on `finished`, and folding UI-state reset into it would blur its single
+responsibility (the same worker-teardown area the gui_render slice flags
+as delicate).
+
+Two behavioral tests plant real non-idle progress through
+_update_render_progress (backend, segments, ETA, 100% / 25%) and assert
+every label and the bar come back to idle. A third, an AST scan in the
+chrome contract file, pins the shape: any MainWindow method that sets
+self.progress_dialog = None must also call live_panel.set_idle(), with a
+vacuity guard so the scan cannot go blind. That file's docstring now
+lists it as its fourth contract. Mutation-proven: commenting out the
+_finish_render call fails both the behavioral test and the scan, and the
+behavioral failure reads `assert 100 == 0` — the stale frame, verbatim.
+
+Noticed, not actioned: the sidebar is shared with preview, so
+_finish_preview and _fail_preview leave the same stale frame. Identical
+one-line fix, scoped out because the request named the render paths only.
+No CHANGELOG entry, by explicit choice: the [Unreleased] placeholder
+stays empty, matching how small UI polish is treated in this repo.
+
+Full suite: 1244 passed / 0 failed (1241 + 2 behavioral + 1 scan).
