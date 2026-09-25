@@ -852,6 +852,26 @@ rewritten by the loop).
 
 ## Next
 
+- **Crash/telemetry/privacy unit is scoped, not built** (2026-09-26):
+  `docs/CRASH_TELEMETRY_DESIGN.md` is the design contract — local-first
+  crash capture (excepthook + threading hook + Qt message handler +
+  faulthandler, which finally gives the blocked-on-repro segfault watch item
+  a data path), a redaction sanitizer whose core rule is *drop what it
+  cannot classify*, fail-closed consent (unreadable = opted out) stored
+  separately from app_settings.json, log rotation for the currently
+  unbounded `utils/logging.py`, and **zero built-in network transport** —
+  the user shares a report deliberately. PRIVACY.md lands last, after its
+  claims are pinned by tests. Rollout §11; open decisions §12.
+- **Licensing/anti-piracy unit is scoped, not built** (2026-09-26):
+  `docs/LICENSING_DESIGN.md` is the design contract — module layout
+  (`the_oracle/licensing/`, Qt-free, offline by construction), an ORACLE1
+  signed-token model (Ed25519 verify keys embedded, private key never ships;
+  pynacl vs vendored pure-Python is the open crypto decision), editions
+  where **community = today's full feature set** (nothing existing is gated
+  during this unit), the doctor's `licensing` check contract, and the
+  offline-guarantee pins the unit must land (activation with zero network
+  I/O, no heavyweight imports, no network remedy strings). Seven-step
+  rollout in §8; four open decisions in §9, all owner-customer.
 - **The docs surface exists.** CHANGELOG.md, docs/UPGRADING.md, and
   docs/TROUBLESHOOTING.md landed (8915feb) with the `gui_smoke_prewarm` prune;
   README links all three. The offline audit's two recommended fixes also
@@ -911,7 +931,9 @@ rewritten by the loop).
   wholesale-patched module names (thread classes, workers, dialogs), and the committed
   patch-surface net is what kept that surface intact — it now enforces three rules
   (MOVED_OWNERS, SPLIT_OWNED, and PARTIAL_OWNED, added for the `QHSectionGroup`
-  construction split slice 6 created) plus string-form patch targets.
+  construction split slice 6 created) plus string-form patch targets, with the
+  moved-owner record itself in `scripts/patch_surface_manifest.json` so extraction
+  tooling can read what has already been moved without importing the test.
 - **The parked `wip/ingest-refactor-hints` branch is finished and merged** (591efa0, fast-forward). Its two still-valid owners landed: `srt_ingest.ensure_subtitle_script` owns the convert-not-overwrite subtitle policy (both `cli._maybe_convert_srt` and `app_gui._convert_subtitle_input` are presentation wrappers; the GUI's old strict-decode copy — which blocked CP1252 subtitles the CLI converted fine — is gone), and the speaker-ref report data lives in `ingest_transformer.speaker_ref_report_for_file` instead of a CLI private the GUI imported. Ownership is pinned by source scans in `tests/test_subtitle_conversion_has_one_owner.py`, both pins mutation-proven. Worktree note: testing a linked worktree against the shared venv requires PYTHONPATH shadowing (the editable install resolves `the_oracle` to the main checkout); verified by probe before trusting any worktree result.
 - The stream-of-consciousness sample is now a permanent fixture
   (`tests/fixtures/stream_of_consciousness_dialogue_with_typos.txt`) pinning the
@@ -948,6 +970,12 @@ rewritten by the loop).
   files' modes for no behavioural gain. The acceptance script's wrapper matrix is
   `.sh`-only for the same reason it is Linux-gated.
 
+- **`pkg_resources` deprecation warning (2026-09-26)**: the suite emits 16 warnings,
+  including `pkg_resources.resource_filename` coming from a dependency (not Oracle code
+  — repo-wide scan finds no `pkg_resources` import in `src/` or `scripts/`). Harmless
+  today; worth one look when the pinned dependency that imports it is next touched, since
+  a future setuptools major could turn it into an error.
+
 - **Enum-vs-widget identity audit (2026-09-11, prompted by the Cancel-button
   bug)**: the full GUI was swept for the `clickedButton() is
   StandardButton.X` bug family — no further instances. Verified correct:
@@ -981,6 +1009,22 @@ rewritten by the loop).
 
 ## Deferred (intentional)
 
+- **`Output/render_plan.json.bak` kept — omega residue finding dispositioned
+  KEEP (2026-09-26)**: serpent-circle's inventory has flagged this untracked
+  file twice (campaign 7, cycle 2; fresh-campaign preview). It is a render-plan
+  backup for "What is, reality" (2026-09-21, 27 KiB) in the user's Output
+  folder — the user's own artifact, not repo debris. Disposition: KEEP, do not
+  clean, do not track. Deleting a `.bak` on the user's behalf is exactly the
+  irreversible tidy-up this repo's rules forbid, and Output/ is runtime data
+  that never ships. Any future omega cycle treats this as a documented keep,
+  not an open finding.
+- **`JUNO_FIRST_PROMPT.txt` kept — omega residue finding dispositioned KEEP
+  (2026-09-26)**: flagged by the same serpent-circle inventories. Untracked,
+  currently 0 bytes, sibling of the user's `JUNO_BRIEF.md` working set (the
+  JUNO_FIXES.log journal is the tracked member of that set). An empty file
+  looks like debris to an inventory scan; it is the user's placeholder prompt
+  file. Disposition: KEEP, do not clean, do not track. Same rule as above —
+  user-owned working files are outside the loop's authority.
 - **GUI native crash — root cause found & fixed (2026-09-08)**: kernel-log
   `python: segfault at 0 ip 0000000000000000` (execution through a
   null/corrupted function pointer → use-after-free signature). Two lifetime
