@@ -8,10 +8,11 @@ builds that child's runtime environment, and :class:`RenderProgressDialog`
 shows live render progress.
 
 ``app_gui`` re-exports all four names, so MainWindow call-sites, imports, and
-test doubles keep resolving them from there. One rule the patch-surface test
-(test_app_gui_patch_surface.MOVED_OWNERS) now enforces: tests that patch
-``OraclePipeline`` for the workers' direct (non-subprocess) path must patch it
-HERE — the worker bodies resolve module globals from this module, so an
+test doubles keep resolving them from there. One rule the patch-surface test now
+enforces (its moved-owner record lives in ``scripts/patch_surface_manifest.json``;
+the split-readership rule for ``OraclePipeline`` lives in the test itself): tests
+that patch ``OraclePipeline`` for the workers' direct (non-subprocess) path must
+patch it HERE — the worker bodies resolve module globals from this module, so an
 ``app_gui``-level patch is a silent no-op for them.
 """
 
