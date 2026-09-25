@@ -35,6 +35,13 @@ An offender must be fixed by repointing the patch at the owner module (or by
 un-moving the name). Adding names to the maps as slices land keeps the net
 current; a name absent from both maps is not checked.
 
+MOVED_OWNERS is not spelled out in this file: the ownership record lives in
+``scripts/patch_surface_manifest.json``, read here (and validated — a manifest
+that no longer parses fails loudly rather than silently matching nothing) and
+readable by future extraction-slice tooling. SPLIT_OWNED, PARTIAL_OWNED and
+WORKER_PATH_TESTS stay here, because they encode where patches are *allowed*
+(the review policy for split-readership names), not who owns what.
+
 Covered patch forms (the review's scanner missed ``type(window)`` class
 targets at first because a Call is not a Name/Attribute chain — this one
 handles both):
@@ -56,43 +63,53 @@ handles both):
 from __future__ import annotations
 
 import ast
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from textwrap import dedent
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: Moved-owner modules, in extraction-slice order, with the app_gui names each
-#: now owns. A test patching one of these names through ``app_gui`` is a
-#: silent no-op for the owner's code and must be repointed.
-MOVED_OWNERS: dict[str, frozenset[str]] = {
-    "the_oracle.gui_settings": frozenset(
-        {
-            "default_gui_settings_payload",
-            "current_gui_settings_payload",
-            "cast_request_from_payload",
-            "speaker_config_from_payload",
-            "input_file_is_trusted",
-            "remember_trusted_input_file",
-            "clear_trusted_input_files",
-            "remember_format_backup",
-            "next_format_backup",
-            "drop_next_format_backup",
-            "PayloadDefaults",
-        }
-    ),
-    "the_oracle.models.settings": frozenset({"RenderSettings", "SpeakerSettings"}),
-    "the_oracle.gui_vulkan": frozenset({"_device_row_text", "_parse_oracle_model_path"}),
-    "the_oracle.gui_render": frozenset(
-        {
-            # Only the no-op-after-move name. The three class names must NOT
-            # be listed: MainWindow (still in app_gui) constructs RenderWorker,
-            # PreviewWorker and RenderProgressDialog from app_gui globals, so
-            # app_gui-level class patches remain live and legitimate.
-            "_render_child_environment",
-        }
-    ),
-}
+#: The ownership record itself lives in ``scripts/`` rather than here, so the
+#: same file can be read by extraction-slice tooling that has no interest in
+#: this test. This module is its enforcer, not its only reader.
+MANIFEST_PATH = REPO_ROOT / "scripts" / "patch_surface_manifest.json"
+
+
+def load_moved_owners(manifest_path: Path = MANIFEST_PATH) -> dict[str, frozenset[str]]:
+    """Read ``moved_owners`` from the manifest, validating its shape.
+
+    Moved-owner modules, in extraction-slice order, with the app_gui names each
+    now owns. A test patching one of these names through ``app_gui`` is a
+    silent no-op for the owner's code and must be repointed.
+
+    Each entry is ``{"names": [...], "note": "..."}``; the note is rationale
+    for humans and tooling, so it is optional. Anything else fails loudly here:
+    a typo that silently yielded zero names would leave the whole net passing
+    vacuously, which is the one failure mode this file exists to prevent.
+    """
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entries = data.get("moved_owners")
+    if not isinstance(entries, dict) or not entries:
+        raise AssertionError(f"{manifest_path.name}: 'moved_owners' must be a non-empty object")
+    moved: dict[str, frozenset[str]] = {}
+    for owner_module, entry in entries.items():
+        if not isinstance(entry, dict):
+            raise AssertionError(
+                f"{manifest_path.name}: {owner_module!r} must map to an object with 'names'"
+            )
+        names = entry.get("names")
+        if not isinstance(names, list) or not names or not all(isinstance(name, str) for name in names):
+            raise AssertionError(
+                f"{manifest_path.name}: {owner_module!r} needs a non-empty 'names' list of strings"
+            )
+        moved[owner_module] = frozenset(names)
+    return moved
+
+
+MOVED_OWNERS: dict[str, frozenset[str]] = load_moved_owners()
 
 #: Split-readership names: constructed from app_gui globals by MainWindow's
 #: window assembly AND from the owner module's globals by moved code. An
@@ -471,12 +488,42 @@ def test_string_form_scan_matches_the_live_suite(tmp_path: Path) -> None:
     assert any(t.name == "getOpenFileName" for t in string_form)
 
 
-def test_moved_owner_names_are_current() -> None:
-    """The MOVED_OWNERS map must match what the owners actually define.
+def test_a_malformed_manifest_fails_loudly(tmp_path: Path) -> None:
+    """A manifest that no longer parses must break the net, not shrink it.
 
-    Guards the map against drift in both directions: a name removed from an
-    owner (so app_gui patches become legitimate again) or a new owner module
-    landing without being registered here.
+    The dangerous shape is the quiet one: an empty or restructured
+    'moved_owners' that loads fine and simply stops matching, leaving every
+    offender untested while the suite stays green.
+    """
+    bad = tmp_path / "patch_surface_manifest.json"
+
+    bad.write_text('{"moved_owners": {}}', encoding="utf-8")
+    with pytest.raises(AssertionError, match="non-empty object"):
+        load_moved_owners(bad)
+
+    bad.write_text('{"moved_owners": {"the_oracle.gui_render": []}}', encoding="utf-8")
+    with pytest.raises(AssertionError, match="must map to an object"):
+        load_moved_owners(bad)
+
+    bad.write_text('{"moved_owners": {"the_oracle.gui_render": {"names": []}}}', encoding="utf-8")
+    with pytest.raises(AssertionError, match="non-empty 'names' list"):
+        load_moved_owners(bad)
+
+    bad.write_text('{"moved_owners": {"the_oracle.gui_render": {"names": "x"}}}', encoding="utf-8")
+    with pytest.raises(AssertionError, match="non-empty 'names' list"):
+        load_moved_owners(bad)
+
+    bad.write_text('{"owners": {}}', encoding="utf-8")
+    with pytest.raises(AssertionError, match="'moved_owners' must be a non-empty object"):
+        load_moved_owners(bad)
+
+
+def test_moved_owner_names_are_current() -> None:
+    """The manifest's moved-owner entries must match what the owners define.
+
+    Guards the manifest against drift in both directions: a name removed from
+    an owner (so app_gui patches become legitimate again) or a new owner module
+    landing without being registered there.
     """
     import importlib
 

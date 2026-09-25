@@ -1,0 +1,30 @@
+{
+  "description": "Patch-surface ownership manifest for the MainWindow extraction slices: each key is an owner module (in extraction-slice order) and each entry lists the app_gui names that module now owns for itself. A test patching one of these names through app_gui is a silent no-op for the owner's code, because the owner resolves the name from its own globals — such a patch must be repointed at the owner, or the name un-moved. Read by tests/test_app_gui_patch_surface.py, which enforces it and verifies every listed name still exists on its module, and by extraction-slice tooling that needs to know what has already been moved.",
+  "moved_owners": {
+    "the_oracle.gui_settings": {
+      "names": [
+        "default_gui_settings_payload",
+        "current_gui_settings_payload",
+        "cast_request_from_payload",
+        "speaker_config_from_payload",
+        "input_file_is_trusted",
+        "remember_trusted_input_file",
+        "clear_trusted_input_files",
+        "remember_format_backup",
+        "next_format_backup",
+        "drop_next_format_backup",
+        "PayloadDefaults"
+      ]
+    },
+    "the_oracle.models.settings": {
+      "names": ["RenderSettings", "SpeakerSettings"]
+    },
+    "the_oracle.gui_vulkan": {
+      "names": ["_device_row_text", "_parse_oracle_model_path"]
+    },
+    "the_oracle.gui_render": {
+      "names": ["_render_child_environment"],
+      "note": "Only the no-op-after-move name. The three class names must NOT be listed: MainWindow (still in app_gui) constructs RenderWorker, PreviewWorker and RenderProgressDialog from app_gui globals, so app_gui-level class patches remain live and legitimate."
+    }
+  }
+}
