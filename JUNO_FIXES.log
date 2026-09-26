@@ -289,3 +289,24 @@ git check-ignore — a broad ignore rule would quietly reduce the copy
 to a local file that never reaches git.
 
 Full suite: 1249 passed / 0 failed (1244 + 5).
+2026-09-21 | scripts/patch_surface_manifest.json (new) | src/the_oracle/gui_render.py, tests/test_app_gui_patch_surface.py (commit a3e30c0)
+Move the patch-surface ownership record out of the test into a small
+validated manifest. The MOVED_OWNERS map (4 owner modules, 16 names)
+now lives in scripts/patch_surface_manifest.json with a description and
+per-entry notes — JSON has no comments, so the rationale that
+RenderWorker/PreviewWorker/RenderProgressDialog must NOT be listed
+(MainWindow still constructs them from app_gui globals) is carried as
+notes rather than lost. load_moved_owners() validates the shape and
+fails loudly on a malformed manifest: the dangerous failure is the
+quiet one, where a JSON typo yields zero names and the whole net goes
+green while every offender goes untested. Key order is preserved so
+"in extraction-slice order" survives the round-trip. SPLIT_OWNED,
+PARTIAL_OWNED and WORKER_PATH_TESTS stay in the test on purpose: they
+encode where patches are allowed (review policy), whereas the manifest
+is the ownership record itself. gui_render's docstring was repointed
+and had subtly misattributed the OraclePipeline rule to MOVED_OWNERS —
+that name is governed by SPLIT_OWNED. Proven live: a string-form
+setattr of default_gui_settings_payload in a real test file fires the
+net with the owner-repoint message, reverted byte-identically.
+
+Full suite: 1250 passed / 0 failed (1249 + 1).
