@@ -35,7 +35,11 @@ from the_oracle.models.pins import (
 )
 from the_oracle.models.project import VoiceSettings, strip_pain_point_markers
 from the_oracle.platform_support import repo_python_display
-from the_oracle.utils.audio import DegenerateEngineOutput, sanitize_engine_audio
+from the_oracle.utils.audio import (
+    DegenerateEngineOutput,
+    record_synthesis_retry,
+    sanitize_engine_audio,
+)
 from the_oracle.utils.hashing import hash_payload
 
 
@@ -296,7 +300,9 @@ class ChatterboxEngine:
                 first_error,
                 f"seed {retry_seed}" if retry_seed is not None else "fresh randomness (no seed configured)",
             )
-            return self._generate_once(text, conditioning, settings, retry_seed)
+            retried = self._generate_once(text, conditioning, settings, retry_seed)
+            record_synthesis_retry("chatterbox", first_error, retry_seed)
+            return retried
 
     def _generate_once(
         self,

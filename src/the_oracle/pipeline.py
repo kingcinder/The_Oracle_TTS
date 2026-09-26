@@ -35,7 +35,7 @@ from the_oracle.tts_engines.vulkan_backend import (
 )
 from the_oracle.utils.chunking import chunk_utterance, TextChunk
 from the_oracle.utils.hashing import build_chunk_hash, hash_file, hash_payload
-from the_oracle.utils.audio import stem_is_speech_like
+from the_oracle.utils.audio import RETRY_NOTES, SynthesisRetryNote, stem_is_speech_like
 from the_oracle.utils.pacing import chunk_seam_pause_ms, pause_for_utterance
 from the_oracle.utils.logging import get_logger
 from the_oracle.correction_modes import normalize_correction_mode
@@ -138,6 +138,11 @@ class RenderProgress:
     device_label: str | None = None
     synth_seconds_total: float | None = None
     synth_seconds_latest: float | None = None
+    # Present when the engine's one-shot hiccup retry just healed a synthesis
+    # (see the_oracle.utils.audio.SynthesisRetryNote). The GUI appends it to
+    # the render log so self-healing is visible; a render with no retries
+    # carries None everywhere.
+    retry_note: str | None = None
 
 
 @dataclass(slots=True)
@@ -415,6 +420,10 @@ class SynthesisResult:
     sample_rate: int
     error: str | None = None  # Set if synthesis failed for this task
     worker_timing: dict[str, float] | None = None  # Optional timing emitted by the worker that produced this result
+    # Present when this synthesis self-healed through the engine's one-shot
+    # hiccup retry (see the_oracle.utils.audio.SynthesisRetryNote). Drained in
+    # synthesize_task, so pool results carry their own process's notes home.
+    retried_note: SynthesisRetryNote | None = None
 
 
 class PartialRenderError(RuntimeError):
@@ -557,6 +566,13 @@ def synthesize_task(
         exported_stem_path = str(
             project_cache.export_stem(stem_path, f"stems/{task.source_index:04d}_{sanitize_speaker_component(task.speaker)}.wav")
         )
+    # Drain any hiccup-retry notes this synthesis recorded (the engine
+    # retries once at a fresh seed on a gate rejection). Synthesize runs in
+    # worker-pool processes too, and each spawn worker drains only its own
+    # notes, so this is race-free and the notes ride home on their results.
+    retried_note: SynthesisRetryNote | None = None
+    if RETRY_NOTES:
+        retried_note = RETRY_NOTES.pop(0)
     return SynthesisResult(
         utterance_index=task.utterance_index,
         speaker=task.speaker,
@@ -569,6 +585,7 @@ def synthesize_task(
         load_audio_seconds=round(load_audio_seconds, 6),
         segment_total_seconds=round(segment_total_seconds, 6),
         sample_rate=sample_rate,
+        retried_note=retried_note,
     )
 
 
@@ -581,6 +598,7 @@ def _build_stem_result(
     cache_hit: bool,
     synthesize_seconds: float,
     segment_total_seconds: float | None = None,
+    retried_note: SynthesisRetryNote | None = None,
 ) -> SynthesisResult:
     """Load a stem from disk and build the standard result for it.
 
@@ -612,6 +630,7 @@ def _build_stem_result(
         load_audio_seconds=round(load_audio_seconds, 6),
         segment_total_seconds=round(segment_total_seconds, 6),
         sample_rate=sample_rate,
+        retried_note=retried_note,
     )
 
 
@@ -641,6 +660,8 @@ def synthesize_tasks_batched(
         on_synth_start: Callable[[], None] | None = None,
         batch_stats: dict[str, int] | None = None,
         on_request_complete: Callable[[int], None] | None = None,
+        render_state: dict[str, Any] | None = None,
+        drained_batched_notes: list[int] | None = None,
     ) -> list[SynthesisResult]:
     """Synthesize cache-missing tasks through audio.cpp, one model load per group.
 
@@ -674,6 +695,9 @@ def synthesize_tasks_batched(
         return []
     results: list[SynthesisResult] = []
     pending: list[tuple[SynthesisTask, Path, str, Any]] = []  # (task, stem, hash, conditioning)
+    # Documented per the render loop's calling contract: render_state receives
+    # a retry-note emit between group calls, drained_batched_notes[0] carries
+    # the count of notes drained here back to the caller for the summary.
     for task in tasks:
         chunk_hash = task.chunk_hash or build_chunk_hash(
             speaker=task.speaker,
@@ -719,6 +743,11 @@ def synthesize_tasks_batched(
         pending.append((task, stem_path, chunk_hash, conditioning))
 
     if pending:
+        # Hiccup-retry accounting for the batched path (no spawn worker here
+        # to drain notes): the count is reported to the caller via
+        # drained_batched_notes; the note itself is staged by the render
+        # loop when its result arrives, so it rides exactly one event.
+        drained_notes = 0
         # Split the cache-missing stems into bounded groups so an enormous
         # render never ships one gigantic --request-sequence JSON (audio.cpp
         # may have practical per-batch limits) and a failed subprocess only
@@ -771,6 +800,9 @@ def synthesize_tasks_batched(
                 group, outputs, strict=True
             ):
                 synthesize_seconds = (wall_ms / 1000.0) if wall_ms > 0 else fallback_per_item
+                retried_note: SynthesisRetryNote | None = RETRY_NOTES.pop(0) if RETRY_NOTES else None
+                if retried_note is not None:
+                    drained_notes += 1
                 try:
                     save_wav(stem_path, audio, sample_rate)
                     results.append(
@@ -781,11 +813,14 @@ def synthesize_tasks_batched(
                             project_cache,
                             cache_hit=False,
                             synthesize_seconds=synthesize_seconds,
+                            retried_note=retried_note,
                         )
                     )
                 except Exception as exc:
                     LOGGER.error("Synthesis failed for task %s: %s", task.utterance_index, exc)
                     results.append(_failed_stem_result(task, str(exc)))
+        if drained_batched_notes is not None:
+            drained_batched_notes.append(drained_notes)
     elif batch_stats is not None:
         batch_stats["processes"] = 0
         batch_stats["requests"] = 0
@@ -1155,6 +1190,12 @@ class OraclePipeline:
     ) -> Path:
         start_time = perf_counter()
         start_wall = time()
+        # Hiccup-retry notes are drained by whichever synthesis produced them;
+        # a render that died between recording and draining could otherwise
+        # leak a stale note into a later in-process render (the GUI is immune —
+        # each render is a fresh child process — but multi-render scripts are
+        # not). Start every render with an empty sink.
+        RETRY_NOTES.clear()
         timeline: dict[str, Any] = {"render_entry_seconds": 0.0, "render_entry_wall": start_wall}
         if render_click_wall is not None:
             timeline["render_click_wall"] = render_click_wall
@@ -1200,8 +1241,12 @@ class OraclePipeline:
                     device_label=render_state["device_label"],
                     synth_seconds_total=render_state["synth_total"] or None,
                     synth_seconds_latest=render_state["synth_latest"],
+                    retry_note=render_state["retry_note"],
                 )
             )
+            # Consume-once: a staged retry note rides exactly one event, then
+            # the next event is note-free again.
+            render_state["retry_note"] = None
 
         variant = settings.model_variant
         project_cache = ProjectCache(plan.output_dir)
@@ -1223,6 +1268,10 @@ class OraclePipeline:
             "device_label": None,
             "synth_total": 0.0,
             "synth_latest": None,
+            # Staged by _emit_retry_note before an emit; emit_progress clears
+            # it right after delivering the event, so the note rides on
+            # exactly one progress event.
+            "retry_note": None,
             # Time-weighted progress state (see _time_weighted_progress):
             # segments_total is pinned after chunking, segments_done advances
             # in the results loop / batch callback, and segment_avg is an EWMA
@@ -1534,6 +1583,9 @@ class OraclePipeline:
                 # every stem that loaded cleanly.
                 all_cached = False
                 cached_results = []
+        # Hiccup-retry notes drained by the batched Vulkan path (which has no
+        # spawn worker to do it); None on every other dispatch path.
+        drained_batched_notes: list[int] | None = None
         if not all_cached:
             emit_progress(
                 stage="Loading model",
@@ -1700,6 +1752,7 @@ class OraclePipeline:
                         total_segments=len(raw_tasks),
                     )
 
+                drained_batched_notes = [0]
                 result_iterator = iter(
                     synthesize_tasks_batched(
                         raw_tasks,
@@ -1711,6 +1764,8 @@ class OraclePipeline:
                         else None,
                         batch_stats=batch_stats,
                         on_request_complete=_on_batch_request_complete,
+                        render_state=render_state,
+                        drained_batched_notes=drained_batched_notes,
                     )
                 )
                 mode_metadata = "sequential"
@@ -1753,6 +1808,13 @@ class OraclePipeline:
         utterance_task_hashes: dict[int, list[str]] = {}  # Stem hashes per utterance (incremental-change diagnostics)
         worker_timing_summary: dict[str, float] | None = None
         completed_tasks = 0
+        # Hiccup-retry accounting: each SynthesisResult may carry a note from a
+        # self-healed gate rejection (engine retry at a fresh seed). Notes are
+        # surfaced on the next emitted progress event and counted into the
+        # plan metadata so the completion summary can name them.
+        retry_note_total = 0
+        if drained_batched_notes is not None:
+            retry_note_total += drained_batched_notes[0]
         # Step-count baseline for the results loop's emitted progress. For the
         # Vulkan path this equals the step count at dispatch time (the live
         # events already advanced the shared emitted_progress_count from the
@@ -1883,6 +1945,22 @@ class OraclePipeline:
                 # live-reported) emit the next step after the last live event
                 # instead of rewriting a lower step/segment.
                 emitted_progress_count[0] += 1
+                if result.retried_note is not None:
+                    retry_note_total += 1
+                    # The note rides the NEXT emitted progress event (staged
+                    # into render_state, which every emit reads) and is
+                    # cleared right after delivery, so it is logged exactly
+                    # once and no later event repeats it.
+                    note = result.retried_note
+                    render_state["retry_note"] = f"hiccup retry ({note.context}): {note.reason}"
+                    emit_progress(
+                        stage="Rendering segment",
+                        detail=f"Self-healed segment {result.utterance_index} ({utterance.speaker})",
+                        current_step=loop_step_baseline + emitted_progress_count[0] + 1,
+                        total_steps=total_steps,
+                        current_segment=emitted_progress_count[0],
+                        total_segments=len(raw_tasks),
+                    )
                 emit_progress(
                     stage="Rendering segment",
                     detail=f"Segment {result.utterance_index}/{len(raw_tasks)} ready ({utterance.speaker})",
@@ -1945,6 +2023,8 @@ class OraclePipeline:
             plan.metadata["render_outcome"] = "success"
 
         plan.metadata["cache_reused_on_second_pass"] = str(not compute_incremental_changes(previous_plan, plan))
+        if retry_note_total:
+            plan.metadata["synthesis_retries"] = str(retry_note_total)
         if not stem_segments:
             raise NoAudioToAssembleError("No audio was synthesized; nothing to assemble.")
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -60,6 +61,38 @@ _MIN_PEAK_AMPLITUDE = 1e-4
 #: a constant-DC tone (or its inverse: silence with a lone spike) rather than
 #: speech. Real speech sits far below this duty cycle.
 _MAX_ZERO_DUTY_CYCLE = 0.99
+
+
+@dataclass(frozen=True, slots=True)
+class SynthesisRetryNote:
+    """One successful hiccup-recovery, recorded where it happened.
+
+    The one-shot engine retry (a gate-rejected generation re-synthesized at a
+    fresh seed) currently logs and self-heals silently. To surface it in the
+    GUI's render log and summary without coupling the engines to any UI, an
+    engine records one of these at the moment the retry succeeds; the pipeline
+    drains the recorded notes and rides them out on RenderProgress.retry_note.
+
+    ``context`` names the synthesis path so a count can never be ambiguous
+    about where the hiccup was recovered ("vulkan batch", for instance).
+    """
+
+    context: str
+    reason: str
+    retry_seed: int | None
+
+
+#: Per-process sink for retry notes (see SynthesisRetryNote). A plain module
+#: global is correct for the pool's spawn workers: each process records its own
+#: notes and synthesize_task drains them locally, so notes ride home on the
+#: results their process produced. Cleared only by draining — a record/drain
+#: race is impossible because both happen on the same (worker) thread.
+RETRY_NOTES: list[SynthesisRetryNote] = []
+
+
+def record_synthesis_retry(context: str, error: Exception, retry_seed: int | None) -> None:
+    """Record one hiccup recovery; called only from engine retry paths."""
+    RETRY_NOTES.append(SynthesisRetryNote(context=context, reason=str(error), retry_seed=retry_seed))
 
 
 class DegenerateEngineOutput(ValueError):
