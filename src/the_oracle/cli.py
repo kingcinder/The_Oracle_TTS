@@ -1246,6 +1246,12 @@ def main(argv: list[str] | None = None) -> int:
     from the_oracle.offline import apply_offline_environment
 
     apply_offline_environment()
+    # Crash capture (CRASH_TELEMETRY_DESIGN §3): hooks install once, consent
+    # is read at fire time and is off unless the user opted in, so this is a
+    # no-op for every unconsented install.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.install()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "gui":

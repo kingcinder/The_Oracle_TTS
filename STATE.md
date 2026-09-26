@@ -865,6 +865,20 @@ rewritten by the loop).
   session). The two scoped unit bullets below remain the design contracts; the
   campaign executes them slice by slice.
 
+- **U1.2 landed (2026-09-25) — the crash core (handlers, sanitizer, consent, persistence).**
+  `the_oracle/crash/`: fail-closed consent (unreadable/missing/malformed = opted out;
+  stored separately from app_settings.json so settings corruption can never flip it on),
+  the drop-what-it-cannot-classify sanitizer, the §4 record schema, capped atomic
+  persistence (20 records), sys/threading excepthooks that chain to the previous hook
+  and never re-raise, and consent-gated faulthandler (enable-time consent — C-level
+  code cannot be wrapped, and the docstring says so honestly). One `install()` call in
+  cli.main; the Qt message handler waits for the GUI slice since app_gui.py is the
+  concurrent engine thread's in-flight surface. Native segfaults now leave
+  `crash_reports/native-crash.txt` — the blocked-on-repro watch item has its data path.
+  26 new tests; M-CONSENT and M-SANITIZE caught live with sha256-identical reverts.
+  Lesson pinned in JUNO_FIXES.log: pytest's threadexception plugin owns
+  threading.excepthook inside test bodies — identity tests pin sys.excepthook and
+  invoke the threading hook directly.
 - **U1.1 landed (2026-09-25) — log rotation + repo-local default log.**
   `configure_logging` installs a `RotatingFileHandler` (5 MiB × 3, read from
   module constants at call time), `default_log_file()` returns the repo-local
