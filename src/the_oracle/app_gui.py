@@ -5137,6 +5137,12 @@ class MainWindow(QMainWindow):
         self.live_panel.update_from_progress(progress)
         if self.progress_dialog is not None:
             self.progress_dialog.update_progress(progress)
+        if progress.retry_note:
+            # A gate-rejected synthesis self-healed through the engine's
+            # one-shot fresh-seed retry. Log it so self-healing is visible —
+            # a render that quietly fixed itself is a fact the user should
+            # see, not one they only discover by reading engine logs.
+            self.error_panel.append(progress.retry_note)
 
     def _finish_render(self, plan_payload: dict, output_path: str) -> None:
         self.plan = RenderPlan.from_dict(plan_payload)
@@ -5145,6 +5151,15 @@ class MainWindow(QMainWindow):
         srt_path = self.plan.metadata.get("srt_path")
         if srt_path:
             self.error_panel.append(f"Subtitles written: {srt_path}")
+        retry_note_count = self.plan.metadata.get("synthesis_retries")
+        if retry_note_count:
+            # Mirrors the live hiccup-retry notes logged in
+            # _update_render_progress: the summary names the total so a render
+            # that self-healed is visible even after the log scrolled.
+            self.error_panel.append(
+                f"Recovered from {retry_note_count} synthesis hiccup{'s' if retry_note_count != '1' else ''} "
+                "(automatic one-shot retry at a fresh seed)"
+            )
         if self.progress_dialog is not None:
             self.progress_dialog.close()
             self.progress_dialog = None
@@ -5197,6 +5212,8 @@ class MainWindow(QMainWindow):
         self.live_panel.update_from_progress(progress)
         if self.preview_dialog is not None:
             self.preview_dialog.update_progress(progress)
+        if progress.retry_note:
+            self.error_panel.append(progress.retry_note)
 
     def _on_preview_playback_status(self, status) -> None:  # type: ignore[no-untyped-def]
         # NEVER call stop()/deleteLater() on the player from inside its own

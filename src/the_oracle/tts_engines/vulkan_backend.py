@@ -55,6 +55,7 @@ from the_oracle.models.project import VoiceSettings, strip_pain_point_markers
 from the_oracle.utils.audio import (
     DegenerateEngineOutput,
     ensure_mono,
+    record_synthesis_retry,
     sanitize_engine_audio,
 )
 from the_oracle.utils.hashing import hash_file, hash_payload
@@ -475,7 +476,9 @@ class AudioCppVulkanEngine:
                 first_error,
                 f"seed {retry_seed}" if retry_seed is not None else "fresh randomness (no seed flag)",
             )
-            return self._synthesize_once(text, conditioning, settings, seed=retry_seed)
+            retried = self._synthesize_once(text, conditioning, settings, seed=retry_seed)
+            record_synthesis_retry("vulkan", first_error, retry_seed)
+            return retried
 
     def _synthesize_once(
         self,
@@ -699,6 +702,8 @@ class AudioCppVulkanEngine:
             [entries[i] for i in retry_indexes], None, retry_seed=retry_seed
         )
         for slot, index in enumerate(retry_indexes):
+            if index not in still_rejected:
+                record_synthesis_retry("vulkan batch", rejected[index], retry_seed)
             outputs[index] = retry_outputs[slot]
         if still_rejected:
             raise still_rejected[min(still_rejected)]
