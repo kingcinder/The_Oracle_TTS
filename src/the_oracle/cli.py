@@ -69,6 +69,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the machine fingerprint (SHA-256 hash only; the raw id is never stored).",
     )
 
+    subparsers.add_parser(
+        "privacy-status",
+        help="Show the local crash-reporting consent state and what is on disk. Reads nothing but local files.",
+    )
+    subparsers.add_parser(
+        "privacy-opt-in",
+        help="Enable local crash capture. Reports stay on this disk; nothing is ever uploaded.",
+    )
+    privacy_opt_out = subparsers.add_parser(
+        "privacy-opt-out",
+        help="Disable local crash capture. Existing reports are kept unless --purge is given.",
+    )
+    privacy_opt_out.add_argument(
+        "--purge",
+        action="store_true",
+        help="Also delete every stored crash report (irreversible).",
+    )
+
     setup_vulkan = subparsers.add_parser(
         "setup-vulkan",
         help="One-shot automatic setup for the Vulkan (GPU) backend: build audiocpp_cli and download the Chatterbox model if missing.",
@@ -1166,6 +1184,76 @@ def handle_machine_id() -> int:
     return 0
 
 
+def handle_privacy_status() -> int:
+    """The consent state and what capture has put on disk. Opted-out is a
+    normal state, not an error; the JSON is the machine-readable view the
+    doctor's human line summarizes."""
+    from the_oracle import crash
+    from the_oracle.offline import repo_root
+
+    root = repo_root()
+    records = crash.list_records(root)
+    native_dump = crash.crash_dir(root) / "native-crash.txt"
+    try:
+        native_present = native_dump.exists() and native_dump.stat().st_size > 0
+    except OSError:
+        native_present = False
+    print(
+        json.dumps(
+            {
+                "consent": crash.read_consent(root),
+                "records": len(records),
+                "newest": records[0].name if records else None,
+                "native_dump_present": native_present,
+                "location": str(crash.crash_dir(root)),
+                "detail": "Local-only capture; nothing is ever uploaded. Enable with privacy-opt-in."
+                if not crash.read_consent(root)
+                else "Enabled. Reports stay in the location above until you delete them.",
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def handle_privacy_opt_in() -> int:
+    """The explicit opt-in path. Consent is fail-closed everywhere else; this
+    command is the only thing that can turn capture on."""
+    from the_oracle import crash
+    from the_oracle.crash import handlers as crash_handlers
+    from the_oracle.offline import repo_root
+
+    root = repo_root()
+    crash.write_consent(root, True)
+    crash_handlers.enable_faulthandler_catch(root)  # arms native-crash capture
+    print("Local crash reporting enabled.")
+    print("Reports stay in this install's crash_reports/ folder and never leave this machine.")
+    print("Revoke anytime with the-oracle privacy-opt-out (--purge also deletes stored reports).")
+    return 0
+
+
+def handle_privacy_opt_out(args: argparse.Namespace) -> int:
+    """Revocation takes effect immediately: hooks re-check consent at fire
+    time, and faulthandler is disarmed here. --purge is an explicit flag, not
+    a prompt (the CLI refuses interactive prompts on non-TTY); the confirm
+    dialog belongs to the GUI slice."""
+    from the_oracle import crash
+    from the_oracle.crash import handlers as crash_handlers
+    from the_oracle.offline import repo_root
+
+    root = repo_root()
+    crash.write_consent(root, False)
+    crash_handlers.disable_faulthandler_catch()
+    kept = len(crash.list_records(root))
+    if args.purge:
+        removed = crash.clear_records(root)
+        print(f"Opted out of local crash reporting. Deleted {removed} stored report(s).")
+    else:
+        print(f"Opted out of local crash reporting. {kept} existing report(s) kept on disk.")
+        print("Delete them too with: the-oracle privacy-opt-out --purge")
+    return 0
+
+
 def handle_license_status() -> int:
     """Print the install's license status as JSON. Offline by construction:
     verification is a pure function of the stored token and embedded keys."""
@@ -1276,6 +1364,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_activate(args)
     if args.command == "machine-id":
         return handle_machine_id()
+    if args.command == "privacy-status":
+        return handle_privacy_status()
+    if args.command == "privacy-opt-in":
+        return handle_privacy_opt_in()
+    if args.command == "privacy-opt-out":
+        return handle_privacy_opt_out(args)
     parser.error("Unknown command.")
     return 2
 

@@ -289,6 +289,98 @@ def _dependency_pin_status(repo_root: Path) -> dict[str, Any]:
     }
 
 
+def _crash_reports_status(repo_root: Path) -> dict[str, Any]:
+    """Report the local crash-capture state (docs/CRASH_TELEMETRY_DESIGN §7).
+
+    Opted-out (the default) is a valid state: ``ok=true`` and informational —
+    the doctor never treats a privacy preference as a problem. Deliberately
+    NOT part of ``overall_ready``: crash capture is diagnostics, and its
+    consent state is not a broken install (same reasoning as the licensing
+    check's exclusion). All remedy strings are offline-safe.
+
+    Writability is inferred with os.access rather than a write probe because
+    this check must stay read-only (the doctor's read-only pin); a directory
+    that does not exist yet is judged by its parent, so an opted-in install
+    that never crashed is not a failure.
+
+    This check is also where the GUI segfault watch item surfaces: a
+    faulthandler native-crash dump is named in the human report and next
+    steps, turning "blocked on repro" into "reproducible with data".
+    """
+    import json as _json
+    import os as _os
+
+    try:
+        from the_oracle import crash
+    except ImportError as error:
+        return {
+            "ok": False,
+            "consent": None,
+            "record_count": 0,
+            "at_cap": False,
+            "newest": None,
+            "newest_exception": "",
+            "native_dump_present": False,
+            "total_bytes": 0,
+            "detail": f"the_oracle.crash is not importable: {error}",
+        }
+
+    consent_on = crash.read_consent(repo_root)
+    directory = crash.crash_dir(repo_root)
+    records = crash.list_records(repo_root)
+
+    native_path = directory / "native-crash.txt"
+    try:
+        native_present = native_path.exists() and native_path.stat().st_size > 0
+    except OSError:
+        native_present = False
+
+    write_problem = ""
+    if consent_on:
+        probe_target = directory if directory.exists() else directory.parent
+        if not _os.access(probe_target, _os.W_OK):
+            write_problem = (
+                f"crash report directory is not writable: {directory} — "
+                "check the folder's permissions; capture will fail silently until fixed"
+            )
+
+    total_bytes = 0
+    newest_exception = ""
+    for record in records:
+        try:
+            total_bytes += record.stat().st_size
+        except OSError:
+            continue
+    if records:
+        try:
+            data = _json.loads(records[0].read_text(encoding="utf-8"))
+            newest_exception = str((data.get("exception") or {}).get("type") or "")
+        except (OSError, ValueError):
+            newest_exception = "unreadable"
+
+    at_cap = len(records) >= crash.MAX_RECORDS
+    if write_problem:
+        detail = write_problem
+    elif not consent_on:
+        detail = "local crash reporting disabled — enable with `the-oracle privacy-opt-in` (reports stay local; nothing is ever uploaded)"
+    elif at_cap:
+        detail = f"capture enabled; {len(records)} report(s) on disk — at cap, the oldest will be dropped as new ones arrive"
+    else:
+        detail = f"capture enabled; {len(records)} report(s) on disk"
+
+    return {
+        "ok": not write_problem,
+        "consent": consent_on,
+        "record_count": len(records),
+        "at_cap": at_cap,
+        "newest": records[0].name if records else None,
+        "newest_exception": newest_exception,
+        "native_dump_present": native_present,
+        "total_bytes": total_bytes,
+        "detail": detail,
+    }
+
+
 def _licensing_status(repo_root: Path) -> dict[str, Any]:
     """Report the install's license state (docs/LICENSING_DESIGN.md §5).
 
@@ -1039,6 +1131,15 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
             f"License issue ({lic.get('state')}): {lic.get('detail') or 'see the license line above.'}"
         )
 
+    crash_state = report.get("crash_reports") or {"ok": True, "native_dump_present": False}
+    if not crash_state["ok"]:
+        steps.append(f"Crash capture problem: {crash_state.get('detail')}")
+    if crash_state.get("native_dump_present"):
+        steps.append(
+            "A native-crash dump exists in crash_reports/native-crash.txt — this is the "
+            "data the GUI segfault watch item needed; attach it to a support report."
+        )
+
     if not report["deterministic_smoke"]["ok"]:
         steps.append(f"Inspect the deterministic smoke failure above, then retry with {repo_python_display()} scripts/download_models.py or {repo_python_display()} scripts/smoke_render.py as needed.")
 
@@ -1171,6 +1272,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "input_subtitles": _input_subtitles_status(repo_root),
         "release_metadata": _release_metadata_status(repo_root),
         "licensing": _licensing_status(repo_root),
+        "crash_reports": _crash_reports_status(repo_root),
     }
     required_checks = [
         report["python"]["ok"],
@@ -1210,6 +1312,22 @@ def _print_human_report(report: dict[str, Any]) -> None:
         print(f"{_status(True)} License: {lic.get('edition')} edition for {licensee} ({expiry})")
     else:
         print(f"{_status(False)} License: {lic.get('state')} — {lic.get('detail')}")
+
+    crash_state = report.get("crash_reports") or {"ok": True, "consent": False}
+    if not crash_state.get("ok"):
+        print(f"{_status(False)} Crash reports: {crash_state.get('detail')}")
+    elif crash_state.get("consent"):
+        extras = []
+        if crash_state.get("record_count"):
+            extras.append(f"{crash_state['record_count']} report(s), newest exception: {crash_state.get('newest_exception') or '?'}")
+        if crash_state.get("at_cap"):
+            extras.append("at cap — oldest will be dropped")
+        if crash_state.get("native_dump_present"):
+            extras.append("a native-crash dump exists")
+        suffix = f" ({'; '.join(extras)})" if extras else ""
+        print(f"{_status(True)} Crash reports: enabled{suffix}")
+    else:
+        print(f"{_status(True)} Crash reports: disabled — local capture off (opt in: the-oracle privacy-opt-in)")
 
     ffmpeg_detail = report["ffmpeg"]["path"] or "ffmpeg not found on PATH"
     ffmpeg_label = _status(report["ffmpeg"]["ok"]) if report["ffmpeg"]["ok"] or not report.get("ci_mode") else optional_status
