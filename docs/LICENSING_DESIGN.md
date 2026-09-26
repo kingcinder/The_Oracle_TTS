@@ -1,8 +1,10 @@
 # Licensing & Anti-Piracy — Feature Scope
 
-Status: **scoped, not implemented** (2026-09-26). This document is the design
-contract for the licensing unit; implementation happens against it, slice by
-slice, with the same mutation-proven test discipline as every other unit.
+Status: **steps 1–5 implemented** (2026-09-25): the crypto decision, core
+package, vendor script, CLI surface, doctor check, and offline pins have
+landed with mutation-proven tests (61 new; six mutations M1–M6 caught live).
+Remaining: step 6 (GUI activation slice) and step 7 (privacy policy unit).
+This document remains the design contract.
 
 ---
 
@@ -55,27 +57,23 @@ below), not disaster. A GUI slice later adds a small `gui_license.py`
 (activation + About panel) following the `gui_ingest.py` injected-Qt pattern —
 out of scope for the first slice.
 
-Import discipline: `the_oracle.licensing` imports stdlib + the crypto dep
-only. It must never import huggingface_hub, torch, or anything heavy, and it
+Import discipline: `the_oracle.licensing` imports stdlib plus the vendored
+`the_oracle._ed25519` only — no third-party crypto dependency exists (decision
+§3). It must never import huggingface_hub, torch, or anything heavy, and it
 must never run at import time — `cli.main()` and `MainWindow` call
 `current_license()` lazily at feature gates, so GUI launch stays fast and an
 unlicensed install never blocks startup.
 
 ## 3. Key and token model
 
-**Crypto choice — open decision, recommendation first:**
-
-- **Option A (recommended): `pynacl` (Ed25519).** Client ships the *verify*
-  key; signatures are forged only with the private key, which never ships.
-  One new pinned dependency — which the doctor's `dependency_pins` check
-  will police automatically once added to `pyproject.toml`. Caveat to
-  resolve before implementation: the offline install bundle must vendor the
-  pynacl wheel, or offline installs cannot activate.
-- **Option B: pure-Python Ed25519 verify, vendored.** No new dependency, no
-  offline-bundle change, fully auditable (~300 lines). Slower, but
-  verification happens once per activation and once per doctor run —
-  milliseconds is irrelevant. This is the fallback if the offline-bundle
-  question goes badly.
+**Crypto choice — DECIDED (2026-09-25): Option B, vendored pure-Python
+Ed25519** (`the_oracle/_ed25519.py`, RFC 8032, pinned to the spec's §7.1 test
+vectors; verify in the client, sign only in the vendor script). Rationale: no
+new dependency for offline installs, nothing compiled to bundle, fully
+auditable; verification runs once per activation and once per doctor run, so
+the speed cost is irrelevant. The pynacl swap path is contained to this one
+module plus `keys.py`'s import. (Option A remains viable if a future need —
+high-volume revocation lists, say — makes C-speed verification real.)
 
 An HMAC-SHA256 stdlib-only scheme was considered and rejected: the verify
 key must be embedded in the client, so key extraction forges licenses. With
@@ -216,9 +214,10 @@ this unit, not a later promise to retrofit.
 
 ## 8. Rollout order (each step its own bounded unit)
 
-1. **Crypto decision + dependency pin** — resolve §3 Option A vs B (the
-   offline-bundle question decides it); pin in `pyproject.toml` so the
-   doctor's `dependency_pins` check covers it from day one.
+1. ~~Crypto decision + dependency pin~~ **DONE 2026-09-25** — decided §3
+   Option B (vendored pure-Python Ed25519); no dependency was added, so the
+   offline bundle is unchanged and `dependency_pins` gained nothing new to
+   police.
 2. **`licensing/` core** — tokens, keys, policy, store + the §7 unit tests.
 3. **CLI surface** — `the-oracle activate <token>`, `the-oracle
    license-status`, `the-oracle machine-id`; `scripts/license_sign.py`
@@ -231,10 +230,12 @@ this unit, not a later promise to retrofit.
 
 ## 9. Open decisions (owner: you)
 
-1. Crypto: pynacl wheel in the offline bundle, or vendored pure-Python
-   verify? (Blocks step 1 only.)
-2. Machine-locked seats in v1: recommendation is no (§3); confirm.
+1. ~~Crypto~~ **DECIDED 2026-09-25**: vendored pure-Python Ed25519 (see §3).
+2. ~~Machine-locked seats in v1~~ **resolved by implementation**: tokens are
+   not machine-locked in v1 (the `machine_hash` field and `machine.py` ship,
+   so opting in later is a vendor-side token field — zero client releases).
 3. Edition naming: `community` / `studio` / `trial` are placeholders —
    final names are a sales decision, not an engineering one.
 4. Whether trial tokens mint at purchase time or ship as a generic
-   eval token — affects only `license_sign.py` UX, nothing structural.
+   eval token — affects only `license_sign.py` UX (which already takes
+   `--expires`), nothing structural.

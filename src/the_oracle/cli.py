@@ -49,6 +49,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("gui", help="Launch the desktop GUI.")
 
+    subparsers.add_parser(
+        "license-status",
+        help="Show this install's license state: edition, key, expiry. Never contacts a server.",
+    )
+
+    license_activate = subparsers.add_parser(
+        "activate",
+        help="Activate the suite with a license token. Offline by construction: no server is contacted.",
+    )
+    license_activate.add_argument(
+        "token",
+        nargs="?",
+        help="The ORACLE1 token. Omit it to read the token from stdin (piping works).",
+    )
+
+    subparsers.add_parser(
+        "machine-id",
+        help="Print the machine fingerprint (SHA-256 hash only; the raw id is never stored).",
+    )
+
     setup_vulkan = subparsers.add_parser(
         "setup-vulkan",
         help="One-shot automatic setup for the Vulkan (GPU) backend: build audiocpp_cli and download the Chatterbox model if missing.",
@@ -1107,6 +1127,66 @@ def _folder_json_document(
     return document
 
 
+def handle_activate(args: argparse.Namespace) -> int:
+    """Store a license token after full offline verification. Refusal before
+    any bytes are written keeps the store unable to hold a bad token."""
+    from the_oracle.licensing import save_token, verify_token
+    from the_oracle.licensing.machine import machine_hash
+    from the_oracle.offline import repo_root
+
+    token = (args.token or sys.stdin.read()).strip()
+    if not token:
+        print("error: no token given. Pass it as an argument or pipe it to stdin.", file=sys.stderr)
+        return 2
+    verdict = verify_token(token, machine_hash=machine_hash())
+    if not verdict.ok:
+        print(json.dumps({"ok": False, "state": verdict.state, "detail": verdict.detail}, indent=2))
+        return 1
+    result = save_token(
+        repo_root(),
+        token,
+        verify_before_save=lambda candidate: verify_token(candidate, machine_hash=machine_hash()),
+    )
+    if result.state != "saved":
+        print(json.dumps({"ok": False, "state": result.state, "detail": result.detail}, indent=2))
+        return 1
+    licensee = verdict.licensee or "(no licensee recorded)"
+    print(f"Activated: {verdict.edition} edition for {licensee}.")
+    print("Offline activation — no server was contacted.")
+    return 0
+
+
+def handle_machine_id() -> int:
+    """Print the fingerprint hash on stdout (it is what gets pasted into a
+    machine-locked license request); the privacy note goes to stderr."""
+    from the_oracle.licensing.machine import fingerprint_context_note, machine_hash
+
+    print(machine_hash())
+    print(fingerprint_context_note(), file=sys.stderr)
+    return 0
+
+
+def handle_license_status() -> int:
+    """Print the install's license status as JSON. Offline by construction:
+    verification is a pure function of the stored token and embedded keys."""
+    from the_oracle.licensing import current_license
+
+    status = current_license()
+    payload = {
+        "ok": status.ok,
+        "state": status.state,
+        "edition": status.edition,
+        "licensee": status.licensee,
+        "lic_id": status.lic_id,
+        "key_id": status.key_id,
+        "exp": status.exp,
+        "machine_locked": status.machine_locked,
+        "detail": status.detail,
+    }
+    print(json.dumps(payload, indent=2))
+    return 0 if status.ok else 1
+
+
 def handle_setup_vulkan() -> int:
     """One-shot automatic setup for the Vulkan (GPU) backend.
 
@@ -1184,6 +1264,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_fix_folder(args)
     if args.command == "setup-vulkan":
         return handle_setup_vulkan()
+    if args.command == "license-status":
+        return handle_license_status()
+    if args.command == "activate":
+        return handle_activate(args)
+    if args.command == "machine-id":
+        return handle_machine_id()
     parser.error("Unknown command.")
     return 2
 
