@@ -852,6 +852,19 @@ rewritten by the loop).
 
 ## Next
 
+- **Consumer-market readiness campaign is written down; all contract decisions
+  resolved (2026-09-25)**: the design record is
+  `docs/superpowers/specs/2026-09-25-consumer-market-readiness-design.md` — unit
+  decomposition U1 diagnostics (crash/logging/privacy) → U2 licensing → U3 GUI
+  surfaces → U4 refinement (measurement-first) → U5 release — plus resolutions of
+  every open decision: crypto = `pynacl` Option A with offline-bundle evidence,
+  no machine-locked seats in v1, trial minting vendor-side, no crash transport,
+  fail-closed consent, caps as designed, next-session crash notice. The execution
+  plan is `docs/superpowers/plans/2026-09-25-consumer-market-readiness.md`
+  (bite-sized TDD steps per unit, mutation-proven pins, one bounded unit per
+  session). The two scoped unit bullets below remain the design contracts; the
+  campaign executes them slice by slice.
+
 - **Crash/telemetry/privacy unit is scoped, not built** (2026-09-26):
   `docs/CRASH_TELEMETRY_DESIGN.md` is the design contract — local-first
   crash capture (excepthook + threading hook + Qt message handler +
@@ -959,6 +972,16 @@ rewritten by the loop).
   voices as live verification of the assembly fix (hardware-dependent).
 
 ## Noticed, not yet actioned
+
+- **Hardware-floor claim vs. documented floors (2026-09-25)**: the sales claim
+  driving this campaign is "minimum 3 GB of free and available VRAM/DRAM"; the
+  repo documents a **4 GiB Chatterbox CUDA suitability floor** (the Inference
+  Setup tour and the CUDA picker both reject cards below it — README.md:276,284,
+  STATE.md:801), while CPU/system DRAM is the guaranteed fallback. Both may be
+  true (different resources), but they are not yet reconciled in one place and
+  sale copy must not overclaim. Owned by plan step U4.5: evidence pass first,
+  owner decision after. No code or copy was changed — flagged, not silently
+  aligned.
 
 - **`.ps1` executable bits are inconsistent (2026-09-18)**: `bootstrap_oracle_tts.ps1`,
   `doctor_oracle_tts.ps1` and `oracle.ps1` are tracked 100644 while
