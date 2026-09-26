@@ -70,6 +70,9 @@ Profiles/.blends/
 Seashells/.oracle_preview/
 Seashells/**/*.pkl
 
+# logs/ - repo-local rotating application logs (runtime-generated)
+logs/
+
 # user_settings/ - GUI settings (runtime-generated)
 user_settings/**/*.json
 

@@ -59,7 +59,7 @@ Exit: rollout steps 1–3 and 5 landed; §8 pins mutation-proven;
 
 ### U1.1 — Log rotation + repo-local default log file (§11 step 1, ships alone)
 
-- [ ] RED: add `tests/test_logging_rotation.py` with four tests —
+- [x] RED: add `tests/test_logging_rotation.py` with four tests —
       `test_rotates_at_cap` (monkeypatch `LOG_MAX_BYTES`/`LOG_BACKUP_COUNT`
       small, write past the cap, assert `oracle.log.1` exists and the live
       file is ≤ cap), `test_backups_are_bounded` (past `cap × (backups+2)`,
@@ -70,19 +70,21 @@ Exit: rollout steps 1–3 and 5 landed; §8 pins mutation-proven;
       detached ones), `test_default_log_file_is_repo_local`
       (`default_log_file()` lands under the repo root's `logs/`, dir created
       on demand).
-- [ ] Verify RED: `./.venv/bin/python -m pytest tests/test_logging_rotation.py -q`
-      — fails because the constants/helper do not exist yet.
-- [ ] GREEN: in `src/the_oracle/utils/logging.py` add
+- [x] Verify RED: `./.venv/bin/python -m pytest tests/test_logging_rotation.py -q`
+      — failed for the right reason: `ImportError: cannot import name
+      'default_log_file' from 'the_oracle.utils.logging'`.
+- [x] GREEN: in `src/the_oracle/utils/logging.py` add
       `LOG_MAX_BYTES = 5 * 1024 * 1024`, `LOG_BACKUP_COUNT = 3`, and
       `default_log_file() -> Path` computing the repo root the way
       `cli.py` does (`Path(__file__).resolve().parents[3] / "logs" / "oracle.log"`);
       swap `logging.FileHandler` for `logging.handlers.RotatingFileHandler`
       read from those module constants at call time. Public signature,
       FD-clean reconfigure comment, and existing callers unchanged.
-- [ ] `.gitignore`: add the `logs/` runtime dir beside the other runtime
+- [x] `.gitignore`: add the `logs/` runtime dir beside the other runtime
       sections.
-- [ ] Suite: `./.venv/bin/python -m pytest -q` — 1250 + new tests, green.
-- [ ] `JUNO_FIXES.log` entry; STATE "Next" pointer; commit
+- [x] Suite: `./.venv/bin/python -m pytest -q` — **1315 passed / 0 failed**
+      (1250 baseline + 4 rotation + the concurrent licensing unit's 61).
+- [x] `JUNO_FIXES.log` entry; STATE "Next" pointer; commit
       (`Cap log files with rotation and add the repo-local default path`).
 
 ### U1.2 — `crash/` core (§11 step 2)
@@ -271,4 +273,4 @@ No change in this unit lands without a recorded finding attached to it.
 
 | Date | Unit | Outcome | Evidence |
 |------|------|---------|----------|
-| 2026-09-25 | U1.1 | — | — |
+| 2026-09-25 | U1.1 | Landed: rotation 5 MiB × 3 + repo-local `default_log_file()`; `logs/` gitignored | `tests/test_logging_rotation.py` 4 pass; shape suites combined 33 pass; full suite 1315 pass |
