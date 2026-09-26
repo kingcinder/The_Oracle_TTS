@@ -428,3 +428,119 @@ class TestRoundTrip:
         )
         assert result.cache_hit is False
         assert stem_is_speech_like(_load_cached_stem(stem_path)[0]) is True
+
+
+# ---------------------------------------------------------------------------
+# The preview path's pause-only branch routes through the canonical writer
+# ---------------------------------------------------------------------------
+
+
+def _run_pause_only_preview(monkeypatch, tmp_path: Path, sample_rate: int = 24000) -> tuple[Path, ProjectCache]:
+    """Run ``render_preview`` on a pause-only utterance against a no-model double.
+
+    The engine double raises from ``synthesize`` — a pause-only preview must
+    bank canonical silence without ever reaching the engine.
+    """
+    from types import SimpleNamespace
+
+    from the_oracle.models.project import Utterance, VoiceProfile
+    from the_oracle.pipeline import OraclePipeline
+
+    ref_path = tmp_path / "ref.wav"
+    sf.write(ref_path, np.zeros(240, dtype=np.float32), 24000)
+    utterance = Utterance(index=0, original_text="   ", repaired_text="", speaker="A", pause_after_ms=250)
+    profile = VoiceProfile(name="A", speaker="A", reference_audio=[ref_path], engine_params=VoiceSettings())
+    # render_preview derives its cache from the reference's parent — same root here.
+    cache = ProjectCache(ref_path.parent / ".oracle_preview")
+
+    class _EngineDouble:
+        def ensure_model_ready(self) -> None:
+            pass
+
+        def prepare_reference(self, project_cache, speaker, reference_path):
+            return SimpleNamespace(original_hash="refhash", original_path=reference_path, normalized_path=reference_path)
+
+        def prepare_conditioning(self, project_cache, speaker, cached_reference, settings):
+            return object()
+
+        def synthesize(self, *args, **kwargs):
+            raise AssertionError("pause-only preview must never call the engine")
+
+    # Class bodies cannot read the enclosing function's parameters, so the
+    # rate is attached after the definition.
+    _EngineDouble.sample_rate = sample_rate
+    monkeypatch.setattr("the_oracle.pipeline.ChatterboxEngine", lambda *args, **kwargs: _EngineDouble())
+    pipeline = OraclePipeline.__new__(OraclePipeline)
+    output = pipeline.render_preview(utterance, profile, "standard", progress_callback=None)
+    return output, cache
+
+
+def test_preview_pause_only_banks_canonical_silence(monkeypatch, tmp_path: Path) -> None:
+    output, cache = _run_pause_only_preview(monkeypatch, tmp_path)
+
+    assert output == cache.preview_path("A", 0)
+    audio, sample_rate = sf.read(output, always_2d=False)
+    assert sample_rate == 24000
+    assert len(audio) == max(1, int(24000 * 0.5)), "same length formula the canonical writer uses"
+    np.testing.assert_array_equal(audio, np.zeros(len(audio), dtype=np.float32))
+
+
+def test_preview_pause_output_is_byte_identical_to_the_canonical_writer(monkeypatch, tmp_path: Path) -> None:
+    """One owner of pause-stem bytes: the preview branch writes exactly what
+    ``_write_pause_only_stem`` writes — not a lookalike buffer."""
+    output, _cache = _run_pause_only_preview(monkeypatch, tmp_path)
+
+    canonical = tmp_path / "canonical.wav"
+    _write_pause_only_stem(canonical, 24000)
+    assert output.read_bytes() == canonical.read_bytes()
+
+
+def _render_preview_function():
+    """The AST node of OraclePipeline.render_preview, plus a zeros-call finder."""
+    import ast
+    import inspect
+
+    from the_oracle import pipeline as pipeline_module
+
+    tree = ast.parse(inspect.getsource(pipeline_module))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "render_preview":
+            return node
+    raise AssertionError("render_preview disappeared from pipeline.py — the scan is blind")
+
+
+def _has_np_zeros_call(function_node) -> bool:
+    return any(
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "zeros"
+        for call in ast.walk(function_node)
+    )
+
+
+def test_render_preview_never_hand_rolls_silence() -> None:
+    """Drift pin: the preview pause branch routes through the canonical writer.
+
+    A hand-rolled ``np.zeros`` buffer here was a second writer of pause-stem
+    bytes; if silence-crafting reappears in ``render_preview`` — or the
+    routing to ``_write_pause_only_stem`` disappears — this scan fails. The
+    vacuity guard proves the detector actually bites on the old shape.
+    """
+    function_node = _render_preview_function()
+    assert _has_np_zeros_call(function_node) is False, (
+        "render_preview is hand-rolling silence again; route pause-only previews "
+        "through _write_pause_only_stem (the single owner of pause-stem bytes)"
+    )
+    assert any(
+        isinstance(call, ast.Call)
+        and getattr(call.func, "id", "") == "_write_pause_only_stem"
+        for call in ast.walk(function_node)
+    ), "render_preview must call _write_pause_only_stem for pause-only utterances"
+    # Vacuity guard: the detector fires on the exact shape this pin bans.
+    bad = ast.parse("def render_preview():\n    x = np.zeros(3, dtype=np.float32)\n")
+    bad_node = next(
+        node
+        for node in ast.walk(bad)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "render_preview"
+    )
+    assert _has_np_zeros_call(bad_node) is True
