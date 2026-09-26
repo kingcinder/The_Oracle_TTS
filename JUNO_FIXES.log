@@ -272,3 +272,20 @@ No CHANGELOG entry, by explicit choice: the [Unreleased] placeholder
 stays empty, matching how small UI polish is treated in this repo.
 
 Full suite: 1244 passed / 0 failed (1241 + 2 behavioral + 1 scan).
+2026-09-21 | scripts/release.py | tests/test_release.py (5), README.md, STATE.md, release_checksums/ (commit 671ddd5)
+Store a tracked copy of the release checksum manifest. The build wrote
+checksums-<version>.sha256 only into the gitignored release_artifacts/
+folder, so published artifacts were verifiable only from the machine
+that built them. The release now writes a byte-identical copy into the
+tracked release_checksums/ folder and prints the exact git add command,
+so the hashes live in the repo beside the version they describe. An
+existing record is never rewritten silently: a rebuild with different
+hashes is a ReleaseError with instructions; a byte-identical rebuild is
+a clean no-op. The 1.3.0 manifest was back-filled through the new
+function, and the real workflow was exercised: both 1.3.0 artifacts
+copied into an unrelated directory pass sha256sum -c against the
+repo's copy. One test pins the not-gitignored premise via
+git check-ignore — a broad ignore rule would quietly reduce the copy
+to a local file that never reaches git.
+
+Full suite: 1249 passed / 0 failed (1244 + 5).
