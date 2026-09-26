@@ -165,6 +165,29 @@ def build_parser() -> argparse.ArgumentParser:
         "per reference (and in --json), and a bad reference fails the check (exit 1).",
     )
 
+    sweep_cache = subparsers.add_parser(
+        "sweep-cache",
+        help="Sweep a project's stem cache through the servable-stem gate: report (and with --apply, purge) "
+        "degenerate or corrupt entries so the next render re-synthesizes them.",
+    )
+    sweep_cache.add_argument("project", help="Path to the render project directory (the one holding cache/utterances).")
+    sweep_cache.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually delete purged entries. Without it the command is a dry run: identical report, nothing deleted.",
+    )
+    sweep_cache.add_argument(
+        "--sample-rate",
+        type=int,
+        default=None,
+        help="Purge entries at any other sample rate too (the rate the project renders at; assembly requires a shared rate).",
+    )
+    sweep_cache.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the full report as a single JSON document on stdout instead of human-readable text.",
+    )
+
     render = subparsers.add_parser("render", help="Batch render a dialogue file.")
     render.add_argument("--project", help="Load a saved project manifest.")
     render.add_argument("--save-project", dest="save_project", help="Write the current project manifest after preparation/render.")
@@ -796,6 +819,60 @@ def handle_check_input(args: argparse.Namespace) -> int:
     return 1
 
 
+def handle_sweep_cache(args: argparse.Namespace) -> int:
+    """Sweep a project cache through the servable-stem gate and report.
+
+    Human output names every purged hash with its reason and the totals, and
+    states the re-synthesis consequence plainly: the next render will
+    re-synthesize exactly the purged hashes (the purge list IS the
+    re-synthesis set — the sweep never synthesizes). ``--json`` emits the
+    full report document for scripts. Exit 1 when nothing was sweepable (no
+    cache), 2 when a purge failed on disk; a clean sweep — including one that
+    purged entries — exits 0.
+    """
+    from the_oracle.pipeline import sweep_project_cache
+
+    project = Path(args.project)
+    if not project.exists():
+        print(f"Project directory not found: {project}", file=sys.stderr)
+        return 1
+    report = sweep_project_cache(
+        project,
+        expected_sample_rate=args.sample_rate,
+        apply=bool(args.apply),
+    )
+    # The missing-cache warning is reported the same way in both modes — a
+    # --json caller needs the structured warning too — but either way it is
+    # an operator-visible problem (exit 1), not a silent clean run.
+    if report["cache_missing_warning"]:
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(report["cache_missing_warning"], file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        mode = "purged" if args.apply else "would purge (dry run)"
+        print(f"Sweep of {report['project_dir']} ({mode}):")
+        print(
+            f"  scanned {report['scanned']}: kept {report['kept']} spoken + "
+            f"{report['kept_pause']} pause stems"
+        )
+        if report["purged"]:
+            print(f"  {mode}: {report['purged']}")
+            for entry in report["purged_detail"]:
+                print(f"    - {entry['hash']}  ({entry['reason']})")
+            print("  The next render will re-synthesize exactly these hashes.")
+        else:
+            print("  nothing to purge — every entry is servable.")
+        for error in report["errors"]:
+            print(f"  ERROR: {error}", file=sys.stderr)
+    if report["errors"]:
+        return 2
+    return 0
+
+
 def handle_voices(args: argparse.Namespace) -> int:
     """List the default Seashells reference clips (the render fallbacks).
 
@@ -1356,6 +1433,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_voices(args)
     if args.command == "fix-folder":
         return handle_fix_folder(args)
+    if args.command == "sweep-cache":
+        return handle_sweep_cache(args)
     if args.command == "setup-vulkan":
         return handle_setup_vulkan()
     if args.command == "license-status":
