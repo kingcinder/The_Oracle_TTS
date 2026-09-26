@@ -85,6 +85,11 @@ release_artifacts/**/*.json
 # added by serpent-circle (chain workspace)
 .serpent-circle/
 
+# Crash unit runtime artifacts (CRASH_TELEMETRY_DESIGN §2/§3): local-only
+# diagnostics; never tracked, never shipped.
+crash_reports/
+crash_consent.json
+
 # User working files, keep-dispositioned in STATE.md (## Deferred):
 # "do not clean, do not track" — ignored, never deleted, still on disk.
 # render_plan.json.bak: user's render-plan backup (the Output/ runtime
