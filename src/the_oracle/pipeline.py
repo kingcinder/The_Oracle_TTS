@@ -2220,12 +2220,8 @@ class OraclePipeline:
         # For preview, only synthesize the first chunk to keep it fast
         # This matches what the user will hear for the start of the utterance
         chunk_text = chunks[0].text if chunks else text
-        if not chunk_text.strip():
-            # Pause-only utterance: preview is silence, never empty engine input.
-            rendered = np.zeros(
-                max(1, int(engine.sample_rate * _PAUSE_ONLY_STEM_SECONDS)), dtype=np.float32
-            )
-        else:
+        pause_only = not chunk_text.strip()
+        if not pause_only:
             rendered = engine.synthesize(chunk_text, conditioning, utterance.engine_settings)
 
         # Do NOT set duration_seconds or status on the utterance object.
@@ -2234,7 +2230,15 @@ class OraclePipeline:
         # For chunked rows, preview duration would be first-chunk only (misleading),
         # and preview success is not the same as render success.
         preview_path = project_cache.preview_path(utterance.speaker, utterance.index)
-        save_wav(preview_path, rendered, engine.sample_rate)
+        if pause_only:
+            # Pause-only utterance: the canonical pause writer banks the
+            # silence (atomic write, byte-identical to what the render path
+            # banks). Preview never sends empty text to the engine and never
+            # hand-rolls its own buffer — this branch is why the writer is
+            # the single owner of pause-stem bytes.
+            _write_pause_only_stem(preview_path, engine.sample_rate)
+        else:
+            save_wav(preview_path, rendered, engine.sample_rate)
         emit_preview_progress("Complete", f"Preview ready: {preview_path.name}", 4)
         return preview_path
 
