@@ -865,7 +865,15 @@ rewritten by the loop).
   session). The two scoped unit bullets below remain the design contracts; the
   campaign executes them slice by slice.
 
-- **Crash/telemetry/privacy unit is scoped, not built** (2026-09-26):
+- **U1.1 landed (2026-09-25) — log rotation + repo-local default log.**
+  `configure_logging` installs a `RotatingFileHandler` (5 MiB × 3, read from
+  module constants at call time), `default_log_file()` returns the repo-local
+  `logs/oracle.log` (directory created on demand), and `logs/` is gitignored;
+  FD-clean reconfigure semantics unchanged and pinned with rotation in place.
+  Tests `tests/test_logging_rotation.py` (4). Full suite at this state: 1315
+  passed / 0 failed. Next campaign step: U1.2 (`crash/` core) per the plan.
+
+- **Crash/telemetry/privacy unit is scoped, not built** (2026-09-25):
   `docs/CRASH_TELEMETRY_DESIGN.md` is the design contract — local-first
   crash capture (excepthook + threading hook + Qt message handler +
   faulthandler, which finally gives the blocked-on-repro segfault watch item
@@ -875,16 +883,24 @@ rewritten by the loop).
   unbounded `utils/logging.py`, and **zero built-in network transport** —
   the user shares a report deliberately. PRIVACY.md lands last, after its
   claims are pinned by tests. Rollout §11; open decisions §12.
-- **Licensing/anti-piracy unit is scoped, not built** (2026-09-26):
-  `docs/LICENSING_DESIGN.md` is the design contract — module layout
-  (`the_oracle/licensing/`, Qt-free, offline by construction), an ORACLE1
-  signed-token model (Ed25519 verify keys embedded, private key never ships;
-  pynacl vs vendored pure-Python is the open crypto decision), editions
-  where **community = today's full feature set** (nothing existing is gated
-  during this unit), the doctor's `licensing` check contract, and the
-  offline-guarantee pins the unit must land (activation with zero network
-  I/O, no heavyweight imports, no network remedy strings). Seven-step
-  rollout in §8; four open decisions in §9, all owner-customer.
+- **The licensing unit's core, doctor check, and offline pins are built** (2026-09-25,
+  rollout steps 1–5 of `docs/LICENSING_DESIGN.md`; step 6 GUI slice and step 7
+  privacy policy remain). The crypto decision is MADE: vendored verify-only
+  pure-Python Ed25519 (`the_oracle/_ed25519.py`, pinned to the RFC 8032 §7.1
+  test vectors — no new dependency, offline bundle unchanged; the pynacl swap
+  path is one module). ORACLE1 canonical-JSON tokens verify through typed
+  states (malformed/unknown_key/bad_signature/expired/machine_mismatch/
+  store_error); the verify-key registry's commissioning key IS the RFC vector
+  key, so registry corruption fails the spec pin; the machine fingerprint is
+  hash-only and fail-open; the token store is atomic repo-local with a
+  verify-before-save refusal gate; editions keep **community = today's full
+  feature set** (nothing existing is gated). Vendor-only `scripts/license_sign.py`
+  (env-var seed, wheel-exclusion pinned); `the-oracle activate` / `machine-id` /
+  `license-status` wired. The doctor's `licensing` check: unlicensed = ok and
+  deliberately excluded from `overall_ready` (a license state is not a broken
+  install), every remedy offline-safe. 62 new tests (including the §7 key-rotation pin); six mutations (M1–M6,
+  contracts stated in the test files) applied live, caught, reverted
+  sha256-identical. Full suite 1316 passed / 0 failed.
 - **The docs surface exists.** CHANGELOG.md, docs/UPGRADING.md, and
   docs/TROUBLESHOOTING.md landed (8915feb) with the `gui_smoke_prewarm` prune;
   README links all three. The offline audit's two recommended fixes also
@@ -973,6 +989,19 @@ rewritten by the loop).
 
 ## Noticed, not yet actioned
 
+- **Campaign crypto decision D1 vs. the built licensing unit (2026-09-25)**:
+  the campaign design resolved token crypto to `pynacl==1.5.0` (Option A),
+  but the licensing unit concurrently built in this checkout chose vendored
+  pure-Python Ed25519 (Option B) and recorded that as DECIDED in
+  `docs/LICENSING_DESIGN.md` §3, STATE, and JUNO_FIXES (no new dependency,
+  offline bundle unchanged, 61 mutation-proven tests). The spec's D1 fallback
+  clause anticipated Option B "with its own record" — that record now exists.
+  Owner ratification asked for (accept Option B and repoint the campaign spec,
+  or hold U2 and revert to pynacl); nothing in the spec was changed
+  unilaterally. Also noted: one transient full-suite failure while the
+  licensing files were being written mid-run did not reproduce (their suites
+  pass: 61, plus 11 in the two files outside the six I first ran).
+
 - **Hardware-floor claim vs. documented floors (2026-09-25)**: the sales claim
   driving this campaign is "minimum 3 GB of free and available VRAM/DRAM"; the
   repo documents a **4 GiB Chatterbox CUDA suitability floor** (the Inference
@@ -993,7 +1022,7 @@ rewritten by the loop).
   files' modes for no behavioural gain. The acceptance script's wrapper matrix is
   `.sh`-only for the same reason it is Linux-gated.
 
-- **`pkg_resources` deprecation warning (2026-09-26)**: the suite emits 16 warnings,
+- **`pkg_resources` deprecation warning (2026-09-25)**: the suite emits 16 warnings,
   including `pkg_resources.resource_filename` coming from a dependency (not Oracle code
   — repo-wide scan finds no `pkg_resources` import in `src/` or `scripts/`). Harmless
   today; worth one look when the pinned dependency that imports it is next touched, since
@@ -1033,7 +1062,7 @@ rewritten by the loop).
 ## Deferred (intentional)
 
 - **`Output/render_plan.json.bak` kept — omega residue finding dispositioned
-  KEEP (2026-09-26)**: serpent-circle's inventory has flagged this untracked
+  KEEP (2026-09-25)**: serpent-circle's inventory has flagged this untracked
   file twice (campaign 7, cycle 2; fresh-campaign preview). It is a render-plan
   backup for "What is, reality" (2026-09-21, 27 KiB) in the user's Output
   folder — the user's own artifact, not repo debris. Disposition: KEEP, do not
@@ -1042,7 +1071,7 @@ rewritten by the loop).
   that never ships. Any future omega cycle treats this as a documented keep,
   not an open finding.
 - **`JUNO_FIRST_PROMPT.txt` kept — omega residue finding dispositioned KEEP
-  (2026-09-26)**: flagged by the same serpent-circle inventories. Untracked,
+  (2026-09-25)**: flagged by the same serpent-circle inventories. Untracked,
   currently 0 bytes, sibling of the user's `JUNO_BRIEF.md` working set (the
   JUNO_FIXES.log journal is the tracked member of that set). An empty file
   looks like debris to an inventory scan; it is the user's placeholder prompt

@@ -1,6 +1,6 @@
 # Crash Reporting, Error Logging & Privacy Policy — Feature Scope
 
-Status: **scoped, not implemented** (2026-09-26). Companion to
+Status: **scoped, not implemented** (2026-09-25). Companion to
 `docs/LICENSING_DESIGN.md`. One sentence is the whole philosophy:
 
 > **Nothing ever leaves this machine unless the user deliberately makes it

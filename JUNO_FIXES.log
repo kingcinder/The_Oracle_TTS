@@ -310,3 +310,23 @@ setattr of default_gui_settings_payload in a real test file fires the
 net with the owner-repoint message, reverted byte-identically.
 
 Full suite: 1250 passed / 0 failed (1249 + 1).
+
+2026-09-25 | src/the_oracle/_ed25519.py, src/the_oracle/licensing/ (6 modules), scripts/license_sign.py, scripts/doctor.py, src/the_oracle/cli.py, tests/test_licensing_*.py, tests/test_license_sign.py, tests/test_activation_flow.py | The licensing unit's doctor check and offline-guarantee pins (design doc rollout steps 4-5) had no foundation to land on: steps 1-3 were unbuilt, and the open crypto decision blocked them. Built the minimal chain: vendored verify-only pure-Python Ed25519 (RFC 8032, pinned to the spec's own section 7.1 test vectors; pynacl deliberately not added so the offline bundle gains no new dependency — the contained swap path is one module), ORACLE1 canonical-JSON token envelope with typed verification states, verify-key registry whose commissioning key IS the RFC vector key (registry corruption therefore fails the spec pin), hash-only machine fingerprint (fail-open, raw id never persisted), atomic repo-local token store with a verify-before-save refusal gate, editions policy with community = today's full feature set, vendor-only keygen/mint script (env-var seed, never in the wheel), the-oracle activate/machine-id/license-status commands, and the doctor licensing check (unlicensed = ok, excluded from overall_ready by design, offline-safe remedies) | Every fix verified by proof, not inspection: 62 new tests (including the key-rotation test the design doc's §7 promised — mint under k1, register k2, drop k1: old token reports unknown_key while k2 tokens verify); six documented mutations (M1 skip signature check, M2 expiry >= to >, M3 raw fingerprint leak, M4 save-gate removal, M5 doctor fails unlicensed, M6 network import in the package) each applied live, caught by the net, reverted with sha256-identical checksums; two drafting bugs caught by the net during build (a syntax error in tokens.py imports, and machine_hash() returning "" being treated as a mismatch instead of the documented fail-open skip — fixed in the code, which is what the test demanded) | Full suite: 1316 passed / 0 failed (1250 + 66: 62 licensing + 4 real).
+
+2026-09-25 | src/the_oracle/utils/logging.py, .gitignore | tests/test_logging_rotation.py (4 new)
+Cap the application log's growth. configure_logging() installed a plain
+logging.FileHandler, so every configured log file was appended to forever
+with no upper bound — on a long-lived install it grows without limit. The
+handler is now a RotatingFileHandler with the contract's retention
+(CRASH_TELEMETRY_DESIGN §5): LOG_MAX_BYTES = 5 MiB and LOG_BACKUP_COUNT = 3
+as module constants read at call time, so tests shrink the caps via
+monkeypatch and exercise a real rollover without writing megabytes. The new
+default_log_file() returns the repo-local logs/oracle.log path, resolving
+the repo root exactly as cli.py does (one level deeper from utils/) and
+creating the directory on demand; the FD-clean reconfigure semantics are
+unchanged and now pinned with rotation in place. .gitignore ignores the
+runtime logs/ directory. RED first: importing default_log_file failed
+before the implementation existed.
+Full suite: 1315 passed / 0 failed; rotation file 4/4, combined shape
+suites 33/33.
+
