@@ -237,15 +237,21 @@ Sections, each one sentence of commitment + one of mechanism:
 6. **Cross-link docs** — TROUBLESHOOTING gains the crash-report review
    flow; README links PRIVACY.md; CHANGELOG entries.
 
-## 12. Open decisions (owner: you)
+## 12. Decisions — CONFIRMED 2026-09-25 (owner-customer, confirmed via the
+rollout instruction)
 
-1. **No built-in transport in v1 — confirm.** Recommended: yes, none. A
-   future opt-in uploader is additive; building it now would weaken the
-   policy's core sentence on day one.
-2. **Caps: 20 reports / 32 KiB / 5 MiB logs — confirm** or retune.
-3. **Consent file separate from `app_settings.json` — confirm** (rationale
-   in §3).
-4. **Crash prompt placement:** next-session notice (recommended) vs
-   immediate post-crash dialog. Immediate dialogs during crash recovery
-   are how a bad day gets worse; next-session is calmer and equally
-   honest.
+1. **No built-in transport in v1 — CONFIRMED.** Capture is local-only; the
+   user shares a report deliberately. A future opt-in uploader is additive
+   and would arrive with its own consent layer.
+2. **Caps — CONFIRMED as implemented:** 20 crash records per directory,
+   32 KiB per record, logs at 5 MiB × 3 backups (the U1.1 constants).
+3. **Consent file separate from `app_settings.json` — CONFIRMED**
+   (fail-closed; implemented in `crash/consent.py`).
+4. **Next-session prompt — CONFIRMED** for the GUI slice: post-crash
+   review/share happens next session, never an immediate post-crash dialog.
+
+CLI adaptation recorded the same day: §6's "purge defaulting to yes with a
+confirmation" becomes an explicit `--purge` flag on `the-oracle
+privacy-opt-out`, because the CLI refuses interactive prompts on non-TTY
+(repo precedent, pinned by test) and a purge prompt that cannot render would
+hang piped invocations. The confirmation dialog belongs to the GUI slice.

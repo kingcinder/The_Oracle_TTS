@@ -56,9 +56,24 @@ def write_record(root: str | Path, record: dict[str, object]) -> Path:
     return path
 
 
+def _newest_first(paths: list[Path]) -> list[Path]:
+    """Order by modification time, newest first. NOT by filename: two records
+    written in the same second share their timestamp prefix, and name-order
+    would then fall through to the random uuid suffix — picking an arbitrary
+    "newest" and dropping an arbitrary "oldest" at the cap. (Caught by the
+    doctor test net.) Files that cannot stat at all sort as oldest."""
+    def mtime(path: Path) -> int:
+        try:
+            return path.stat().st_mtime_ns
+        except OSError:
+            return 0
+
+    return sorted(paths, key=mtime, reverse=True)
+
+
 def _enforce_cap(directory: Path) -> None:
-    records = sorted(directory.glob(_RECORD_GLOB))
-    for stale in records[:-MAX_RECORDS] if len(records) > MAX_RECORDS else []:
+    records = _newest_first(list(directory.glob(_RECORD_GLOB)))
+    for stale in records[MAX_RECORDS:]:
         try:
             stale.unlink()
         except OSError:
@@ -66,8 +81,8 @@ def _enforce_cap(directory: Path) -> None:
 
 
 def list_records(root: str | Path) -> list[Path]:
-    """Newest first."""
-    return sorted(crash_dir(root).glob(_RECORD_GLOB), reverse=True)
+    """Newest first (by mtime — see _newest_first)."""
+    return _newest_first(list(crash_dir(root).glob(_RECORD_GLOB)))
 
 
 def clear_records(root: str | Path) -> int:

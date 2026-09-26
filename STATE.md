@@ -865,6 +865,20 @@ rewritten by the loop).
   session). The two scoped unit bullets below remain the design contracts; the
   campaign executes them slice by slice.
 
+- **U1.3 landed (2026-09-25) — consent CLI + doctor crash check; §12 decisions confirmed.**
+  `the-oracle privacy-status` / `privacy-opt-in` / `privacy-opt-out [--purge]`: the opt-in is
+  the only path that can enable capture (and arms faulthandler), opt-out disarms immediately
+  (fire-time consent) and keeps reports unless `--purge` is explicit — a flag, not a prompt,
+  because the CLI refuses interactive prompts on non-TTY (repo precedent); the confirm dialog
+  belongs to the GUI slice. The doctor's `crash_reports` check treats opted-out as valid, is
+  excluded from `overall_ready`, infers writability with os.access instead of a write probe
+  (read-only pin), and surfaces a native-crash dump as the segfault watch item's data. All
+  four §12 decisions CONFIRMED and recorded in the design doc (no transport, caps as
+  implemented, separate consent store, next-session GUI prompt). 15 new tests; M-CLI-CONSENT
+  and M-DOC-CRASH caught live, reverts sha256-identical. Real bug the net caught:
+  `bundle.list_records`/cap enforcement sorted by filename, but same-second records share a
+  timestamp prefix and fell through to the random uuid suffix — "newest" and "oldest dropped"
+  could both be arbitrary; ordering is now mtime-based. Full suite 1369 passed / 0 failed.
 - **U1.2 landed (2026-09-25) — the crash core (handlers, sanitizer, consent, persistence).**
   `the_oracle/crash/`: fail-closed consent (unreadable/missing/malformed = opted out;
   stored separately from app_settings.json so settings corruption can never flip it on),
