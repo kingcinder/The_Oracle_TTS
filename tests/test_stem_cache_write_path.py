@@ -350,56 +350,125 @@ class TestWriteGateContract:
 # Writer manifest: stem/preview-shaped writes land only in the gated owners
 # ---------------------------------------------------------------------------
 
-_STEM_WRITE_RE = r"\b(save_wav|atomic_write)\(\s*(stem_path|preview_path)\b"
+_WRITE_FNS = frozenset({"save_wav", "atomic_write"})
+_STEM_TARGET_NAMES = frozenset({"stem_path"})
+_PREVIEW_TARGET_NAMES = frozenset({"preview_path"})
 _EXPECTED_STEM_WRITERS = frozenset({"pipeline.py", "real_engine_smoke.py"})
+# The preview-side gate: preview audio is produced by
+# OraclePipeline.render_preview alone — pause-only utterances route through
+# _write_pause_only_stem there, spoken ones through the gated engine path.
+_EXPECTED_PREVIEW_WRITERS = frozenset({"pipeline.py"})
 
 
-def _scan_stem_write_sites() -> list[tuple[str, int, str]]:
-    """Every save_wav/atomic_write call whose first argument is a stem/preview path.
+def _classify_write_target(target: ast.expr) -> str | None:
+    """Classify a write-call target as "stem", "preview", or None (untracked).
 
-    A lexical call-shape scan (variable-name based), not full dataflow: it pins
-    the *known* write shapes and their owning modules. A future writer that
-    renames the variable would drop out of this scan — which is exactly what
-    the blindness guard below turns into a loud failure.
+    A lexical call-shape scan, not full dataflow — the same honesty as the
+    original manifest. Two shapes are recognized:
+
+    * a bare variable named like the cache path (``stem_path``/``preview_path``);
+    * the inline factory call used directly as the write target, e.g.
+      ``save_wav(project_cache.preview_path(...), ...)`` — a shape the original
+      name-only scan could not see, which is exactly the preview-side hole this
+      manifest closes.
+
+    A future writer that renames the variable or builds the path another way
+    drops out of the scan; the blindness guards below turn that into a loud
+    failure instead of silent exemption.
     """
-    sites: list[tuple[str, int, str]] = []
+    if isinstance(target, ast.Name):
+        if target.id in _STEM_TARGET_NAMES:
+            return "stem"
+        if target.id in _PREVIEW_TARGET_NAMES:
+            return "preview"
+        return None
+    if isinstance(target, ast.Call):
+        func = target.func
+        name = getattr(func, "attr", None) if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name == "stem_path":
+            return "stem"
+        if name == "preview_path":
+            return "preview"
+    return None
+
+
+def _scan_cache_write_sites() -> list[tuple[str, int, str, str]]:
+    """Every save_wav/atomic_write call writing a stem- or preview-shaped file.
+
+    Returns ``(file_name, line, write_fn, kind)`` tuples for the whole of
+    ``src/the_oracle``.
+    """
+    sites: list[tuple[str, int, str, str]] = []
     for path in sorted(REPO_SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                 continue
-            if node.func.id not in {"save_wav", "atomic_write"} or not node.args:
+            if node.func.id not in _WRITE_FNS or not node.args:
                 continue
-            target = node.args[0]
-            if isinstance(target, ast.Name) and target.id in {"stem_path", "preview_path"}:
-                sites.append((path.name, node.lineno, node.func.id))
+            kind = _classify_write_target(node.args[0])
+            if kind is not None:
+                sites.append((path.name, node.lineno, node.func.id, kind))
     return sites
 
 
 class TestWriterManifest:
     def test_stem_writes_land_only_in_gated_owners(self):
-        sites = _scan_stem_write_sites()
-        offenders = sorted({name for name, _line, _fn in sites if name not in _EXPECTED_STEM_WRITERS})
+        sites = [site for site in _scan_cache_write_sites() if site[3] == "stem"]
+        offenders = sorted({name for name, _line, _fn, _kind in sites if name not in _EXPECTED_STEM_WRITERS})
         assert offenders == [], (
-            "New modules are writing stem/preview-cache-shaped files directly. "
-            "Voice stems must be written only after the engine-output gate "
+            "New modules are writing stem-cache-shaped files directly. Voice "
+            "stems must be written only after the engine-output gate "
             "(sanitize_engine_audio) — route the write through pipeline.py's "
             "gated paths, or extend _EXPECTED_STEM_WRITERS consciously with a "
             f"reason. Offending modules: {offenders}"
         )
 
+    def test_preview_writes_land_only_in_gated_owners(self):
+        """The preview-side equivalent of the stem gate.
+
+        Preview files are user-facing audio produced by
+        OraclePipeline.render_preview: pause-only utterances bank canonical
+        silence through _write_pause_only_stem (which writes via the counted
+        atomic_write), spoken ones go through save_wav here. A second writer
+        would reintroduce exactly the ungated-bytes hole the stem gate closed.
+        """
+        sites = [site for site in _scan_cache_write_sites() if site[3] == "preview"]
+        offenders = sorted({name for name, _line, _fn, _kind in sites if name not in _EXPECTED_PREVIEW_WRITERS})
+        assert offenders == [], (
+            "New modules are writing preview files directly. Preview audio is "
+            "owned by OraclePipeline.render_preview (pause-only utterances via "
+            "_write_pause_only_stem, spoken ones via the gated engine path) — "
+            "route the write there, or extend _EXPECTED_PREVIEW_WRITERS "
+            f"consciously with a reason. Offending modules: {offenders}"
+        )
+
     def test_writer_manifest_cannot_go_blind(self):
-        sites = _scan_stem_write_sites()
-        assert len(sites) >= 4, (
-            f"stem-write scan found only {len(sites)} sites; the known surface "
-            "is 5 (pipeline's pause/sequential/batched/preview writes and "
+        sites = _scan_cache_write_sites()
+        stem_sites = [site for site in sites if site[3] == "stem"]
+        preview_sites = [site for site in sites if site[3] == "preview"]
+        assert len(stem_sites) >= 4, (
+            f"stem-write scan found only {len(stem_sites)} sites; the known "
+            "surface is 4 (pipeline's pause/sequential/batched writes and "
             "real_engine_smoke). The scan went blind — fix the scan, not this "
             "assertion."
         )
-        owners = {name for name, _line, _fn in sites}
-        assert owners == set(_EXPECTED_STEM_WRITERS), (
-            f"stem-write owners drifted: found {sorted(owners)}, expected "
+        stem_owners = {name for name, _line, _fn, _kind in stem_sites}
+        assert stem_owners == set(_EXPECTED_STEM_WRITERS), (
+            f"stem-write owners drifted: found {sorted(stem_owners)}, expected "
             f"{sorted(_EXPECTED_STEM_WRITERS)}"
+        )
+        assert len(preview_sites) >= 1, (
+            f"preview-write scan found only {len(preview_sites)} sites; the "
+            "known surface is exactly 1 (pipeline's spoken-preview save_wav — "
+            "pause-only previews write through _write_pause_only_stem's "
+            "counted atomic_write). The scan went blind — fix the scan, not "
+            "this assertion."
+        )
+        preview_owners = {name for name, _line, _fn, _kind in preview_sites}
+        assert preview_owners == set(_EXPECTED_PREVIEW_WRITERS), (
+            f"preview-write owners drifted: found {sorted(preview_owners)}, "
+            f"expected {sorted(_EXPECTED_PREVIEW_WRITERS)}"
         )
 
 

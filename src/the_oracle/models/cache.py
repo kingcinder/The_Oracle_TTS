@@ -135,6 +135,19 @@ class CachePaths:
 
 
 class ProjectCache:
+    @staticmethod
+    def stem_cache_dir_for(project_dir: str | Path) -> Path:
+        """The stem-cache path for *project_dir* without creating anything.
+
+        ``ProjectCache(...)`` eagerly creates the whole layout as a side
+        effect, which is wrong for read/maintenance tooling: probing a
+        misspelled project path would silently conjure an empty cache and
+        the sweep would report "nothing to sweep" instead of a warning.
+        Mirrors ``__init__``'s layout (``<project>/cache/utterances``);
+        keep the two in sync.
+        """
+        return Path(project_dir) / "cache" / "utterances"
+
     def __init__(self, project_dir: str | Path) -> None:
         self.project_dir = Path(project_dir)
         self.cache_dir = self.project_dir / "cache"

@@ -510,6 +510,116 @@ def _load_servable_stem(
     return None
 
 
+def _is_canonical_pause_stem(audio: np.ndarray, sample_rate: int) -> bool:
+    """True when the audio matches the canonical pause-stem shape exactly.
+
+    The one ambiguity the servable-stem gate cannot resolve: a degenerate
+    spoken entry and a sanctioned pause stem are both (near-)silent, and
+    content alone cannot distinguish them. A pause stem, however, has an
+    exact canonical shape — ``_write_pause_only_stem`` banks
+    ``max(1, int(rate * _PAUSE_ONLY_STEM_SECONDS))`` literal zeros at a
+    single sample rate — so a whole-cache sweep can decide by shape instead
+    of guessing: canonical-shape silence is sanctioned, any other silence is
+    a degenerate spoken entry that must be purged.
+    """
+    if sample_rate <= 0 or audio.ndim != 1:
+        return False
+    canonical_length = max(1, int(sample_rate * _PAUSE_ONLY_STEM_SECONDS))
+    return bool(audio.shape[0] == canonical_length and not audio.any())
+
+
+def sweep_project_cache(
+    project_dir: str | Path,
+    *,
+    expected_sample_rate: int | None = None,
+    apply: bool = True,
+) -> dict[str, Any]:
+    """Sweep a project's stem cache through the servable-stem gate.
+
+    The maintenance counterpart of the read-side gate
+    (:func:`_load_servable_stem`): the gate defends future renders (a corrupt
+    entry is deleted when read), but entries sit in a project cache between
+    renders, and an operator may want the cache clean now — every degenerate
+    entry purged and re-synthesized on the next render — instead of
+    discovering them lazily mid-render.
+
+    Per stem-cache entry, exactly the gate's taxonomy:
+
+    * unreadable/corrupt → purge;
+    * speech-shaped content at the expected rate → keep;
+    * silence matching the canonical pause-stem shape exactly → keep as
+      sanctioned pause stem (see :func:`_is_canonical_pause_stem`);
+    * anything else — degenerate spoken content, or silence that does not
+      match the canonical pause shape — → purge.
+
+    The next render re-synthesizes exactly the purged chunk hashes, so the
+    report's purge list IS the re-synthesis set; the sweep never synthesizes.
+
+    The load here is deliberately NOT :func:`_load_cached_stem` — that helper
+    deletes corrupt entries unconditionally, which would corrupt a
+    ``apply=False`` dry run. The sweep classifies read-only and deletes only
+    under ``apply``.
+
+    ``expected_sample_rate``: when given, entries at any other rate are
+    purged (assembly requires every stem to share one rate, so an odd-rate
+    entry fails the render anyway).
+    """
+    # Existence is checked BEFORE constructing ProjectCache, whose __init__
+    # eagerly creates the whole layout: probing a missing project through the
+    # constructor would silently conjure an empty cache and the sweep would
+    # report a clean 0-scanned run instead of warning the operator.
+    stem_dir = ProjectCache.stem_cache_dir_for(project_dir)
+    report: dict[str, Any] = {
+        "project_dir": str(Path(project_dir)),
+        "apply": bool(apply),
+        "scanned": 0,
+        "kept": 0,
+        "kept_pause": 0,
+        "purged": 0,
+        "purge_reasons": {"unreadable": 0, "degenerate": 0, "sample_rate": 0},
+        "purged_hashes": [],
+        "purged_detail": [],
+        "errors": [],
+        "cache_missing_warning": None,
+    }
+    if not stem_dir.exists():
+        report["cache_missing_warning"] = f"No stem cache directory found at {stem_dir}; nothing to sweep."
+        return report
+    cache = ProjectCache(project_dir)
+
+    for stem_path in sorted(stem_dir.glob("*.wav")):
+        report["scanned"] += 1
+        stem_name = stem_path.name
+        try:
+            audio, sample_rate = load_audio(stem_path)
+        except Exception:
+            reason = "unreadable"
+        else:
+            rate_ok = expected_sample_rate is None or sample_rate == expected_sample_rate
+            if not rate_ok:
+                reason = "sample_rate"
+            elif stem_is_speech_like(audio, allow_silence=False):
+                report["kept"] += 1
+                continue
+            elif _is_canonical_pause_stem(audio, sample_rate):
+                report["kept_pause"] += 1
+                continue
+            else:
+                reason = "degenerate"
+        # Fallthrough = purge verdict (reason set above).
+        if apply:
+            try:
+                stem_path.unlink()
+            except OSError as exc:
+                report["errors"].append(f"{stem_name}: purge failed: {exc}")
+                continue
+        report["purged"] += 1
+        report["purge_reasons"][reason] = report["purge_reasons"].get(reason, 0) + 1
+        report["purged_hashes"].append(stem_path.stem)
+        report["purged_detail"].append({"hash": stem_path.stem, "reason": reason})
+    return report
+
+
 def synthesize_task(
     task: SynthesisTask,
     engine: ChatterboxEngine,
