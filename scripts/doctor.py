@@ -289,6 +289,48 @@ def _dependency_pin_status(repo_root: Path) -> dict[str, Any]:
     }
 
 
+def _licensing_status(repo_root: Path) -> dict[str, Any]:
+    """Report the install's license state (docs/LICENSING_DESIGN.md §5).
+
+    Unlicensed is a valid state: ``ok=true`` with state ``no_token`` — the
+    doctor never fails an install for lacking a license and never suggests
+    purchasing as a "problem". Verification is a pure function of the stored
+    token bytes, the embedded public keys, and the wall clock, so this check
+    is idempotent and history-independent like the rest; the clock is the
+    only external input, exactly like any time-derived check.
+
+    Deliberately NOT part of ``overall_ready``: an expired or mismatched
+    license is a billing state, not a broken install — the suite still runs,
+    degraded to community entitlements (licensing/policy.py). The check's own
+    verdict and the human-readable line carry the signal instead.
+    """
+    try:
+        from the_oracle.licensing import current_license
+    except ImportError as error:
+        return {
+            "ok": False,
+            "state": "package_missing",
+            "edition": None,
+            "licensee": None,
+            "key_id": None,
+            "exp": None,
+            "machine_locked": False,
+            "detail": f"the_oracle.licensing is not importable: {error}",
+        }
+
+    status = current_license(repo_root)
+    return {
+        "ok": status.ok,
+        "state": status.state,
+        "edition": status.edition,
+        "licensee": status.licensee,
+        "key_id": status.key_id,
+        "exp": status.exp,
+        "machine_locked": status.machine_locked,
+        "detail": status.detail,
+    }
+
+
 def _input_subtitles_status(repo_root: Path) -> dict[str, Any]:
     """Scan Input/ for subtitle files that would take the CP1252 fallback.
 
@@ -991,6 +1033,12 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
             + f" Re-run {repo_bootstrap_display()} (or the oracle update) to restore the declared dependency set."
         )
 
+    lic = report.get("licensing") or {"ok": True, "state": "no_token"}
+    if not lic["ok"]:
+        steps.append(
+            f"License issue ({lic.get('state')}): {lic.get('detail') or 'see the license line above.'}"
+        )
+
     if not report["deterministic_smoke"]["ok"]:
         steps.append(f"Inspect the deterministic smoke failure above, then retry with {repo_python_display()} scripts/download_models.py or {repo_python_display()} scripts/smoke_render.py as needed.")
 
@@ -1122,6 +1170,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "dependency_pins": _dependency_pin_status(repo_root),
         "input_subtitles": _input_subtitles_status(repo_root),
         "release_metadata": _release_metadata_status(repo_root),
+        "licensing": _licensing_status(repo_root),
     }
     required_checks = [
         report["python"]["ok"],
@@ -1151,6 +1200,16 @@ def _print_human_report(report: dict[str, Any]) -> None:
         print(f"{_status(True)} Dependency pins: {pins['checked_count']} requirements match the installed venv")
     else:
         print(f"{_status(False)} Dependency pins: {pins['error']}")
+
+    lic = report.get("licensing") or {"ok": True, "state": "no_token"}
+    if lic["ok"] and lic.get("state") == "no_token":
+        print(f"{_status(True)} License: not activated — community edition")
+    elif lic["ok"]:
+        expiry = f", expires epoch {lic['exp']}" if lic.get("exp") else ", perpetual"
+        licensee = lic.get("licensee") or "no licensee recorded"
+        print(f"{_status(True)} License: {lic.get('edition')} edition for {licensee} ({expiry})")
+    else:
+        print(f"{_status(False)} License: {lic.get('state')} — {lic.get('detail')}")
 
     ffmpeg_detail = report["ffmpeg"]["path"] or "ffmpeg not found on PATH"
     ffmpeg_label = _status(report["ffmpeg"]["ok"]) if report["ffmpeg"]["ok"] or not report.get("ci_mode") else optional_status
