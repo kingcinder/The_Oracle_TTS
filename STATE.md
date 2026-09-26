@@ -849,6 +849,64 @@ rewritten by the loop).
   (84 tests in the batching/backend/synthesis/render-worker files). Pacing
   and emotion live in shared plan/assembly code, never in the engine call,
   so both inference backends behave identically by construction.
+- **The MainWindow extraction campaign is complete — all six slices landed**, each
+  its own revertable commit, each requiring zero edits to existing tests (the seam
+  proof the per-cluster reviews demanded). Slice 1: the transformer popups and
+  preview dialogs live in `src/the_oracle/gui_ingest.py`, with the Qt classes the
+  tests patch injected from MainWindow at call time. Slice 2: format-health
+  bookkeeping (trusted-file approvals, backup records) lives in `gui_settings.py`,
+  which already normalized both schemas, so one file owns the full payload
+  lifecycle. Slice 3 (the slice the review deferred pending a widget-read
+  injection design): the settings-payload policy — default/current payload
+  builders, the vulkan-only audio_cpp knob-persistence rule, cast resolution,
+  blend decode — lives in `gui_settings.py` as pure functions fed by a frozen
+  `WidgetSnapshot` the window builds in one method (`_widget_snapshot`), with
+  `PayloadDefaults` supplied by the window so gui_settings never imports
+  pipeline. Slice 4: `gui_render.py` owns `RenderWorker`, `PreviewWorker`,
+  `RenderProgressDialog` and the isolated-render child-environment builder, with
+  `OraclePipeline` split-owned between window assembly (app_gui) and the workers'
+  direct fallback (gui_render). Slice 5: `gui_vulkan.py` owns the device-row text
+  and model-path parsing. Slice 6: `gui_chrome.py` owns `LivePanel` and
+  `build_live_section`; app_gui re-imports both so construction, the progress
+  handlers, and the existing test import resolve to identical objects, while the
+  splitter assembly and `_register_section("live", ...)` stay in app_gui where
+  the layout state lives. The campaign's safety net — `tests/test_app_gui_patch_surface.py`
+  — is itself committed hardening: it enforces MOVED_OWNERS (the ownership record
+  now lives in `scripts/patch_surface_manifest.json`, validated and read by the
+  scanner), SPLIT_OWNED, PARTIAL_OWNED (added when slice 6 created the
+  `QHSectionGroup` split-readership hazard: a patch of `app_gui.QHSectionGroup`
+  is not a no-op but a *partial* one), and string-form patch targets
+  (`monkeypatch.setattr("the_oracle.app_gui.X", ...)`, `patch("app_gui.X")`,
+  `patch.multiple("the_oracle.app_gui", ...)`) — so no future slice can silently
+  undermine the tests the earlier slices depended on.
+- **The TTS hardening slices landed (2026-09-26; commits 2db5360, 9790b3d,
+  3808064).** *Retry visibility + determinism*: the one-shot engine retry no
+  longer heals silently — engines record a `SynthesisRetryNote` at successful
+  recovery (`utils/audio.record_synthesis_retry`; three call sites including per
+  healed request in the Vulkan batch), the pipeline drains notes per-process
+  (`synthesize_task`, spawn-safe) and in-process on the batched path, notes ride
+  `RenderProgress.retry_note` through the asdict-JSON GUI boundary, both progress
+  handlers log them live, and the completion summary names the total via
+  `plan.metadata["synthesis_retries"]`. Determinism is pinned at both layers:
+  the healed draw equals a direct synthesis at the retry seed, and two cold
+  seeded renders that each heal one hiccup are byte-identical (stems, output,
+  note streams); a warm re-render serves the healed stems note-free — the healed
+  take is the cached one. *Pause-writer single ownership*: `render_preview` no
+  longer hand-rolls its silence buffer — pause-only previews route through
+  `_write_pause_only_stem` (byte-identical output proven), an AST drift pin bans
+  `np.zeros` in `render_preview`, and the writer manifest gained a preview-side
+  gate whose target classifier catches the inline `cache.preview_path(...)`
+  write shape the old name-only scan could not see. *Cache sweep*:
+  `the-oracle sweep-cache` runs a project's stem cache through the servable-stem
+  gate on demand (dry run by default, `--apply` deletes, `--json` for scripts),
+  reports every purged hash with its reason, and the purge list IS the
+  re-synthesis set — e2e-proven on a deterministic render. The sweep's pause
+  decision is by canonical shape, not `allow_silence`: content alone cannot
+  separate a sanctioned pause stem from a degenerate spoken entry, and exempting
+  all silence would silently serve the entries the sweep exists to catch. The
+  sweep also forced a no-mkdir existence probe (`ProjectCache.stem_cache_dir_for`)
+  because the constructor eagerly creates the layout — sweeping a misspelled
+  path would otherwise conjure an empty cache and report a clean run.
 
 ## Next
 
@@ -962,35 +1020,6 @@ rewritten by the loop).
   on the real repo; `tests/test_release.py` pins it. Setuptools' `build_meta` mutates
   `sys.argv` permanently — any future in-process hook caller must not read `sys.argv` after
   the first hook call.
-- **The MainWindow extraction, slices 1-6 landed.** Slice 1: the transformer popups and
-  preview dialogs live in `src/the_oracle/gui_ingest.py` (~500 lines), with the Qt classes
-  the tests patch injected from MainWindow at call time. Slice 2: the format-health
-  bookkeeping (trusted-file approvals, backup records) lives in `gui_settings.py` — which
-  already normalized both schemas on load, so one file now owns the full payload
-  lifecycle; `app_gui.py` holds zero references to the two schema keys. Slice 3 (the
-  cluster slice 2's review had deferred pending a widget-read injection design): the
-  settings-payload POLICY — default/current payload builders, the vulkan-only
-  audio_cpp knob-persistence rule, cast resolution, blend decode — now lives in
-  `gui_settings.py` as pure functions fed by a frozen `WidgetSnapshot` the window builds
-  in one method (`_widget_snapshot`), with `PayloadDefaults` supplied by the window so
-  gui_settings never imports pipeline. Slice 4 (render/preview cluster): `gui_render.py`
-  owns `RenderWorker`, `PreviewWorker`, `RenderProgressDialog` and the isolated-render
-  child-environment builder, with `OraclePipeline` split-owned between window assembly
-  (app_gui) and the workers' direct non-subprocess fallback (gui_render). Slice 5
-  (Vulkan cluster): `gui_vulkan.py` owns the device-row text and model-path parsing.
-  Slice 6 (sidebar/LivePanel chrome): `gui_chrome.py` owns `LivePanel` and
-  `build_live_section`, the Live column's collapsible/resizable section chrome; app_gui
-  re-imports both, so MainWindow's construction, the two progress handlers that drive it,
-  and the existing test import keep resolving to the identical objects, while the splitter
-  assembly and the `_register_section("live", ...)` persistence wiring stay in app_gui
-  where the layout state lives. All six slices required zero edits to existing tests,
-  which is the seam proof. What the review predicted held: the later clusters carry
-  wholesale-patched module names (thread classes, workers, dialogs), and the committed
-  patch-surface net is what kept that surface intact — it now enforces three rules
-  (MOVED_OWNERS, SPLIT_OWNED, and PARTIAL_OWNED, added for the `QHSectionGroup`
-  construction split slice 6 created) plus string-form patch targets, with the
-  moved-owner record itself in `scripts/patch_surface_manifest.json` so extraction
-  tooling can read what has already been moved without importing the test.
 - **The parked `wip/ingest-refactor-hints` branch is finished and merged** (591efa0, fast-forward). Its two still-valid owners landed: `srt_ingest.ensure_subtitle_script` owns the convert-not-overwrite subtitle policy (both `cli._maybe_convert_srt` and `app_gui._convert_subtitle_input` are presentation wrappers; the GUI's old strict-decode copy — which blocked CP1252 subtitles the CLI converted fine — is gone), and the speaker-ref report data lives in `ingest_transformer.speaker_ref_report_for_file` instead of a CLI private the GUI imported. Ownership is pinned by source scans in `tests/test_subtitle_conversion_has_one_owner.py`, both pins mutation-proven. Worktree note: testing a linked worktree against the shared venv requires PYTHONPATH shadowing (the editable install resolves `the_oracle` to the main checkout); verified by probe before trusting any worktree result.
 - The stream-of-consciousness sample is now a permanent fixture
   (`tests/fixtures/stream_of_consciousness_dialogue_with_typos.txt`) pinning the
