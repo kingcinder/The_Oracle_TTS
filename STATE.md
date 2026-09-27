@@ -849,10 +849,13 @@ rewritten by the loop).
   (84 tests in the batching/backend/synthesis/render-worker files). Pacing
   and emotion live in shared plan/assembly code, never in the engine call,
   so both inference backends behave identically by construction.
-- **The MainWindow extraction campaign is complete — all six slices landed**, each
-  its own revertable commit, each requiring zero edits to existing tests (the seam
-  proof the per-cluster reviews demanded). Slice 1: the transformer popups and
-  preview dialogs live in `src/the_oracle/gui_ingest.py`, with the Qt classes the
+- **The MainWindow extraction campaign is complete — six slices landed** (the
+  JUNO journal's *numbered* extraction slices stop at four — "Fourth" is
+  gui_render — because the gui_vulkan and gui_chrome entries were never
+  numbered there; this record settles the count at six for the same campaign),
+  each its own revertable commit, each requiring zero edits to existing tests
+  (the seam proof the per-cluster reviews demanded). Slice 1: the transformer
+  popups and preview dialogs live in `src/the_oracle/gui_ingest.py`, with the Qt classes the
   tests patch injected from MainWindow at call time. Slice 2: format-health
   bookkeeping (trusted-file approvals, backup records) lives in `gui_settings.py`,
   which already normalized both schemas, so one file owns the full payload
@@ -869,16 +872,31 @@ rewritten by the loop).
   and model-path parsing. Slice 6: `gui_chrome.py` owns `LivePanel` and
   `build_live_section`; app_gui re-imports both so construction, the progress
   handlers, and the existing test import resolve to identical objects, while the
-  splitter assembly and `_register_section("live", ...)` stay in app_gui where
-  the layout state lives. The campaign's safety net — `tests/test_app_gui_patch_surface.py`
-  — is itself committed hardening: it enforces MOVED_OWNERS (the ownership record
-  now lives in `scripts/patch_surface_manifest.json`, validated and read by the
+  splitter  assembly and `_register_section("live", ...)` stay in app_gui where the
+  layout state lives. The campaign's two safety nets are themselves committed
+  hardening — `tests/test_app_gui_patch_surface.py` (the patch-surface net) and
+  `tests/test_payload_policy_ownership.py` (the payload-policy net) — and the
+  later slices ran both green as their pre-flight gate before moving a line.
+  The patch-surface net enforces MOVED_OWNERS (the ownership record now lives
+  in `scripts/patch_surface_manifest.json`, validated and read by the
   scanner), SPLIT_OWNED, PARTIAL_OWNED (added when slice 6 created the
   `QHSectionGroup` split-readership hazard: a patch of `app_gui.QHSectionGroup`
   is not a no-op but a *partial* one), and string-form patch targets
   (`monkeypatch.setattr("the_oracle.app_gui.X", ...)`, `patch("app_gui.X")`,
-  `patch.multiple("the_oracle.app_gui", ...)`) — so no future slice can silently
-  undermine the tests the earlier slices depended on.
+  `patch.multiple("the_oracle.app_gui", ...)`) — so no future slice can
+  silently undermine the tests the earlier slices depended on. SPLIT_OWNED is
+  the concept slice 4 introduced: a name with *split readership* — today
+  `OraclePipeline`, constructed by MainWindow (and the prewarm thread) from
+  app_gui globals AND by the render workers' direct fallback from gui_render
+  globals. An app_gui-level patch of a split-owned name stays legitimate for
+  window-assembly tests but is a silent no-op on the worker path, where the
+  net's WORKER_PATH_TESTS scope must patch at gui_render level; the map guard
+  asserts the name exists on both sides so neither half can vanish. The
+  payload-policy net pins slice 3's design instead: exactly one
+  `_widget_snapshot`, payload-widget reads only from its explicitly sanctioned
+  readers, the policy functions referenced only from their owner modules
+  (gui_settings owns, app_gui delegates), and no hand-rolled copy of the
+  17-key schema outside the owners.
 - **The TTS hardening slices landed (2026-09-26; commits 2db5360, 9790b3d,
   3808064).** *Retry visibility + determinism*: the one-shot engine retry no
   longer heals silently — engines record a `SynthesisRetryNote` at successful
