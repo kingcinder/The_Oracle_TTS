@@ -500,6 +500,78 @@ def _input_subtitles_status(repo_root: Path) -> dict[str, Any]:
     return report
 
 
+def _preview_writers_status(repo_root: Path) -> dict[str, Any]:
+    """Scan project ``previews/`` directories for files outside the gated
+    owner's naming scheme.
+
+    The writer-manifest net (tests/test_stem_cache_write_path.py) pins the
+    SOURCE side: preview audio is produced by ``OraclePipeline.render_preview``
+    alone, which names every file through ``ProjectCache.preview_path`` —
+    ``preview_<alnum-speaker>_<index>.wav`` inside the project's ``previews/``
+    directory. This check is the DISK side: any file in a ``previews/``
+    directory that fails ``ProjectCache.is_gated_preview_name`` is runtime
+    evidence of a writer that bypassed the gated owner (or a renamed scheme
+    the recognizer no longer matches).
+
+    Read-only by contract: directories are probed without
+    ``ensure_repo_default_paths`` (which mkdirs), and no directory is created.
+    Disposable ``build/`` artifacts are excluded — the smoke harnesses create
+    throwaway project trees whose naming drift is meaningless. Verdict
+    policy: a foreign file is informational, not a broken install (the gated
+    owner's own output is unaffected), so the check reports ``ok=True`` with
+    the files listed for review; ``ok`` goes False only if a directory
+    cannot be read.
+    """
+    report: dict[str, Any] = {
+        "ok": True,
+        "scanned": 0,
+        "dirs_scanned": 0,
+        "foreign": [],
+        "unreadable": [],
+        "error": "",
+    }
+    candidates: list[Path] = []
+    try:
+        candidates = [
+            path
+            for path in sorted(repo_root.rglob("previews"))
+            if path.is_dir() and "build" not in path.relative_to(repo_root).parts
+        ]
+    except OSError as exc:
+        report["ok"] = False
+        report["error"] = f"could not scan for previews/ directories: {exc}"
+        return report
+    report["dirs_scanned"] = len(candidates)
+    from the_oracle.models.cache import ProjectCache
+
+    for previews_dir in candidates:
+        try:
+            entries = sorted(previews_dir.iterdir())
+        except OSError as exc:
+            report["ok"] = False
+            report["unreadable"].append(
+                {"path": previews_dir.relative_to(repo_root).as_posix(), "error": str(exc)}
+            )
+            continue
+        for entry in entries:
+            if not entry.is_file():
+                continue
+            report["scanned"] += 1
+            if not ProjectCache.is_gated_preview_name(entry.name):
+                report["foreign"].append(
+                    {
+                        "path": entry.relative_to(repo_root).as_posix(),
+                        "name": entry.name,
+                    }
+                )
+    report["ok"] = not report["unreadable"]
+    if report["unreadable"]:
+        report["error"] = "; ".join(
+            f"{entry['path']}: {entry['error']}" for entry in report["unreadable"]
+        )
+    return report
+
+
 def _release_metadata_status(repo_root: Path) -> dict[str, Any]:
     """Surface release-metadata drift (scripts/release.py --check) in the report.
 
@@ -1228,6 +1300,15 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
     for entry in input_subs.get("unreadable") or []:
         steps.append(f"Input/ {entry['path']}: could not be read ({entry['error']}).")
 
+    preview_writers = report.get("preview_writers") or {"foreign": []}
+    for entry in preview_writers.get("foreign") or []:
+        steps.append(
+            f"Preview cache: {entry['path']} was not written by the gated "
+            "preview owner (OraclePipeline.render_preview names every preview "
+            "via ProjectCache.preview_path). Review the file and whatever "
+            "wrote it."
+        )
+
     release_meta = report.get("release_metadata") or {}
     for problem in release_meta.get("problems") or []:
         steps.append(f"Release metadata: {problem}")
@@ -1284,6 +1365,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "vulkan_backend": _vulkan_backend_status(repo_root),
         "dependency_pins": _dependency_pin_status(repo_root),
         "input_subtitles": _input_subtitles_status(repo_root),
+        "preview_writers": _preview_writers_status(repo_root),
         "release_metadata": _release_metadata_status(repo_root),
         "licensing": _licensing_status(repo_root),
         "crash_reports": _crash_reports_status(repo_root),
@@ -1519,6 +1601,32 @@ def _print_human_report(report: dict[str, Any]) -> None:
             print(f"      {entry['path']}: {entry['error']}")
         for entry in subtitles["unreadable"]:
             print(f"      {entry['path']}: {entry['error']}")
+
+    previews = report.get("preview_writers")
+    if previews is None:
+        # An older report predating this check: render nothing rather than a
+        # misleading SKIP (the check never ran for it).
+        return
+    if previews.get("error"):
+        print(f"WARN Preview cache audit: {previews['error']}")
+    elif not previews.get("dirs_scanned"):
+        print("SKIP Preview cache audit: no project previews/ directories present")
+    else:
+        parts = [
+            f"{previews['dirs_scanned']} previews/ dir(s) scanned, "
+            f"{previews['scanned']} file(s)"
+        ]
+        foreign_names = [entry["name"] for entry in previews["foreign"]]
+        if foreign_names:
+            parts.append("outside the gated naming scheme: " + ", ".join(foreign_names))
+        label = "WARN" if previews["foreign"] else "PASS"
+        print(f"{label} Preview cache audit: {'; '.join(parts)}")
+        for entry in previews["foreign"]:
+            print(
+                f"      {entry['path']}: not written by the gated preview owner "
+                "(OraclePipeline.render_preview via ProjectCache.preview_path) "
+                "— review the file and its writer."
+            )
 
     print("")
     print("Next steps:")
