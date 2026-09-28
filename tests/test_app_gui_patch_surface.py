@@ -42,6 +42,11 @@ readable by future extraction-slice tooling. SPLIT_OWNED, PARTIAL_OWNED and
 WORKER_PATH_TESTS stay here, because they encode where patches are *allowed*
 (the review policy for split-readership names), not who owns what.
 
+The same record also carries the payload-policy net's rule data (the
+``payload_policy`` section, read by ``tests/test_payload_policy_ownership.py``
+through :func:`load_payload_policy` with the same validate-loudly rule) — one
+validated record per rule set, none of it hardcoded in a test file.
+
 Covered patch forms (the review's scanner missed ``type(window)`` class
 targets at first because a Call is not a Name/Attribute chain — this one
 handles both):
@@ -110,6 +115,75 @@ def load_moved_owners(manifest_path: Path = MANIFEST_PATH) -> dict[str, frozense
 
 
 MOVED_OWNERS: dict[str, frozenset[str]] = load_moved_owners()
+
+#: Top-level manifest sections. Every section of the record must be routed
+#: through a validated loader; a section landing in the JSON without one is a
+#: bug to fix, not a free pass to ship unvalidated policy.
+_MANIFEST_SECTIONS = frozenset({"moved_owners", "payload_policy"})
+
+
+def load_payload_policy(manifest_path: Path = MANIFEST_PATH) -> dict[str, object]:
+    """Read the ``payload_policy`` section from the manifest, validating it.
+
+    The payload-policy net's rule data used to be hardcoded in
+    ``tests/test_payload_policy_ownership.py``; it lives in the record now so
+    both safety nets read the same validated manifest. Every field must be
+    present with the right shape — a typo that quietly yielded an empty set
+    would leave the net that reads it passing vacuously, the exact failure
+    mode this record exists to prevent. Anything malformed fails loudly here.
+    """
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise AssertionError(f"{manifest_path.name}: top level must be an object")
+    unknown = set(data) - _MANIFEST_SECTIONS - {"description"}
+    if unknown:
+        raise AssertionError(
+            f"{manifest_path.name}: unrecognized top-level section(s) {sorted(unknown)} — "
+            "every section of this record must be routed through a validated loader; "
+            "add one rather than letting unvalidated policy ship."
+        )
+    policy = data.get("payload_policy")
+    if not isinstance(policy, dict):
+        raise AssertionError(f"{manifest_path.name}: 'payload_policy' must be an object")
+
+    def string_list(field: str, *, allow_empty: bool = False) -> frozenset[str]:
+        values = policy.get(field)
+        if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+            raise AssertionError(
+                f"{manifest_path.name}: payload_policy.{field} must be a list of strings"
+            )
+        if not allow_empty and not values:
+            raise AssertionError(
+                f"{manifest_path.name}: payload_policy.{field} must not be empty — "
+                "an empty record makes the net that reads it pass vacuously"
+            )
+        return frozenset(values)
+
+    owners = policy.get("policy_owners")
+
+    def owners_dict() -> dict[str, str]:
+        if (
+            not isinstance(owners, dict)
+            or not owners
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in owners.items())
+        ):
+            raise AssertionError(
+                f"{manifest_path.name}: payload_policy.policy_owners must be a "
+                "non-empty object of string -> string"
+            )
+        return dict(owners)
+
+    # Field checks run in this order, so a malformed test fixture reports the
+    # first broken field, not whichever one a refactor happened to hoist.
+    return {
+        "payload_widgets": string_list("payload_widgets"),
+        "read_accessors": string_list("read_accessors"),
+        "sanctioned_readers": string_list("sanctioned_readers"),
+        "policy_references": string_list("policy_references"),
+        "policy_owners": owners_dict(),
+        "schema_keys": string_list("schema_keys"),
+        "schema_exempt_modules": string_list("schema_exempt_modules"),
+    }
 
 #: Split-readership names: constructed from app_gui globals by MainWindow's
 #: window assembly AND from the owner module's globals by moved code. An
@@ -491,9 +565,10 @@ def test_string_form_scan_matches_the_live_suite(tmp_path: Path) -> None:
 def test_a_malformed_manifest_fails_loudly(tmp_path: Path) -> None:
     """A manifest that no longer parses must break the net, not shrink it.
 
-    The dangerous shape is the quiet one: an empty or restructured
-    'moved_owners' that loads fine and simply stops matching, leaving every
-    offender untested while the suite stays green.
+    The dangerous shape is the quiet one: an empty or restructured section
+    that loads fine and simply stops matching, leaving every offender
+    untested while the suite stays green. Both loaders — ``moved_owners``
+    and ``payload_policy`` — are proven here.
     """
     bad = tmp_path / "patch_surface_manifest.json"
 
@@ -516,6 +591,47 @@ def test_a_malformed_manifest_fails_loudly(tmp_path: Path) -> None:
     bad.write_text('{"owners": {}}', encoding="utf-8")
     with pytest.raises(AssertionError, match="'moved_owners' must be a non-empty object"):
         load_moved_owners(bad)
+
+    # The payload-policy section gets the same loud-failure rule. Each case
+    # starts from a complete valid section and breaks exactly one field, so
+    # the reported error is the one the case means to prove.
+    def policy_json(**overrides: object) -> str:
+        policy: dict[str, object] = {
+            "payload_widgets": ["variant_combo"],
+            "read_accessors": ["text"],
+            "sanctioned_readers": ["_widget_snapshot"],
+            "policy_references": ["WidgetSnapshot"],
+            "policy_owners": {"the_oracle.gui_settings": "definition"},
+            "schema_keys": ["model_variant"],
+            "schema_exempt_modules": ["the_oracle.gui_settings"],
+        }
+        policy.update(overrides)
+        return json.dumps(
+            {
+                "moved_owners": {"the_oracle.gui_render": {"names": ["x"]}},
+                "payload_policy": policy,
+            }
+        )
+
+    bad.write_text('{"moved_owners": {"the_oracle.gui_render": {"names": ["x"]}}}', encoding="utf-8")
+    with pytest.raises(AssertionError, match="'payload_policy' must be an object"):
+        load_payload_policy(bad)
+
+    bad.write_text(policy_json(payload_widgets=[]), encoding="utf-8")
+    with pytest.raises(AssertionError, match=r"payload_policy\.payload_widgets must not be empty"):
+        load_payload_policy(bad)
+
+    bad.write_text(policy_json(schema_keys="x"), encoding="utf-8")
+    with pytest.raises(AssertionError, match=r"payload_policy\.schema_keys must be a list of strings"):
+        load_payload_policy(bad)
+
+    bad.write_text(policy_json(policy_owners={}), encoding="utf-8")
+    with pytest.raises(AssertionError, match="policy_owners must be a non-empty object"):
+        load_payload_policy(bad)
+
+    bad.write_text(policy_json()[:-1] + ', "surprise_section": {}}', encoding="utf-8")
+    with pytest.raises(AssertionError, match="unrecognized top-level section"):
+        load_payload_policy(bad)
 
 
 def test_moved_owner_names_are_current() -> None:
