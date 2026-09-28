@@ -4,7 +4,9 @@
 
 Changes between releases: [CHANGELOG.md](CHANGELOG.md). Upgrading an
 existing install: [docs/UPGRADING.md](docs/UPGRADING.md). Problems:
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Data and privacy:
+[PRIVACY.md](PRIVACY.md) — what is collected (nothing automatically), what
+stays on your disk, and what sharing a crash report means.
 
 The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The repository now ships with a cross-platform bootstrap/install surface for both Linux and Windows.
 

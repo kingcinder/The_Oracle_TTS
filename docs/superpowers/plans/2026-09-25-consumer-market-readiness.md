@@ -157,17 +157,30 @@ CRASH §10):
 
 ### U1.4 — Offline-guarantee pins + `PRIVACY.md` + cross-links (§11 step 5)
 
-- [ ] RED: extend `tests/test_offline_guarantee.py` with CRASH §8 pins —
+- [x] RED: extend `tests/test_offline_guarantee.py` with CRASH §8 pins —
       `socket.socket` patched to raise while a synthetic crash is captured;
       `the_oracle.crash` imports no torch/huggingface/network modules;
       consent writes only the local flag; doctor remedies are
       network-free strings. Mutation-prove each.
-- [ ] GREEN: fix whatever the pins expose (they should be green by
+      **Landed 2026-09-28**: 4 new pins (network-free capture, no
+      heavyweight imports via module-delta, no network imports in `crash/`
+      via source scan, consent writes only the local flag); M3 (smuggled
+      `import socket`) and M4 (smuggled `import torch`) caught live with
+      byte-identical reverts. The doctor-remedy string pin already existed
+      (`test_doctor_crash.py` + the licensing offline remedy pins).
+- [x] GREEN: fix whatever the pins expose (they should be green by
       construction; any failure here is a real find, not a test to soften).
-- [ ] Write `PRIVACY.md` from CRASH §9's skeleton, each claim footnoted to
+      **Green by construction** — no fixes needed.
+- [x] Write `PRIVACY.md` from CRASH §9's skeleton, each claim footnoted to
       the test that pins it; add the TROUBLESHOOTING crash-review flow;
       README link, CHANGELOG entry.
-- [ ] Suite green; JUNO/STATE; commit.
+      **Landed 2026-09-28**: all six §9 sections, every commitment
+      footnoted to its pinning test; TROUBLESHOOTING crash-review flow;
+      README link; `[Unreleased]` CHANGELOG entries.
+- [x] Suite green; JUNO/STATE; commit.
+      **Landed 2026-09-28** (JUNO entry in the record commit; the STATE
+      "Next" pointer was deferred — STATE.md carried a concurrent actor's
+      in-flight edit at slice time).
 
 ---
 
@@ -220,30 +233,32 @@ nothing that ships today is gated.
       (`test_key_rotation_old_key_keeps_verifying_until_dropped`) and the
       vendored Ed25519 has its own file, `tests/test_licensing_ed25519.py`
       (RFC 8032 §7.1 vectors).
-- [ ] RED/GREEN `policy.py` + `machine.py` + `store.py` +
+- [x] RED/GREEN `policy.py` + `machine.py` + `store.py` +
       `tests/test_licensing_store.py` — atomic write (no partial token on
       simulated crash), corrupted file → typed error not a crash, editions
       mapping with **community = today's full set**, downgrade semantics
       (expired trial → community with notice), machine fingerprint SHA-256
       only.
-      **Partially landed 2026-09-25** (commit `6023a72`): `store.py` is
-      atomic + typed (9 tests in `tests/test_licensing_store.py`);
-      `machine.py` is hash-only and fail-open (pinned in
-      `tests/test_licensing_keys.py`); `policy.py` implements the edition map
-      and the degrade-to-community path. **Still open (found 2026-09-27):
-      direct tests for `edition_entitlements()` / `LicenseRequired` /
-      downgrade-with-notice — no test file references either symbol.**
+      **Completed 2026-09-28**: the open enforcement gap is closed by
+      `tests/test_licensing_policy_enforcement.py` — community grants the
+      full shipped set, unknown/absent editions degrade to community,
+      `require()` raises the typed `LicenseRequired` only outside the
+      edition's entitlements, and the degrade-never-lock rule is pinned.
+      Mutations M1 (gate disabled) and M2 (expired keeps its edition)
+      caught live, byte-identical reverts. Debug verdict: the production
+      code was correct; the gap was coverage, not behavior.
 - [x] Suite green; JUNO/STATE; commit.
       **Landed 2026-09-25** (commit `6023a72`).
 
 ### U2.3 — CLI surface + vendor signer (§8 step 3)
 
-- [ ] RED: CLI tests for `the-oracle activate <token>`,
+- [x] RED: CLI tests for `the-oracle activate <token>`,
       `license-status`, `machine-id` (community when absent, typed errors).
-      **Partially landed 2026-09-25** (commit `6023a72`): `activate` and
-      `machine-id` are pinned in `tests/test_activation_flow.py` (6 tests);
-      **`license-status` has no test reference at all (found 2026-09-27)**,
-      so this box stays unticked.
+      **Completed 2026-09-28**: `license-status` now pinned in
+      `tests/test_licensing_policy_enforcement.py` (community-when-absent,
+      valid-token report, corrupted-store fails closed with exit 1).
+      `activate`/`machine-id` were already pinned in
+      `tests/test_activation_flow.py`.
 - [x] GREEN: `cli.py` wiring; `scripts/license_sign.py` reading
       `ORACLE_LICENSE_SIGNING_KEY` (vendor-only; tests mint with an
       ephemeral test key — no real key material ever in the repo).
@@ -272,10 +287,14 @@ nothing that ships today is gated.
 - [x] Suite green; JUNO/STATE; commit.
       **Landed 2026-09-25** (commit `6023a72`): full suite **1316 passed / 0
       failed**.
-- [ ] **Still open — write `docs/LICENSING_OPS.md`** (vendor guide: key custody,
+- [x] **Still open — write `docs/LICENSING_OPS.md`** (vendor guide: key custody,
       mint, rotate, revoke-by-rotation). Verified absent 2026-09-27 (no file,
       no commit history); split out during the reconciliation because the rest
       of the box landed.
+      **Landed 2026-09-28**: grounded in the real `license_sign.py` surface
+      (keygen/mint flags verified live, verify-snippet exercised against a
+      real token); covers custody, minting, pre-delivery verification,
+      rotation, revoke-by-rotation, and the customer-facing experience.
 
 ---
 

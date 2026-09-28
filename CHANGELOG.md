@@ -3,6 +3,25 @@
 Notable user-facing changes to The Oracle. The version number itself lives in
 one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
+## [Unreleased]
+
+### Added
+
+- **Local, private crash reporting.** Opt in with `the-oracle privacy-opt-in`;
+  reports stay in this install's `crash_reports/` folder (sanitized, capped at
+  20 × 32 KiB), are never uploaded, and the doctor surfaces them for review.
+  `PRIVACY.md` documents the whole data posture, every claim pinned by a test.
+- **Offline licensing.** Activate a purchased license with
+  `the-oracle activate <token>`; `the-oracle license-status` and `machine-id`
+  report the install's state. Nothing existing is gated — the community edition
+  is everything that ships today. An expired or absent license degrades to
+  community; nothing is ever locked away.
+- **Log rotation.** The application log now caps at 5 MiB × 3 backups instead
+  of growing without bound.
+- The doctor now announces *before* a first-run model download that can take
+  several minutes (previously silent, indistinguishable from a hang) and names
+  `--skip-model-init` as the way out.
+
 ## [1.3.0] — 2026-09-21
 
 ### Added
