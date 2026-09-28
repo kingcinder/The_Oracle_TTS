@@ -11,7 +11,9 @@ Usage:
     python scripts/release.py --check
         Verify the single-source invariant only (read-only; CI-safe):
         pyproject/banners agree with ``__version__`` AND CHANGELOG.md has a
-        section for the current version dated the release day (today).
+        section for the current version dated the release day (today), with
+        the file structurally sound: exactly one ``[Unreleased]`` placeholder,
+        released sections newest-first, and no empty shipped section.
 
     python scripts/release.py --sync-changelog
         Stamp the release into CHANGELOG.md: retitle the ``## [Unreleased]``
@@ -68,6 +70,11 @@ _BANNER_VERSION_RE = re.compile(r"V(\d+\.\d+\.\d+)")
 #: the current version's section to be dated today, so a version bump can
 #: never land without its user-facing changelog entry.
 _CHANGELOG_HEADING_RE = re.compile(r"^## \[(?P<version>\d+\.\d+\.\d+)\] — (?P<date>\d{4}-\d{2}-\d{2})\s*$")
+
+#: The working placeholder heading. Exactly one may exist. --sync-changelog
+#: re-inserts it BELOW the freshly stamped version section, which is why the
+#: ordering and emptiness checks deliberately skip it.
+_UNRELEASED_HEADING = "## [Unreleased]"
 
 #: The single source of truth, as setuptools must read it.
 _VERSION_ATTR = "the_oracle.__version__"
@@ -157,44 +164,121 @@ def banner_problems(repo_root: Path, version: str) -> list[str]:
     return problems
 
 
+def _changelog_version_key(version: str) -> tuple[int, ...]:
+    """Numeric sort key for a released-version heading (shape already validated)."""
+    return tuple(int(part) for part in version.split("."))
+
+
 def changelog_problems(repo_root: Path, version: str, today: date) -> list[str]:
-    """Drift between CHANGELOG.md and the single source + the release day."""
+    """Structural + current-version drift between CHANGELOG.md and the release.
+
+    Beyond the current version's exactly-one-dated-section rule, the gate
+    audits the file's whole structure so a botched hand- or tool-edit cannot
+    pass unnoticed:
+
+    * more than one ``## [Unreleased]`` placeholder (the misfire of
+      hand-duplicating it, or re-inserting it after a partial sync);
+    * released sections out of order — newest first, numerically. The
+      ``[Unreleased]`` placeholder is exempt: ``--sync-changelog`` legitimately
+      stamps the new version's section above the empty placeholder it
+      re-inserts;
+    * a shipped (non-Unreleased) section with no entries — a version stamped
+      into the changelog without recording anything. ``###`` sub-headings and
+      blockquote prose don't count as entries.
+    """
     path = repo_root / "CHANGELOG.md"
     if not path.is_file():
         return [
             "CHANGELOG.md: missing (expected a '## [<version>] — <YYYY-MM-DD>' "
             "heading for the release)"
         ]
-    sections: list[tuple[int, str]] = []
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    # Every section in file order: released versions with their stamped date,
+    # plus the first [Unreleased] placeholder (date None). Extra placeholders
+    # are counted but not positioned — their count alone is the finding.
+    ordered: list[tuple[str, str | None, int]] = []
+    unreleased_count = 0
+    for index, line in enumerate(lines):
         match = _CHANGELOG_HEADING_RE.match(line)
-        if match and match.group("version") == version:
-            sections.append((lineno, match.group("date")))
+        if match:
+            ordered.append((match.group("version"), match.group("date"), index))
+        elif line.rstrip() == _UNRELEASED_HEADING:
+            unreleased_count += 1
+            if unreleased_count == 1:
+                ordered.append(("[Unreleased]", None, index))
+
+    def section_end(start: int) -> int:
+        """Line index where the section starting at ``start`` ends (next '## ')."""
+        for i in range(start + 1, len(lines)):
+            if lines[i].startswith("## "):
+                return i
+        return len(lines)
+
+    problems: list[str] = []
+
+    if unreleased_count > 1:
+        problems.append(
+            f"CHANGELOG.md: {unreleased_count} '## [Unreleased]' sections; expected "
+            "exactly one — merge them into a single placeholder above the newest release"
+        )
+
+    released = [(entry, section_end(entry[2])) for entry in ordered if entry[0] != "[Unreleased]"]
+    for (prev_entry, _prev_end), (curr_entry, _curr_end) in zip(released, released[1:]):
+        prev_version, _prev_date, prev_lineno = prev_entry
+        curr_version, _curr_date, curr_lineno = curr_entry
+        if _changelog_version_key(curr_version) > _changelog_version_key(prev_version):
+            problems.append(
+                f"CHANGELOG.md:{curr_lineno + 1}: sections are out of order — [{curr_version}] "
+                f"is newer than [{prev_version}] (line {prev_lineno + 1}) but appears below "
+                "it; keep releases newest-first"
+            )
+
+    for (sec_version, _sec_date, start), end in released:
+        body = lines[start + 1 : end]
+        if not any(
+            line.strip()
+            and not line.lstrip().startswith("#")
+            and not line.lstrip().startswith(">")
+            for line in body
+        ):
+            problems.append(
+                f"CHANGELOG.md:{start + 1}: the [{sec_version}] section is empty — a shipped "
+                "version must record at least one user-facing change (sub-headings and "
+                "blockquote prose don't count); write the notes or remove the section"
+            )
+
+    sections: list[tuple[int, str]] = [
+        (lineno, date_str) for sec_version, date_str, lineno in ordered if sec_version == version
+    ]
     if not sections:
-        return [
+        problems.append(
             f"CHANGELOG.md: no section for version {version} — add a heading "
             f"'## [{version}] — {today.isoformat()}' above the release notes"
-        ]
+        )
+        return problems
     if len(sections) > 1:
-        return [
+        problems.append(
             f"CHANGELOG.md: {len(sections)} sections for version {version} "
-            f"(lines {', '.join(str(lineno) for lineno, _ in sections)}); expected exactly one"
-        ]
+            f"(lines {', '.join(str(lineno + 1) for lineno, _ in sections)}); expected exactly one"
+        )
+        return problems
     lineno, stamped = sections[0]
     try:
         stamped_date = date.fromisoformat(stamped)
     except ValueError:
-        return [
-            f"CHANGELOG.md:{lineno}: {stamped!r} is not a valid calendar date "
+        problems.append(
+            f"CHANGELOG.md:{lineno + 1}: {stamped!r} is not a valid calendar date "
             f"(expected YYYY-MM-DD, e.g. {today.isoformat()})"
-        ]
+        )
+        return problems
     if stamped_date != today:
-        return [
-            f"CHANGELOG.md:{lineno}: the {version} section is dated {stamped} but today is "
+        problems.append(
+            f"CHANGELOG.md:{lineno + 1}: the {version} section is dated {stamped} but today is "
             f"{today.isoformat()}; a release section must be dated the day the release "
             f"runs — update the heading to '## [{version}] — {today.isoformat()}'"
-        ]
-    return []
+        )
+    return problems
 
 
 def sync_changelog(repo_root: Path, version: str, *, today: date | None = None) -> list[str]:

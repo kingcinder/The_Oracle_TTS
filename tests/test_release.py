@@ -5,7 +5,9 @@ place a release version is written; pyproject.toml reads it dynamically and
 the README / STATE.md banners agree with it. scripts/release.py enforces that
 invariant and produces versioned artifacts with a sha256 manifest. The
 invariant also covers CHANGELOG.md: the current version must have exactly one
-section, dated the release day.
+section, dated the release day, and the file's structure is audited too —
+exactly one ``[Unreleased]`` placeholder, released sections newest-first, and
+no empty shipped section.
 """
 
 from __future__ import annotations
@@ -205,6 +207,94 @@ def test_check_tolerates_unreleased_and_other_versions(tmp_path: Path) -> None:
         ),
     )
     assert release.check(repo) == []
+
+
+def test_check_passes_when_unreleased_sits_below_the_stamped_release(tmp_path: Path) -> None:
+    """--sync-changelog's own output shape: the stamped version section goes
+    ABOVE the re-inserted empty [Unreleased] placeholder, so the placeholder
+    must be exempt from the newest-first rule — otherwise the release tool
+    could never pass its own gate."""
+    repo = _write_fake_repo(
+        tmp_path,
+        changelog_text=(
+            "# Changelog\n\n"
+            "## [9.9.9] — " + date.today().isoformat() + "\n\n### Added\n\n- Now.\n\n"
+            "## [Unreleased]\n\n### Changed\n\n- (nothing yet)\n\n"
+            "## [0.9.0] — 2025-12-25\n\n### Added\n\n- Before.\n"
+        ),
+    )
+    assert release.check(repo) == []
+
+
+def test_check_flags_duplicate_unreleased_sections(tmp_path: Path) -> None:
+    """The misfire this gate exists for: a hand-edit (or a partial sync) leaves
+    two [Unreleased] placeholders, and later release notes accumulate in the
+    wrong one."""
+    repo = _write_fake_repo(
+        tmp_path,
+        changelog_text=(
+            "# Changelog\n\n"
+            "## [Unreleased]\n\n### Changed\n\n- (nothing yet)\n\n"
+            "## [Unreleased]\n\n### Fixed\n\n- More.\n\n"
+            "## [9.9.9] — " + date.today().isoformat() + "\n\n### Added\n\n- Now.\n"
+        ),
+    )
+    problems = release.check(repo)
+    assert len(problems) == 1
+    assert "2 '## [Unreleased]' sections" in problems[0]
+    assert "merge them" in problems[0]
+
+
+def test_check_flags_misordered_version_sections(tmp_path: Path) -> None:
+    """A newer release appearing below an older one is structural damage —
+    the newest-first contract is what keeps the reading order trustworthy."""
+    repo = _write_fake_repo(
+        tmp_path,
+        changelog_text=(
+            "# Changelog\n\n"
+            "## [Unreleased]\n\n### Changed\n\n- (nothing yet)\n\n"
+            "## [9.9.8] — 2026-09-01\n\n### Added\n\n- Older.\n\n"
+            "## [9.9.9] — " + date.today().isoformat() + "\n\n### Added\n\n- Now.\n"
+        ),
+    )
+    problems = release.check(repo)
+    assert len(problems) == 1
+    assert "out of order" in problems[0]
+    assert "[9.9.9]" in problems[0] and "[9.9.8]" in problems[0]
+    assert "newest-first" in problems[0]
+
+
+def test_check_flags_an_empty_shipped_section(tmp_path: Path) -> None:
+    """A version stamped into the changelog that records nothing is the empty
+    1.0.0-placeholder shape; a shipped section must carry at least one entry."""
+    repo = _write_fake_repo(
+        tmp_path,
+        changelog_text=(
+            "# Changelog\n\n"
+            "## [Unreleased]\n\n### Changed\n\n- (nothing yet)\n\n"
+            "## [9.9.9] — " + date.today().isoformat() + "\n\n### Added\n\n- Now.\n\n"
+            "## [9.9.8] — 2026-09-01\n\n### Fixed\n\n## [9.9.7] — 2026-08-30\n\n### Added\n\n- Old.\n"
+        ),
+    )
+    problems = release.check(repo)
+    assert len(problems) == 1
+    assert "the [9.9.8] section is empty" in problems[0]
+
+
+def test_check_subheadings_and_blockquote_prose_do_not_count_as_entries(tmp_path: Path) -> None:
+    """### sub-headings and blockquote notes give a section shape without
+    recording a single change — the emptiness rule must see through them."""
+    repo = _write_fake_repo(
+        tmp_path,
+        changelog_text=(
+            "# Changelog\n\n"
+            "## [9.9.9] — " + date.today().isoformat() + "\n\n"
+            "### Added\n\n> Some retrospective prose, no actual entries.\n\n"
+        ),
+    )
+    problems = release.check(repo)
+    assert len(problems) == 1
+    assert "is empty" in problems[0]
 
 
 def test_check_changelog_date_follows_injected_today(tmp_path: Path) -> None:
