@@ -148,6 +148,10 @@ The doctor checks:
   mysterious test failure days later
 - subtitle files under `Input/` that would take the CP1252 fallback, and the
   ones it would **block** outright
+- project `previews/` directories for files outside the gated preview
+  owner's naming scheme (`OraclePipeline.render_preview` via
+  `ProjectCache.preview_path`) — runtime evidence of a writer that bypassed
+  the gated owner
 - release-metadata drift (version, banners, and the `CHANGELOG.md` gate)
 
 With `--ci` the environment-only checks (`ffmpeg`, launcher `PATH`, `turbo`

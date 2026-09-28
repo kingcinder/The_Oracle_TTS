@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import pickle
+import re
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -219,6 +220,30 @@ class ProjectCache:
     def preview_path(self, speaker: str, utterance_index: int) -> Path:
         safe_speaker = "".join(character for character in speaker if character.isalnum()) or "speaker"
         return self.preview_dir / f"preview_{safe_speaker}_{utterance_index:04d}.wav"
+
+    #: The naming scheme :meth:`preview_path` writes — the gated preview
+    #: owner's signature on disk. ``preview_`` + the sanitized speaker + ``_``
+    #: + the zero-padded index (``:04d`` pads to AT LEAST four digits, so
+    #: five digits is still the gated writer at index >= 10000) + ``.wav``.
+    #: ``[^\W_]`` is exactly the character class ``preview_path``'s sanitizer
+    #: keeps: ``str.isalnum()`` holds for every character it retains, any
+    #: alphabet (``preview_Zoë_0000.wav`` is the writer's own output), and
+    #: never underscore or whitespace.
+    _PREVIEW_NAME_RE = re.compile(r"^preview_[^\W_]+_\d{4,}\.wav$")
+
+    @classmethod
+    def is_gated_preview_name(cls, name: str) -> bool:
+        """True when *name* matches the gated owner's preview naming scheme.
+
+        The doctor's cache audit (``scripts/doctor.py``) scans every project
+        ``previews/`` directory and classifies each file with this predicate —
+        the recognizer lives beside the writer it mirrors, so a rename of the
+        scheme here updates the audit here. Files that fail it are runtime
+        evidence of a writer outside the gated owner (the writer-manifest net
+        pins the SOURCE side in tests/test_stem_cache_write_path.py; this is
+        the disk side).
+        """
+        return cls._PREVIEW_NAME_RE.match(name) is not None
 
     def conditioning_path(self, cache_id: str) -> Path:
         _validate_path_component(cache_id, kind="conditioning cache id")
