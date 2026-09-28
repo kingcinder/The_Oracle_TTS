@@ -264,3 +264,76 @@ def test_live_panel_fractionless_fallback(qt_app) -> None:
     panel.update_from_progress(progress)
     assert panel.progress_bar.value() == 25  # 5/20 * 100
     assert panel.backend_label.text() == "Backend: idle"  # unchanged
+
+
+def _progress_with_note(note: str | None = None, **overrides) -> RenderProgress:
+    """A progress event, optionally carrying one healed-hiccup note."""
+    fields = {
+        "stage": "Rendering segment",
+        "detail": "segment 1/4",
+        "current_step": 2,
+        "total_steps": 8,
+        "current_segment": 1,
+        "total_segments": 4,
+        "elapsed_seconds": 2.0,
+        "backend": "pytorch",
+        "retry_note": note,
+    }
+    fields.update(overrides)
+    return RenderProgress(**fields)
+
+
+def test_live_panel_counts_retry_notes_cumulatively(qt_app) -> None:
+    """Self-healing is visible on the persistent mirror: each healed hiccup
+    (one retry_note per render, delivered exactly once) advances the tally
+    shown in the sidebar."""
+    panel = LivePanel()
+    assert panel.retry_count == 0
+    assert panel.retry_label.text() == ""
+
+    panel.update_from_progress(_progress_with_note("hiccup retry (chatterbox): flat silence"))
+    assert panel.retry_count == 1
+    assert "1 hiccup" in panel.retry_label.text()
+    assert "2 hiccups" not in panel.retry_label.text()
+
+    # A second healed take in the same render: cumulative, pluralized.
+    panel.update_from_progress(_progress_with_note("hiccup retry (chatterbox): flat silence"))
+    assert panel.retry_count == 2
+    assert "2 hiccups" in panel.retry_label.text()
+
+    # Note-free events never advance the tally.
+    panel.update_from_progress(_progress_with_note(None))
+    panel.update_from_progress(_progress_with_note(None))
+    assert panel.retry_count == 2
+
+
+def test_live_panel_retry_tally_survives_set_idle(qt_app) -> None:
+    """The tally is the persistent half of the record: set_idle clears the
+    transient mirror (progress, stage, ETA) but deliberately keeps the count
+    visible — a self-heal stays on screen after the render ends."""
+    panel = LivePanel()
+    panel.update_from_progress(_progress_with_note("hiccup retry (chatterbox): DC tone"))
+    panel.update_from_progress(_progress_with_note("hiccup retry (chatterbox): NaN span"))
+    assert panel.retry_count == 2
+
+    panel.set_idle()
+    assert panel.retry_count == 2, "set_idle must not erase the session's self-heal record"
+    assert "2 hiccups" in panel.retry_label.text()
+    # ...while every transient field really did reset.
+    assert panel.progress_bar.value() == 0
+    assert panel.stage_label.text() == ""
+    assert panel.eta_label.text() == ""
+
+
+def test_live_panel_reset_retry_tally_starts_a_fresh_session(qt_app) -> None:
+    """reset_retry_tally clears both the count and the label — MainWindow
+    calls it when the next render/preview starts, so the count reflects the
+    current session rather than an unbounded lifetime total."""
+    panel = LivePanel()
+    panel.update_from_progress(_progress_with_note("hiccup retry (chatterbox): flat silence"))
+    panel.set_idle()
+    assert panel.retry_count == 1
+
+    panel.reset_retry_tally()
+    assert panel.retry_count == 0
+    assert panel.retry_label.text() == ""

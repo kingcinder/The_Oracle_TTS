@@ -416,6 +416,70 @@ def test_the_dismissal_scanner_covers_every_shape_form_by_form() -> None:
 
 
 @pytest.mark.slow
+def test_live_panel_retry_tally_state_machine_is_pinned() -> None:
+    """The tally is a three-state contract on the persistent mirror.
+
+    The retry count may only change at the two deliberate transitions:
+    a note-bearing progress event increments it (and set_idle never touches
+    it — a self-heal is part of the session's record), and reset_retry_tally
+    starts the next session at zero. The unit pins in test_app_gui_progress
+    exercise a LivePanel instance; this pins the CLASS: the set_idle body
+    must not assign _retry_count, the increment must live in
+    update_from_progress, and reset must be its own method — so a refactor
+    that "tidies" the persistence away fails the net, named, before the
+    behavior silently changes.
+    """
+    tree = ast.parse(GUI_CHROME.read_text(encoding="utf-8"))
+    panel = _class(tree, "LivePanel")
+    assert panel is not None, "gui_chrome must define LivePanel"
+
+    methods = {
+        node.name: node
+        for node in panel.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    for name in ("update_from_progress", "set_idle", "reset_retry_tally"):
+        assert name in methods, f"LivePanel.{name} must exist — the tally net went blind"
+
+    def _count_assignments(method: ast.FunctionDef) -> int:
+        return sum(
+            1
+            for node in ast.walk(method)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(t, ast.Attribute)
+                and isinstance(t.value, ast.Name)
+                and t.value.id == "self"
+                and t.attr == "_retry_count"
+                for t in node.targets
+            )
+        )
+
+    # set_idle preserves; reset clears. Exactly one assignment each — an
+    # extra assignment in either body would be a rule change to review.
+    assert _count_assignments(methods["set_idle"]) == 0, (
+        "set_idle must not touch the retry tally — the persistent mirror's "
+        "point is that a self-heal survives it"
+    )
+    assert _count_assignments(methods["reset_retry_tally"]) == 1
+    # The increment lives in update_from_progress (+= is an AugAssign, so it
+    # does not count as a plain assignment there).
+    assert _count_assignments(methods["update_from_progress"]) == 0
+    increments = [
+        node
+        for node in ast.walk(methods["update_from_progress"])
+        if isinstance(node, ast.AugAssign)
+        and isinstance(node.target, ast.Attribute)
+        and isinstance(node.target.value, ast.Name)
+        and node.target.value.id == "self"
+        and node.target.attr == "_retry_count"
+    ]
+    assert len(increments) == 1, (
+        "update_from_progress must contain exactly one tally increment"
+    )
+
+
+@pytest.mark.slow
 def test_build_live_section_wraps_the_panel_in_section_chrome() -> None:
     """The chrome itself: a collapsible, resizable 'Live' section holding the
     panel, with the Live column's narrow floor."""
