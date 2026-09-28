@@ -92,37 +92,68 @@ Exit: rollout steps 1–3 and 5 landed; §8 pins mutation-proven;
 TDD order inside this unit (one RED/GREEN cycle each, tests as promised in
 CRASH §10):
 
-- [ ] RED/GREEN `crash/sanitize.py` + `tests/test_crash_sanitize.py` — every
+- [x] RED/GREEN `crash/sanitize.py` + `tests/test_crash_sanitize.py` — every
       §4 rule; mutation: delete the home-prefix rule → the net must fail;
       property probe: no output may contain the input path prefix.
-- [ ] RED/GREEN `crash/consent.py` + `tests/test_crash_consent.py` —
+      **Landed 2026-09-25** (commit `45eea1b`): 8 tests; M-SANITIZE caught
+      live, reverted sha256-identical.
+- [x] RED/GREEN `crash/consent.py` + `tests/test_crash_consent.py` —
       fail-closed reader (mutation: flip the unreadable-file branch → the net
       must fail); opt-out purge; fire-time check (revoking mid-session
       suppresses the next event).
-- [ ] RED/GREEN `crash/record.py` + `crash/bundle.py` +
+      **Landed 2026-09-25** (commit `45eea1b`): 8 tests; M-CONSENT
+      (unreadable file forging consent) caught by 7 tests.
+- [x] RED/GREEN `crash/record.py` + `crash/bundle.py` +
       `tests/test_crash_bundle.py` — typed record → JSON; atomic write; 20
       reports / 32 KiB caps (oldest dropped first).
-- [ ] RED/GREEN `crash/handlers.py` + `tests/test_crash_handlers.py` —
+      **Landed 2026-09-25** (commit `45eea1b`): `crash/record.py` +
+      `crash/bundle.py`; the tests live in `tests/test_crash_handlers.py`
+      (`test_record_schema_shape`, `test_cap_enforced_by_bundled_writes`) —
+      no separate `test_crash_bundle.py`.
+- [x] RED/GREEN `crash/handlers.py` + `tests/test_crash_handlers.py` —
       `sys.excepthook` + threading hook + Qt message handler + faulthandler
       into the crash dir; synthetic exception writes a record and does not
       re-raise; double-install idempotent; a crashing handler writes nothing
       and does not recurse.
-- [ ] Wire `install_crash_handlers()` once in `cli.main()` and once in
+      **Landed 2026-09-25** (commit `45eea1b`): sys/threading excepthooks and
+      consent-gated faulthandler landed; the **Qt message handler was
+      deferred to the U3 GUI slice** (recorded 2026-09-25: `app_gui.py` was
+      the concurrent engine thread's in-flight surface).
+- [x] Wire `install_crash_handlers()` once in `cli.main()` and once in
       `MainWindow.__init__` (after paths exist); `.gitignore` the
       `crash_reports/` dir.
-- [ ] Suite green; JUNO/STATE; commit.
+      **Landed 2026-09-25** (commit `45eea1b`): `crash_handlers.install()` is
+      called once in `cli.main()` (the function is named `install`, not
+      `install_crash_handlers`); `crash_reports/` is gitignored. **The
+      `MainWindow.__init__` wiring was deferred to U3** with the Qt message
+      handler, for the same recorded reason.
+- [x] Suite green; JUNO/STATE; commit.
+      **Landed 2026-09-25** (commit `45eea1b`): full suite **1354 passed / 0
+      failed**; `JUNO_FIXES.log` + `STATE.md` updated.
 
 ### U1.3 — CLI privacy surface + doctor `crash_reports` (§11 step 3)
 
-- [ ] RED: `tests/test_doctor_crash.py` (consent-off is `ok=true`
+- [x] RED: `tests/test_doctor_crash.py` (consent-off is `ok=true`
       informational; consent-on shows count/oldest/newest/size/cap state;
       crash-present points at the newest report + one exception line;
       write-permission failure is `ok=false` with a local remedy; remedy
       strings offline-safe) + CLI tests in `tests/test_cli.py` style for
       `privacy-status` / `privacy-opt-in` / `privacy-opt-out [--purge]`.
-- [ ] GREEN: command wiring in `cli.py`; `crash_reports` check in
+      **Landed 2026-09-25** (commit `f2860a2`): the CLI tests live in
+      `tests/test_crash_consent_cli.py` (5), not `tests/test_cli.py`;
+      `tests/test_doctor_crash.py` (8) carries the check's cases and its own
+      read-only/idempotence pin.
+- [x] GREEN: command wiring in `cli.py`; `crash_reports` check in
       `scripts/doctor.py` following the existing check shape.
-- [ ] Suite green including all three doctor pins; JUNO/STATE; commit.
+      **Landed 2026-09-25**: opted-out stays valid and is excluded from
+      `overall_ready`; writability via `os.access` (the read-only pin forbids
+      write probes); native dumps surface to `next_steps`; `--purge` is an
+      explicit flag, not a prompt (the CLI refuses interactive prompts on
+      non-TTY).
+- [x] Suite green including all three doctor pins; JUNO/STATE; commit.
+      **Landed 2026-09-25** (commit `f2860a2`): full suite **1369 passed / 0
+      failed**; M-CLI-CONSENT and M-DOC-CRASH caught live, reversions
+      sha256-identical; the four §12 decisions confirmed and recorded.
 
 ### U1.4 — Offline-guarantee pins + `PRIVACY.md` + cross-links (§11 step 5)
 
@@ -147,7 +178,19 @@ nothing that ships today is gated.
 
 ### U2.1 — Crypto decision executed + dependency pin (§8 step 1)
 
+> **Reconciled 2026-09-27 — closed as Option B, not as written.** The unit
+> used the vendored verify-only pure-Python Ed25519
+> (`src/the_oracle/_ed25519.py`) and recorded the decision in
+> `docs/LICENSING_DESIGN.md` §3 / §8 step 1 / §9.1 (DECIDED 2026-09-25).
+> No dependency was added — `pyproject.toml` carries no `pynacl`
+> (grep-verified) — so the offline bundle is unchanged and `dependency_pins`
+> gained nothing to police. The two `pynacl` boxes below were therefore not
+> executed. The campaign spec's **D1** record still reads Option A; repointing
+> it is **pending the owner's ratification**, and no code is reverted or
+> re-added without that call.
+
 - [ ] Add `pynacl==1.5.0` to `dependencies` in `pyproject.toml`.
+      **Not executed — superseded by Option B** (note above).
 - [ ] Prove the offline-bundle path: extend
       `tests/test_offline_bundle.py` to assert `pynacl` appears in the base
       requirement set, then run the bundle wheel-download path for
@@ -156,45 +199,83 @@ nothing that ships today is gated.
       both. **If this probe fails: stop the unit and switch to Option B
       (vendored pure-Python verify) per LICENSING §3 — that switch is a
       design change, so it gets its own record before code continues.**
-- [ ] Suite green (doctor `dependency_pins` now covers pynacl); JUNO/STATE;
+      **Not executed — moot under Option B** (no new dependency; the offline
+      bundle is unchanged). The switch the clause describes is the one that
+      landed, with the §3 record.
+- [x] Suite green (doctor `dependency_pins` now covers pynacl); JUNO/STATE;
       commit.
+      **Landed 2026-09-25** (commit `6023a72`): full suite **1316 passed / 0
+      failed**; `dependency_pins` gained nothing new to police — no
+      dependency was added.
 
 ### U2.2 — `licensing/` core (§8 step 2)
 
-- [ ] RED/GREEN `tokens.py` + `keys.py` + `tests/test_licensing_tokens.py` —
+- [x] RED/GREEN `tokens.py` + `keys.py` + `tests/test_licensing_tokens.py` —
       `ORACLE1.` envelope, canonical JSON byte-stability across key-order
       shuffles, mint→verify roundtrip, tampered payload / wrong key /
       unknown key_id refused as typed statuses, `exp` boundary with a frozen
       clock, key-rotation test (§7).
+      **Landed 2026-09-25** (commit `6023a72`): 11 token tests; the rotation
+      pin lives in `tests/test_licensing_keys.py`
+      (`test_key_rotation_old_key_keeps_verifying_until_dropped`) and the
+      vendored Ed25519 has its own file, `tests/test_licensing_ed25519.py`
+      (RFC 8032 §7.1 vectors).
 - [ ] RED/GREEN `policy.py` + `machine.py` + `store.py` +
       `tests/test_licensing_store.py` — atomic write (no partial token on
       simulated crash), corrupted file → typed error not a crash, editions
       mapping with **community = today's full set**, downgrade semantics
       (expired trial → community with notice), machine fingerprint SHA-256
       only.
-- [ ] Suite green; JUNO/STATE; commit.
+      **Partially landed 2026-09-25** (commit `6023a72`): `store.py` is
+      atomic + typed (9 tests in `tests/test_licensing_store.py`);
+      `machine.py` is hash-only and fail-open (pinned in
+      `tests/test_licensing_keys.py`); `policy.py` implements the edition map
+      and the degrade-to-community path. **Still open (found 2026-09-27):
+      direct tests for `edition_entitlements()` / `LicenseRequired` /
+      downgrade-with-notice — no test file references either symbol.**
+- [x] Suite green; JUNO/STATE; commit.
+      **Landed 2026-09-25** (commit `6023a72`).
 
 ### U2.3 — CLI surface + vendor signer (§8 step 3)
 
 - [ ] RED: CLI tests for `the-oracle activate <token>`,
       `license-status`, `machine-id` (community when absent, typed errors).
-- [ ] GREEN: `cli.py` wiring; `scripts/license_sign.py` reading
+      **Partially landed 2026-09-25** (commit `6023a72`): `activate` and
+      `machine-id` are pinned in `tests/test_activation_flow.py` (6 tests);
+      **`license-status` has no test reference at all (found 2026-09-27)**,
+      so this box stays unticked.
+- [x] GREEN: `cli.py` wiring; `scripts/license_sign.py` reading
       `ORACLE_LICENSE_SIGNING_KEY` (vendor-only; tests mint with an
       ephemeral test key — no real key material ever in the repo).
-- [ ] Suite green; JUNO/STATE; commit.
+      **Landed 2026-09-25**: `tests/test_license_sign.py` (5) includes the
+      pin that `scripts/` never enters the wheel.
+- [x] Suite green; JUNO/STATE; commit.
+      **Landed 2026-09-25** (commit `6023a72`).
 
 ### U2.4 — Doctor check + offline pins (§8 steps 4–5)
 
-- [ ] RED: `tests/test_doctor_licensing.py` — §5 states (no token →
+- [x] RED: `tests/test_doctor_licensing.py` — §5 states (no token →
       `ok=true` informational; valid token details; each failure state with
       its inline remedy); read-only + idempotent + history-independent with
       a license present; signature and exp checks mutation-proven.
-- [ ] RED: `tests/test_licensing_offline.py` — §6 pins (activation with
+      **Landed 2026-09-25** (commit `6023a72`): 9 tests; M1 (skipped
+      signature) and M2 (expiry boundary) caught live.
+- [x] RED: `tests/test_licensing_offline.py` — §6 pins (activation with
       `socket.socket` patched to raise; no heavyweight imports; remedies
       offline-safe).
-- [ ] GREEN: `licensing` check in `scripts/doctor.py`.
-- [ ] Suite green; JUNO/STATE; commit; write `docs/LICENSING_OPS.md`
-      (vendor guide: key custody, mint, rotate, revoke-by-rotation).
+      **Landed 2026-09-25**: 5 tests; M6 (network import in the package)
+      caught live.
+- [x] GREEN: `licensing` check in `scripts/doctor.py`.
+      **Landed 2026-09-25**: unlicensed = `ok=true` and deliberately excluded
+      from `overall_ready`; every remedy offline-safe; M5 (doctor failing an
+      unlicensed install) caught live.
+- [x] Suite green; JUNO/STATE; commit.
+      **Landed 2026-09-25** (commit `6023a72`): full suite **1316 passed / 0
+      failed**.
+- [ ] **Still open — write `docs/LICENSING_OPS.md`** (vendor guide: key custody,
+      mint, rotate, revoke-by-rotation). Verified absent 2026-09-27 (no file,
+      no commit history); split out during the reconciliation because the rest
+      of the box landed.
 
 ---
 
@@ -274,3 +355,12 @@ No change in this unit lands without a recorded finding attached to it.
 | Date | Unit | Outcome | Evidence |
 |------|------|---------|----------|
 | 2026-09-25 | U1.1 | Landed: rotation 5 MiB × 3 + repo-local `default_log_file()`; `logs/` gitignored | `tests/test_logging_rotation.py` 4 pass; shape suites combined 33 pass; full suite 1315 pass |
+| 2026-09-25 | U1.2 | Landed: crash core (fail-closed consent, sanitizer, record/bundle caps, excepthooks, consent-gated faulthandler); Qt message handler + `MainWindow` wiring deferred to U3 by recorded decision | commit `45eea1b`; `tests/test_crash_sanitize.py` (8) + `test_crash_consent.py` (8) + `test_crash_handlers.py` (10); M-CONSENT/M-SANITIZE caught; full suite 1354/0 |
+| 2026-09-25 | U1.3 | Landed: privacy CLI + doctor `crash_reports`; the four §12 decisions confirmed | commit `f2860a2`; `tests/test_crash_consent_cli.py` (5) + `tests/test_doctor_crash.py` (8); full suite 1369/0 |
+| 2026-09-25 | U2.1 | Closed as Option B (vendored Ed25519) instead of the written `pynacl` pin; no dependency added; spec D1 repoint pending owner ratification | `docs/LICENSING_DESIGN.md` §3/§8/§9.1; commit `6023a72`; `pyproject.toml` carries no `pynacl` |
+| 2026-09-25 | U2.2 | Landed: tokens/keys/Ed25519/store/machine/policy; **open: direct policy tests — none found** | commit `6023a72`; `tests/test_licensing_{tokens,keys,ed25519,store}.py` |
+| 2026-09-25 | U2.3 | Landed: `activate`/`machine-id` CLI + vendor signer; **open: `license-status` has no test** | commit `6023a72`; `tests/test_activation_flow.py` (6) + `tests/test_license_sign.py` (5) |
+| 2026-09-25 | U2.4 | Landed: doctor check + offline pins; **open: `docs/LICENSING_OPS.md` absent** | commit `6023a72`; `tests/test_doctor_licensing.py` (9) + `tests/test_licensing_offline.py` (5); full suite 1316/0 |
+| 2026-09-27 | Recon | Checkboxes and log reconciled with landed work; open sub-items split out, not fixed; D1 ratification awaits the owner | this file; 13 crash/licensing test files re-ran green: **101 passed** |
+
+*Reconciled 2026-09-27 against `git log`, `STATE.md`, and the test files on disk; the 13 crash/licensing test files re-ran green (**101 passed**). No production code changed in this reconciliation.*
