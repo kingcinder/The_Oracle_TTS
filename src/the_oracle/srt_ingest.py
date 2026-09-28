@@ -28,6 +28,94 @@ from pathlib import Path
 
 from the_oracle.speaker_attribution.heuristics import canonical_speaker_label
 
+#: Cue separator: the blank-line runs (CRLF or LF) that end one SubRip/
+#: WebVTT cue and start the next. Splitting the raw BYTES on these runs lets
+#: each cue decode independently (see _decode_subtitle_bytes).
+_CUE_SEPARATOR_RE = re.compile(rb"(\r?\n\r?\n+)")
+
+#: cp1252 byte values that decode to U+FFFD (the codec's holes): a segment
+#: that only falls through to replacement because of these bytes is not
+#: really Windows-1252 text, so the last-resort decode tolerates them.
+_CP1252_HOLE_BYTES = frozenset({0x7F, 0x81, 0x8D, 0x8F, 0x90, 0x9D})
+
+#: The characters cp1252 can express beyond Latin-1 (dashes, quotes, euro,
+#: trademark and friends), DERIVED from the codec rather than hand-typed so
+#: the set cannot drift from what cp1252 actually maps: the repertoire check
+#: in _utf8_guard accepts exactly these as plausible readings of
+#: coincidentally-valid UTF-8 byte patterns.
+_CP1252_EXTRA_CHARACTERS = frozenset(
+    ch
+    for ch in (
+        bytes([value]).decode("cp1252", errors="replace")
+        for value in range(0x80, 0x100)
+    )
+    if ch != "\ufffd"
+)
+
+
+def _utf8_guard(text: str) -> bool:
+    """True when the UTF-8 reading produces only cp1252-representable text.
+
+    A cp1252 file's bytes can happen to form valid UTF-8. The guard keeps the
+    historical UTF-8-wins precedence for every ambiguous byte pattern whose
+    UTF-8 reading stays inside cp1252's own repertoire (accented names,
+    dashes, curly quotes — the punctuation of real dialogue), and rejects it
+    only when the reading produces characters cp1252 CANNOT express — e.g.
+    the byte triple ``E9 99 80``, which is ``é™€`` in cp1252 but one CJK
+    codepoint (U+9640) in UTF-8. Those are the bytes where CP1252 is the only
+    reading that explains the file.
+    """
+    return all(
+        ord(ch) <= 0xFF or ch in _CP1252_EXTRA_CHARACTERS
+        for ch in text
+        if ord(ch) > 0x7F
+    )
+
+
+def _decode_subtitle_bytes(raw: bytes) -> str:
+    """Decode subtitle bytes with per-cue encoding recovery.
+
+    The historical chain (strict UTF-8 with BOM tolerance, then CP1252) is a
+    whole-file decision: one UTF-8 cue exported into a file whose remaining
+    cues are legacy Windows-1252 turned that cue's accented text into mojibake
+    (UTF-8 ``é`` = ``C3 A9`` reads as ``Ã©`` in CP1252). Real exports mix
+    encodings like that, so decoding is per cue: split the raw bytes on
+    blank-line runs (the cue separator in SubRip and WebVTT alike), decode
+    each segment independently, and rejoin with the original separator bytes
+    verbatim — parsing, which is blank-line-run agnostic, is unaffected.
+
+    Per segment: strict UTF-8 (BOM tolerated — and only legal at the very
+    start, where the whole-file decode puts it), then strict CP1252, then
+    CP1252 with replacement as the last resort so a file in some third
+    encoding degrades to visible U+FFFD marks instead of aborting the
+    conversion. The ambiguity guard in :func:`_utf8_guard` keeps a
+    coincidentally-valid-UTF-8 cp1252 segment on its real encoding.
+    """
+    try:
+        text = raw.decode("utf-8-sig")
+        if _utf8_guard(text):
+            return text
+    except UnicodeDecodeError:
+        pass
+    decoded: list[str] = []
+    # With the separator captured, split() alternates cue bytes and separator
+    # bytes; the separators are pure ASCII and go back in verbatim so the
+    # text parsing sees exactly the blank-line runs the file carried.
+    parts = _CUE_SEPARATOR_RE.split(raw)
+    for index, part in enumerate(parts):
+        if index % 2 == 1:
+            decoded.append(part.decode("ascii"))
+            continue
+        try:
+            text = part.decode("utf-8-sig")
+            decoded.append(text if _utf8_guard(text) else part.decode("cp1252"))
+        except UnicodeDecodeError:
+            if any(byte in _CP1252_HOLE_BYTES for byte in part):
+                decoded.append(part.decode("cp1252", errors="replace"))
+            else:
+                decoded.append(part.decode("cp1252"))
+    return "".join(decoded)
+
 # A cue clock line: "00:00:01,000 --> 00:00:04,000" (SubRip, comma or dot
 # millis) or "01:02.500 --> 01:05.000" (WebVTT: optional hours, dot millis,
 # optional cue settings after the end time).
@@ -286,10 +374,7 @@ def convert_srt_file(path: str | Path, *, overwrite: bool = False) -> tuple[Path
     """
     file_path = Path(path)
     raw = file_path.read_bytes()
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = raw.decode("cp1252")
+    text = _decode_subtitle_bytes(raw)
     script, cue_count, speaker_count = srt_to_dialogue_text(text)
     if not script:
         raise ValueError(f"No valid SubRip cues found in {file_path}")
@@ -327,11 +412,7 @@ def ensure_subtitle_script(path: str | Path) -> tuple[str, str | None]:
         raw = file_path.read_bytes()
     except OSError:
         return path, None
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        text = raw.decode("cp1252", errors="replace")
-    if not looks_like_srt(text):
+    if not looks_like_srt(_decode_subtitle_bytes(raw)):
         return path, None
     from the_oracle.subtitle_targets import converted_script_target
 

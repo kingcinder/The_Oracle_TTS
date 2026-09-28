@@ -1086,17 +1086,17 @@ def test_utf8_bom_srt_converts_offscreen(qt_app, monkeypatch, tmp_path) -> None:
 
 
 def test_mixed_encoding_vtt_converts_offscreen(qt_app, monkeypatch, tmp_path) -> None:
-    """Real offscreen GUI smoke test: a mixed-encoding .vtt still converts.
+    """Real offscreen GUI smoke test: a mixed-encoding .vtt converts with
+    every cue recovered on its own encoding.
 
     Cue 1 is UTF-8-encoded and cue 2 CP1252-encoded (the classic concatenat
-    of files saved by two different editors). The strict ``utf-8-sig``
-    decode fails on the whole file (cue 2's lone \xe8), so the chain falls
-    back to CP1252 and salvages: the CP1252 cue decodes exactly, while the
-    UTF-8 cue arrives in its deterministic CP1252 re-decoding (mojibake).
-    The smoke contract is that this converts instead of blocking or
-    raising; the lossy salvage semantics for the mis-encoded cue are
-    pinned deliberately — changing them is a behavior change, not an
-    accident.
+    of files saved by two different editors). The whole-file ``utf-8-sig``
+    decode fails (cue 2's lone \xe8), and the conversion recovers per cue:
+    each blank-line-delimited segment decodes on its own encoding, so BOTH
+    cues arrive exactly instead of the UTF-8 cue degrading to CP1252
+    mojibake. (The old contract pinned that mojibake deliberately; the
+    2026-09-28 mixed-encoding salvage slice closed the gap and this pin
+    moved with it — still converting, never blocking or raising.)
     """
     window, _paths = _build_window(monkeypatch, tmp_path)
     vtt = tmp_path / "mixed.vtt"
@@ -1110,10 +1110,11 @@ def test_mixed_encoding_vtt_converts_offscreen(qt_app, monkeypatch, tmp_path) ->
     converted = Path(script).read_text(encoding="utf-8")
     # The CP1252 cue survives byte-exact (\xe8 -> \u00e8).
     assert "julia: [pause=1000] Tr\u00e8s bien, indeed." in converted
-    # The UTF-8 cue is salvaged under CP1252: its UTF-8 bytes re-decode
-    # deterministically (\u00e9 -> \xc3\xa9 -> \u00c3\u00a9), still attributed to winston.
+    # The UTF-8 cue now decodes exactly too (\u00e9 stays \u00e9), still
+    # attributed to winston — the mojibake pin (\u00c3\u00a9) is gone.
     assert converted.startswith("winston: ")
-    assert "caf\u00c3\u00a9" in converted
+    assert "caf\u00e9" in converted
+    assert "ca\u00c3\u00a9" not in converted, "mojibake returned"
     assert "Converted" in window.error_panel.toPlainText()
     # The subtitle file itself is untouched (convert-not-overwrite).
     assert b"WEBVTT" in vtt.read_bytes()
