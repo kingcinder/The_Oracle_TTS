@@ -61,11 +61,90 @@ def _render_command(backend: str = "pytorch") -> list[str]:
     return command
 
 
+def _vulkan_available() -> bool:
+    try:
+        from the_oracle.tts_engines.vulkan_backend import find_audiocpp_binary
+
+        return bool(find_audiocpp_binary())
+    except Exception:
+        return False
+
+
+def _run_acceptance(outdir: Path) -> int:
+    """The plan's hard gate: 5x pytorch, 3x vulkan (or explicit skip), 3x GUI,
+    zero non-zero exits and zero new crash records."""
+    from the_oracle import crash
+
+    root = REPO_ROOT
+    records_before = set(crash.list_records(root))
+    summary: dict = {"new_crash_records": 0}
+
+    for leg, runs, extra in (
+        ("render_pytorch", 5, []),
+        ("render_vulkan", 3, ["--backend", "vulkan"]),
+    ):
+        if leg == "render_vulkan" and not _vulkan_available():
+            summary[leg] = {"runs": 0, "non_zero": 0, "vulkan_unavailable": "audio.cpp build not found"}
+            continue
+        non_zero = 0
+        for _ in range(runs):
+            proc = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--mode", "render", "--runs", "1", *extra],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=3600,
+            )
+            if proc.returncode != 0:
+                non_zero += 1
+        summary[leg] = {"runs": runs, "non_zero": non_zero}
+
+    gui_non_zero = 0
+    for _ in range(3):
+        kind = _run_gui_once(root / "Output" / "logs")
+        if kind != "ok":
+            gui_non_zero += 1
+    summary["gui"] = {"runs": 3, "non_zero": gui_non_zero}
+
+    summary["new_crash_records"] = len(harvest_crash_records(root, records_before))
+    verdict, reasons = _acceptance_summary(summary)
+    summary["verdict_pass"] = verdict
+    summary["reasons"] = reasons
+    (outdir / "acceptance.json").write_text(json.dumps(summary, indent=2))
+    print(json.dumps(summary, indent=2))
+    return 0 if verdict else 1
+
+
 def harvest_crash_records(root: Path, before: set) -> list[str]:
     """Paths (as strings) of crash records that appeared since the snapshot."""
     from the_oracle import crash
 
     return [str(p) for p in crash.list_records(root) if p not in before]
+
+
+# --- Task 11: acceptance verdict ---
+
+
+def _acceptance_summary(summary: dict) -> tuple[bool, list[str]]:
+    """Judge an acceptance run: (pass, reasons).
+
+    Failures are named per leg; an explicitly-skipped backend
+    (``vulkan_unavailable``) passes but stays visible in reasons.
+    """
+    reasons: list[str] = []
+    for leg in ("render_pytorch", "render_vulkan", "gui"):
+        counts = summary.get(leg) or {}
+        if counts.get("vulkan_unavailable"):
+            reasons.append(f"{leg} vulkan_unavailable: {counts['vulkan_unavailable']}")
+            continue
+        non_zero = counts.get("non_zero", 0)
+        if non_zero:
+            reasons.append(f"{leg}: {non_zero} of {counts.get('runs', 0)} runs exited non-zero")
+    new_records = summary.get("new_crash_records", 0)
+    if new_records:
+        reasons.append(f"{new_records} new crash record(s) written during acceptance")
+    failures = [r for r in reasons if "vulkan_unavailable" not in r]
+    return (not failures), reasons
 
 
 # --- Task 4: offscreen GUI loop mode ---
@@ -151,11 +230,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Reproduce and classify Oracle crashes.")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--outdir", default=str(REPO_ROOT / "build" / "crash_hunt"))
-    parser.add_argument("--mode", choices=("render", "gui"), default="render")
+    parser.add_argument("--mode", choices=("render", "gui", "acceptance"), default="render")
     parser.add_argument("--backend", choices=("pytorch", "vulkan"), default="pytorch")
     args = parser.parse_args(argv)
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    if args.mode == "acceptance":
+        return _run_acceptance(outdir)
     failures: list[dict] = []
     if args.mode == "gui":
         timing_dir = REPO_ROOT / "Output" / "logs"

@@ -80,6 +80,57 @@ def test_harvest_ignores_preexisting_records(tmp_path: Path):
     assert crash_hunt.harvest_crash_records(root, before) == []
 
 
+# --- Task 11: acceptance summary ---
+
+
+def test_acceptance_summary_all_clean_passes():
+    summary = {
+        "render_pytorch": {"runs": 5, "non_zero": 0},
+        "render_vulkan": {"runs": 3, "non_zero": 0},
+        "gui": {"runs": 3, "non_zero": 0},
+        "new_crash_records": 0,
+    }
+    verdict, reasons = crash_hunt._acceptance_summary(summary)
+    assert verdict is True
+    assert reasons == []
+
+
+def test_acceptance_summary_fails_on_sigsegv():
+    summary = {
+        "render_pytorch": {"runs": 5, "non_zero": 1},
+        "render_vulkan": {"runs": 3, "non_zero": 0},
+        "gui": {"runs": 3, "non_zero": 0},
+        "new_crash_records": 0,
+    }
+    verdict, reasons = crash_hunt._acceptance_summary(summary)
+    assert verdict is False
+    assert any("render_pytorch" in reason for reason in reasons)
+
+
+def test_acceptance_summary_fails_on_new_crash_record():
+    summary = {
+        "render_pytorch": {"runs": 5, "non_zero": 0},
+        "render_vulkan": {"runs": 3, "non_zero": 0},
+        "gui": {"runs": 3, "non_zero": 0},
+        "new_crash_records": 2,
+    }
+    verdict, reasons = crash_hunt._acceptance_summary(summary)
+    assert verdict is False
+    assert any("crash record" in reason for reason in reasons)
+
+
+def test_acceptance_summary_handles_vulkan_unavailable():
+    summary = {
+        "render_pytorch": {"runs": 5, "non_zero": 0},
+        "render_vulkan": {"runs": 0, "non_zero": 0, "vulkan_unavailable": "audio.cpp build missing"},
+        "gui": {"runs": 3, "non_zero": 0},
+        "new_crash_records": 0,
+    }
+    verdict, reasons = crash_hunt._acceptance_summary(summary)
+    assert verdict is True, "an explicitly-skipped backend must not fail acceptance"
+    assert any("vulkan_unavailable" in reason for reason in reasons)  # skip is visible
+
+
 # --- Task 4: offscreen GUI loop mode ---
 
 
