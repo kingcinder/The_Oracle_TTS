@@ -39,6 +39,7 @@ Contracts:
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -140,7 +141,16 @@ def _dynamic_import_target(call: ast.Call) -> tuple[str, bool] | None:
     return ("<non-literal>", False)
 
 
-def _scan_imports(source: str) -> ImportScan:
+def _scan_imports(
+    source: str, *, forbidden: Callable[[str], bool] | None = None
+) -> ImportScan:
+    """Scan one module's source for imports; ``forbidden`` overrides the
+    default app_gui/gui_* rule for reuse by other layer pins (e.g.
+    gui_vulkan, where gui_utils is a legal sibling but app_gui is not).
+    The predicate receives the normalized module path — compare roots with
+    :func:`_module_root`.
+    """
+    _is_forbidden_module = forbidden or _is_forbidden
     tree = ast.parse(source)
     modules: list[str] = []
     violations: list[str] = []
@@ -159,7 +169,7 @@ def _scan_imports(source: str) -> ImportScan:
                 continue
             for candidate in _candidates(node):
                 modules.append(candidate)
-                if _is_forbidden(candidate):
+                if _is_forbidden_module(candidate):
                     violations.append(
                         f"line {node.lineno}: `{segment}` imports {candidate}"
                     )
@@ -176,7 +186,7 @@ def _scan_imports(source: str) -> ImportScan:
                 )
             else:
                 modules.append(module)
-                if _is_forbidden(module):
+                if _is_forbidden_module(module):
                     violations.append(
                         f"line {node.lineno}: `{segment}` imports {module}"
                     )

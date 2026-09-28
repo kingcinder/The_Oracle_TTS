@@ -1064,15 +1064,17 @@ rewritten by the loop).
 
 ## Noticed, not yet actioned
 
-- **`test_gui_vulkan_imports_nothing_from_app_gui` only sees absolute
-  spellings (2026-09-27)**: that guard checks `alias.name == "app_gui"` /
-  `node.module == "app_gui"` bare, so it would pass green over
-  `from the_oracle import app_gui`, `from . import app_gui`, and every
-  `gui_*` sibling import in `gui_vulkan` — the exact forms the new
-  `tests/test_gui_import_direction.py` scanner handles for `gui_render`.
-  Extending the direction guard to the other `gui_*` slices (or repointing
-  vulkan's test at the shared scanner) is the natural next slice;
-  deliberately not folded into the gui_render guard's own change.
+- **RESOLVED 2026-09-27** — `test_gui_vulkan_imports_nothing_from_app_gui`
+  only saw absolute spellings (found 2026-09-27): that guard checked
+  `alias.name == "app_gui"` / `node.module == "app_gui"` bare, so it would
+  pass green over `from the_oracle import app_gui`, `from . import app_gui`,
+  and every `gui_*` sibling import in `gui_vulkan`. Closed by the Vulkan
+  thread-cluster extraction slice: the test now reuses the
+  `tests/test_gui_import_direction.py` scanner (`_scan_imports` with a
+  gui_vulkan-specific predicate — gui_utils stays legal, app_gui does not),
+  with full spelling coverage and per-form proofs; the lazy function-level
+  `from the_oracle import app_gui` mutation the old check would have missed
+  is now caught (mutation-proven in the slice).
 
 - **Campaign crypto decision D1 vs. the built licensing unit (2026-09-25)**:
   the campaign design resolved token crypto to `pynacl==1.5.0` (Option A),
