@@ -933,71 +933,58 @@ rewritten by the loop).
   sweep also forced a no-mkdir existence probe (`ProjectCache.stem_cache_dir_for`)
   because the constructor eagerly creates the layout — sweeping a misspelled
   path would otherwise conjure an empty cache and report a clean run.
-
-## Next
-
-- **Consumer-market readiness campaign is written down; all contract decisions
-  resolved (2026-09-25)**: the design record is
-  `docs/superpowers/specs/2026-09-25-consumer-market-readiness-design.md` — unit
-  decomposition U1 diagnostics (crash/logging/privacy) → U2 licensing → U3 GUI
-  surfaces → U4 refinement (measurement-first) → U5 release — plus resolutions of
-  every open decision: crypto = `pynacl` Option A with offline-bundle evidence,
-  no machine-locked seats in v1, trial minting vendor-side, no crash transport,
-  fail-closed consent, caps as designed, next-session crash notice. The execution
-  plan is `docs/superpowers/plans/2026-09-25-consumer-market-readiness.md`
-  (bite-sized TDD steps per unit, mutation-proven pins, one bounded unit per
-  session). The two scoped unit bullets below remain the design contracts; the
-  campaign executes them slice by slice.
-
-- **U1.3 landed (2026-09-25) — consent CLI + doctor crash check; §12 decisions confirmed.**
-  `the-oracle privacy-status` / `privacy-opt-in` / `privacy-opt-out [--purge]`: the opt-in is
-  the only path that can enable capture (and arms faulthandler), opt-out disarms immediately
-  (fire-time consent) and keeps reports unless `--purge` is explicit — a flag, not a prompt,
-  because the CLI refuses interactive prompts on non-TTY (repo precedent); the confirm dialog
-  belongs to the GUI slice. The doctor's `crash_reports` check treats opted-out as valid, is
-  excluded from `overall_ready`, infers writability with os.access instead of a write probe
-  (read-only pin), and surfaces a native-crash dump as the segfault watch item's data. All
-  four §12 decisions CONFIRMED and recorded in the design doc (no transport, caps as
-  implemented, separate consent store, next-session GUI prompt). 15 new tests; M-CLI-CONSENT
-  and M-DOC-CRASH caught live, reverts sha256-identical. Real bug the net caught:
-  `bundle.list_records`/cap enforcement sorted by filename, but same-second records share a
-  timestamp prefix and fell through to the random uuid suffix — "newest" and "oldest dropped"
-  could both be arbitrary; ordering is now mtime-based. Full suite 1369 passed / 0 failed.
-- **U1.2 landed (2026-09-25) — the crash core (handlers, sanitizer, consent, persistence).**
-  `the_oracle/crash/`: fail-closed consent (unreadable/missing/malformed = opted out;
-  stored separately from app_settings.json so settings corruption can never flip it on),
-  the drop-what-it-cannot-classify sanitizer, the §4 record schema, capped atomic
-  persistence (20 records), sys/threading excepthooks that chain to the previous hook
-  and never re-raise, and consent-gated faulthandler (enable-time consent — C-level
-  code cannot be wrapped, and the docstring says so honestly). One `install()` call in
-  cli.main; the Qt message handler waits for the GUI slice since app_gui.py is the
-  concurrent engine thread's in-flight surface. Native segfaults now leave
-  `crash_reports/native-crash.txt` — the blocked-on-repro watch item has its data path.
-  26 new tests; M-CONSENT and M-SANITIZE caught live with sha256-identical reverts.
-  Lesson pinned in JUNO_FIXES.log: pytest's threadexception plugin owns
-  threading.excepthook inside test bodies — identity tests pin sys.excepthook and
-  invoke the threading hook directly.
-- **U1.1 landed (2026-09-25) — log rotation + repo-local default log.**
-  `configure_logging` installs a `RotatingFileHandler` (5 MiB × 3, read from
-  module constants at call time), `default_log_file()` returns the repo-local
-  `logs/oracle.log` (directory created on demand), and `logs/` is gitignored;
-  FD-clean reconfigure semantics unchanged and pinned with rotation in place.
-  Tests `tests/test_logging_rotation.py` (4). Full suite at this state: 1315
-  passed / 0 failed. Next campaign step: U1.2 (`crash/` core) per the plan.
-
-- **Crash/telemetry/privacy unit is scoped, not built** (2026-09-25):
-  `docs/CRASH_TELEMETRY_DESIGN.md` is the design contract — local-first
-  crash capture (excepthook + threading hook + Qt message handler +
-  faulthandler, which finally gives the blocked-on-repro segfault watch item
-  a data path), a redaction sanitizer whose core rule is *drop what it
-  cannot classify*, fail-closed consent (unreadable = opted out) stored
-  separately from app_settings.json, log rotation for the currently
-  unbounded `utils/logging.py`, and **zero built-in network transport** —
-  the user shares a report deliberately. PRIVACY.md lands last, after its
-  claims are pinned by tests. Rollout §11; open decisions §12.
+- **The consumer-market campaign's diagnostics unit (U1) is built and landed
+  (2026-09-25)** — the design contract was written first
+  (`docs/CRASH_TELEMETRY_DESIGN.md`: local-first crash capture via excepthook +
+  threading hook + Qt message handler + faulthandler, which finally gives the
+  blocked-on-repro segfault watch item a data path; a redaction sanitizer whose
+  core rule is *drop what it cannot classify*; fail-closed consent stored
+  separately from app_settings.json; log rotation for the previously unbounded
+  `utils/logging.py`; **zero built-in network transport** — the user shares a
+  report deliberately; PRIVACY.md deliberately lands last, after its claims are
+  pinned by tests — rollout §11, open decisions §12), then three slices built it:
+  - **U1.1 — log rotation + repo-local default log.** `configure_logging`
+    installs a `RotatingFileHandler` (5 MiB × 3, read from module constants at
+    call time), `default_log_file()` returns the repo-local `logs/oracle.log`
+    (directory created on demand), and `logs/` is gitignored; FD-clean
+    reconfigure semantics unchanged and pinned with rotation in place. Tests
+    `tests/test_logging_rotation.py` (4). Full suite at this state: 1315
+    passed / 0 failed.
+  - **U1.2 — the crash core (handlers, sanitizer, consent, persistence).**
+    `the_oracle/crash/`: fail-closed consent (unreadable/missing/malformed =
+    opted out; stored separately from app_settings.json so settings corruption
+    can never flip it on), the drop-what-it-cannot-classify sanitizer, the §4
+    record schema, capped atomic persistence (20 records), sys/threading
+    excepthooks that chain to the previous hook and never re-raise, and
+    consent-gated faulthandler (enable-time consent — C-level code cannot be
+    wrapped, and the docstring says so honestly). One `install()` call in
+    cli.main; the Qt message handler waits for the GUI slice since app_gui.py
+    is the concurrent engine thread's in-flight surface. Native segfaults now
+    leave `crash_reports/native-crash.txt` — the blocked-on-repro watch item
+    has its data path. 26 new tests; M-CONSENT and M-SANITIZE caught live with
+    sha256-identical reverts. Lesson pinned in JUNO_FIXES.log: pytest's
+    threadexception plugin owns threading.excepthook inside test bodies —
+    identity tests pin sys.excepthook and invoke the threading hook directly.
+  - **U1.3 — consent CLI + doctor crash check; §12 decisions confirmed.**
+    `the-oracle privacy-status` / `privacy-opt-in` / `privacy-opt-out [--purge]`:
+    the opt-in is the only path that can enable capture (and arms faulthandler),
+    opt-out disarms immediately (fire-time consent) and keeps reports unless
+    `--purge` is explicit — a flag, not a prompt, because the CLI refuses
+    interactive prompts on non-TTY (repo precedent); the confirm dialog belongs
+    to the still-pending GUI slice. The doctor's `crash_reports` check treats
+    opted-out as valid, is excluded from `overall_ready`, infers writability
+    with os.access instead of a write probe (read-only pin), and surfaces a
+    native-crash dump as the segfault watch item's data. All four §12 decisions
+    CONFIRMED and recorded in the design doc (no transport, caps as implemented,
+    separate consent store, next-session GUI prompt). 15 new tests; M-CLI-CONSENT
+    and M-DOC-CRASH caught live, reverts sha256-identical. Real bug the net
+    caught: `bundle.list_records`/cap enforcement sorted by filename, but
+    same-second records share a timestamp prefix and fell through to the random
+    uuid suffix — "newest" and "oldest dropped" could both be arbitrary;
+    ordering is now mtime-based. Full suite 1369 passed / 0 failed.
 - **The licensing unit's core, doctor check, and offline pins are built** (2026-09-25,
   rollout steps 1–5 of `docs/LICENSING_DESIGN.md`; step 6 GUI slice and step 7
-  privacy policy remain). The crypto decision is MADE: vendored verify-only
+  privacy policy remain — campaign U3). The crypto decision is MADE: vendored verify-only
   pure-Python Ed25519 (`the_oracle/_ed25519.py`, pinned to the RFC 8032 §7.1
   test vectors — no new dependency, offline bundle unchanged; the pynacl swap
   path is one module). ORACLE1 canonical-JSON tokens verify through typed
@@ -1026,7 +1013,6 @@ rewritten by the loop).
   against the installed distribution metadata and reports missing or
   mismatching packages, so drift surfaces in the doctor report instead of as a
   mysterious test failure days later.
-
 - **Release metadata is single-sourced.** `__version__` in `src/the_oracle/__init__.py` is the
   only tracked version literal; `pyproject.toml` reads it via `[tool.setuptools.dynamic]` and
   `scripts/release.py` enforces the invariant (`--check`), rewrites the README/STATE banners
@@ -1051,8 +1037,30 @@ rewritten by the loop).
   (`tests/fixtures/stream_of_consciousness_dialogue_with_typos.txt`) pinning the
   transformer's spelling-blindness: format-clean file, typos survive every transform
   untouched. Typos in *content* are render-time text repair's domain, not the format
-  gate's -- if anyone asks why check-input says "no issues" on a file named
+  gate's — if anyone asks why check-input says "no issues" on a file named
   "_with_typos", that is the tested contract, not a bug.
+
+## Next
+
+- **Consumer-market readiness campaign — U1 diagnostics landed; U2–U5 remain
+  (designed 2026-09-25, executing slice by slice)**: the design record is
+  `docs/superpowers/specs/2026-09-25-consumer-market-readiness-design.md` — unit
+  decomposition U1 diagnostics (crash/logging/privacy, **landed** — its records
+  live in Done) → U2 licensing → U3 GUI surfaces → U4 refinement
+  (measurement-first) → U5 release — plus resolutions of every open decision:
+  crypto = `pynacl` Option A with offline-bundle evidence, no machine-locked
+  seats in v1, trial minting vendor-side, no crash transport, fail-closed
+  consent, caps as designed, next-session crash notice. The execution plan is
+  `docs/superpowers/plans/2026-09-25-consumer-market-readiness.md` (bite-sized
+  TDD steps per unit, mutation-proven pins, one bounded unit per session). The
+  built units' design contracts are recorded in Done and their design docs;
+  what remains of them is the next bullet.
+- **Remainder of the built units**: the crash unit's GUI slice (Qt message
+  handler + the §12 next-session consent prompt) and the licensing unit's
+  step 6 GUI slice — both fold into campaign U3. Step 7 (PRIVACY.md) landed
+  with its offline pins (2026-09-28). U2 needs the crypto-decision
+  ratification flagged in "Noticed" (Option B's own record exists; the spec
+  still says pynacl).
 - The same audit question is worth asking of the *GUI*'s readiness surfaces (the
   onboarding/status panels), which report capability to the user but are only covered by
   smoke tests today.
