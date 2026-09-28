@@ -1058,6 +1058,19 @@ rewritten by the loop).
   on the real repo; `tests/test_release.py` pins it. Setuptools' `build_meta` mutates
   `sys.argv` permanently — any future in-process hook caller must not read `sys.argv` after
   the first hook call.
+- **Slice commits are tooled, not hand-rolled.** `scripts/commit_slices.py` lands a session's
+  verified-but-uncommitted work as separate index-level slice commits: a slice file lists each
+  slice's explicit paths (never `git add -A` — a concurrent session's dirty files cannot ride
+  along), `!` verify commands prove a slice green after its commit before the next slice is
+  touched (a failure stops the run with the failed slice committed and revertable, the journal
+  unwritten), and the run ends with the house-format journal entry and its own commit.
+  `--check-journal` validates `JUNO_FIXES.log` against the house format — per-entry date,
+  field, and commit-citation rules (a dateish-but-malformed line fails loudly instead of
+  silently skipping; truncated hashes would break `git rev-parse` verification, the same net
+  `tests/test_record_integrity.py` enforces over the whole file) plus whole-file vacuity
+  floors — and the journal-commit path refuses a malformed entry before any write. Parsing,
+  refusals, end-to-end commits in a disposable repo, and verify semantics are pinned in
+  `tests/test_commit_slices.py`.
 - **The parked `wip/ingest-refactor-hints` branch is finished and merged** (591efa0, fast-forward). Its two still-valid owners landed: `srt_ingest.ensure_subtitle_script` owns the convert-not-overwrite subtitle policy (both `cli._maybe_convert_srt` and `app_gui._convert_subtitle_input` are presentation wrappers; the GUI's old strict-decode copy — which blocked CP1252 subtitles the CLI converted fine — is gone), and the speaker-ref report data lives in `ingest_transformer.speaker_ref_report_for_file` instead of a CLI private the GUI imported. Ownership is pinned by source scans in `tests/test_subtitle_conversion_has_one_owner.py`, both pins mutation-proven. Worktree note: testing a linked worktree against the shared venv requires PYTHONPATH shadowing (the editable install resolves `the_oracle` to the main checkout); verified by probe before trusting any worktree result.
 - The stream-of-consciousness sample is now a permanent fixture
   (`tests/fixtures/stream_of_consciousness_dialogue_with_typos.txt`) pinning the
