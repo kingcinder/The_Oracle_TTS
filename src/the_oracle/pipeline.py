@@ -465,7 +465,16 @@ def _load_cached_stem(stem_path: Path) -> tuple[np.ndarray, int] | None:
 
     A truncated or otherwise unreadable WAV must never crash the render:
     the caller treats None as a cache miss and re-synthesizes the stem.
+
+    A file that was never written is an ordinary cache MISS, not
+    corruption: the batched read path probes without an ``exists()``
+    check, so a miss (e.g. a Vulkan run reading a cache populated by
+    PyTorch — chunk hashes key on ``inference_backend``) would otherwise
+    hit libsndfile's ENOENT ("System error") and log "unreadable ...
+    deleting" for a file that is not there.
     """
+    if not stem_path.exists():
+        return None
     try:
         return load_audio(stem_path)
     except Exception as exc:
