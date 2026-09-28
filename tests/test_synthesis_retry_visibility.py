@@ -21,6 +21,7 @@ render is marked slow (it runs the full pipeline, without models).
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -652,5 +653,181 @@ def test_seeded_render_with_a_retry_reproduces_run_to_run(tmp_path: Path) -> Non
     # Warm pass: the same project re-serves the healed stems — no engine
     # calls, no new note — proving the healed take is the cached one.
     plan_warm, events_warm, _output_warm, _stems = _seeded_determinism_render(tmp_path, "det_a", engine_cls)
+    assert plan_warm.metadata.get("synthesis_mode") == "cached"
+    assert not [event.retry_note for event in events_warm if event.retry_note]
+
+
+# --------------------------------------------------------------------------
+# The spawn-pool path: same record, different dispatch.
+#
+# The pin above forces force_sequential=True. The worker pool is a different
+# execution mode with its own hazards: the configured seed crosses the spawn
+# boundary through _worker_initialize's initargs, workers synthesize in
+# arbitrary order, and each spawned worker drains only its own RETRY_NOTES
+# queue — the notes ride home pickled on SynthesisResult.retried_note. None
+# of that may change the deterministic record.
+# --------------------------------------------------------------------------
+
+
+#: The task text whose synthesis hits the single hiccup. Keying the flaky
+#: engine on TEXT instead of call order is what makes the hiccup stable under
+#: pool dispatch, where task→worker assignment (and therefore global call
+#: order) is nondeterministic.
+_POOL_FLAKY_MARKER = "pool flaky marker"
+
+
+class _PoolFlakyOnceEngine(_DeterministicChatterboxEngine):
+    """Module-level so spawn workers can pickle the class.
+
+    Degenerates exactly once for the marker task, at its one call, then heals
+    through the real record_synthesis_retry call site. Multiple workers may
+    synthesize concurrently — the marker text is what makes the hiccup
+    fire exactly once per cold render regardless of which worker gets it.
+    """
+
+    engine_version = "deterministic-pool-flaky-v1"
+
+    def synthesize(self, text, conditioning, settings):
+        if _POOL_FLAKY_MARKER in text:
+            if not getattr(self, "_pool_hiccup_spent", False):
+                self._pool_hiccup_spent = True
+                try:
+                    raise DegenerateEngineOutput("flat silence")
+                except DegenerateEngineOutput as first_error:
+                    record_synthesis_retry("chatterbox", first_error, 12)
+        return super().synthesize(text, conditioning, settings)
+
+
+def _seeded_pool_render(tmp_path: Path, project_name: str, engine_cls):
+    """One cold-cache seeded render allowed to dispatch the spawn pool.
+
+    Identical to ``_seeded_determinism_render`` except ``force_sequential`` is
+    left at its default so ``_should_use_worker_pool``'s own gating (standard
+    variant, cpu, pytorch backend) decides the mode — and the test asserts the
+    pool actually ran via ``plan.metadata['synthesis_mode']``.
+    """
+    from the_oracle.models.cache import ProjectCache
+
+    dialogue_path = tmp_path / "smoke_dialogue.txt"
+    if not dialogue_path.exists():
+        # The flaky engine keys its hiccup on TASK CONTENT, so the marker
+        # must ride one utterance. The line stays short enough to chunk into
+        # exactly one synthesis task, so each cold render heals exactly once.
+        dialogue_path.write_text(
+            SMOKE_DIALOGUE.replace(
+                "Speaker A: Chatterbox is the only backend now.",
+                f"Speaker A: The {_POOL_FLAKY_MARKER} works.",
+            ),
+            encoding="utf-8",
+        )
+    speaker_a = _write_reference(tmp_path / "speaker_a_ref.wav", 220.0)
+    speaker_b = _write_reference(tmp_path / "speaker_b_ref.wav", 330.0)
+    project_dir = tmp_path / project_name
+
+    with (
+        patch("the_oracle.pipeline.ChatterboxEngine", engine_cls),
+        patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
+    ):
+        pipeline = OraclePipeline(use_transformers=False, use_language_tool=False, use_punctuation_model=False)
+        shared_voice = VoiceSettings(variant="standard", language="en")
+        speaker_settings = {
+            "A": SpeakerSettings(reference_path=str(speaker_a), voice_settings=shared_voice),
+            "B": SpeakerSettings(reference_path=str(speaker_b), voice_settings=shared_voice),
+        }
+        render_settings = RenderSettings(
+            correction_mode="moderate",
+            model_variant="standard",
+            language="en",
+            export_stems=False,
+            loudness_preset="off",
+            pause_between_turns_ms=120,
+            crossfade_ms=10,
+            seed=11,
+            metadata={"title": "Pool determinism smoke", "output_filename": f"{project_name}.flac"},
+        )
+        plan = pipeline.prepare_plan(dialogue_path, project_dir, speaker_settings, render_settings)
+        events: list[RenderProgress] = []
+        output_path = pipeline.render(plan, render_settings, progress_callback=events.append)
+
+    stems = {
+        path.name: path.read_bytes()
+        for path in sorted(ProjectCache(plan.output_dir).stem_cache_dir.glob("*.wav"))
+        if path.is_file()
+    }
+    return plan, events, output_path, stems
+
+
+def _n_tasks() -> int:
+    """The number of synthesis tasks the smoke dialogue chunks into.
+
+    The pool requires >= _MIN_TASKS_FOR_POOL (4) tasks; the dialogue's four
+    utterances produce exactly four.
+    """
+    return 4
+
+
+def test_seeded_pool_render_with_a_retry_reproduces_run_to_run(tmp_path: Path) -> None:
+    """The determinism pin, extended to the spawn-pool path.
+
+    Two cold-cache seeded renders that each heal the same single hiccup are
+    byte-identical when the WORKER POOL runs the synthesis: same seed,
+    same inputs, the hiccup keyed on task content so pool dispatch order
+    cannot move it — therefore identical chunk hashes, byte-identical stems
+    (including the healed take), identical retry-note streams riding home
+    from whichever spawned worker drained them, the same ``synthesis_retries``
+    metadata, and sample-identical output audio. Also proves the pool really
+    ran (``synthesis_mode == 'parallel'``) on a multi-core host and that a
+    warm re-render re-serves the healed stems note-free.
+    """
+    from the_oracle.pipeline import _MIN_TASKS_FOR_POOL
+
+    from the_oracle.pipeline import _MIN_TASKS_FOR_POOL
+
+    assert _MIN_TASKS_FOR_POOL >= 4 and _n_tasks() >= _MIN_TASKS_FOR_POOL
+    # The pool only runs where more than one worker is worth spawning; on a
+    # single-core host _run_tasks_with_worker_pool stays sequential by design
+    # and this pin would prove nothing about pool dispatch — say so instead.
+    if not os.cpu_count() or os.cpu_count() < 2:
+        pytest.skip(
+            "single-core host: the worker pool deliberately stays sequential "
+            "(_run_tasks_with_worker_pool's count == 1 branch), so the "
+            "pool-path determinism pin cannot run here"
+        )
+
+    # Cold render A.
+    plan_a, events_a, output_a, stems_a = _seeded_pool_render(tmp_path, "pool_a", _PoolFlakyOnceEngine)
+    assert plan_a.metadata.get("synthesis_mode") == "parallel", (
+        "the pool fell back to sequential execution — the determinism proof "
+        "below would say nothing about pool dispatch; investigate the pool "
+        "failure in the render log before trusting a green run"
+    )
+    assert plan_a.metadata.get("synthesis_retries") == "1", (
+        "the marker hiccup must heal exactly once per cold render; if the "
+        "pool never ran, this render quietly fell back to sequential"
+    )
+    notes_a = [event.retry_note for event in events_a if event.retry_note]
+    assert len(notes_a) == 1
+
+    # Cold render B: fresh project, same seed, same inputs, same flakiness.
+    plan_b, events_b, output_b, stems_b = _seeded_pool_render(tmp_path, "pool_b", _PoolFlakyOnceEngine)
+    assert plan_b.metadata.get("synthesis_mode") == "parallel"
+    assert plan_b.metadata.get("synthesis_retries") == "1"
+    notes_b = [event.retry_note for event in events_b if event.retry_note]
+    assert notes_b == notes_a, "the retry-note stream must be identical run to run"
+
+    assert set(stems_a) == set(stems_b), "identical inputs must produce identical chunk hashes under pool dispatch"
+    for name, payload in stems_a.items():
+        assert payload == stems_b[name], f"stem {name} must be byte-identical run to run under the pool"
+
+    import soundfile as sf
+
+    audio_a, rate_a = sf.read(output_a, always_2d=False)
+    audio_b, rate_b = sf.read(output_b, always_2d=False)
+    assert rate_a == rate_b
+    np.testing.assert_array_equal(audio_a, audio_b)
+
+    # The engine really was the pool-flaky one and the hiccup really healed:
+    # a warm re-render of project A re-serves the healed stems note-free.
+    plan_warm, events_warm, _output_warm, _stems = _seeded_pool_render(tmp_path, "pool_a", _PoolFlakyOnceEngine)
     assert plan_warm.metadata.get("synthesis_mode") == "cached"
     assert not [event.retry_note for event in events_warm if event.retry_note]
