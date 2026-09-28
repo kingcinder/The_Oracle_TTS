@@ -1,5 +1,5 @@
 {
-  "description": "Patch-surface ownership manifest for the MainWindow extraction slices: each key is an owner module (in extraction-slice order) and each entry lists the app_gui names that module now owns for itself. A test patching one of these names through app_gui is a silent no-op for the owner's code, because the owner resolves the name from its own globals — such a patch must be repointed at the owner, or the name un-moved. Read by tests/test_app_gui_patch_surface.py, which enforces it and verifies every listed name still exists on its module, and by extraction-slice tooling that needs to know what has already been moved.",
+  "description": "Consolidated policy data for the extraction-slice safety nets: each rule set is read from this one record so neither test file hard-codes policy that belongs to the ownership map. Read by tests/test_app_gui_patch_surface.py (the patch-surface net), tests/test_payload_policy_ownership.py (the payload-policy net) and extraction-slice tooling that needs to know what has already been moved.",
   "moved_owners": {
     "the_oracle.gui_settings": {
       "names": [
@@ -26,5 +26,79 @@
       "names": ["_render_child_environment"],
       "note": "Only the no-op-after-move name. The three class names must NOT be listed: MainWindow (still in app_gui) constructs RenderWorker, PreviewWorker and RenderProgressDialog from app_gui globals, so app_gui-level class patches remain live and legitimate."
     }
+  },
+  "payload_policy": {
+    "description": "Policy data for tests/test_payload_policy_ownership.py: which widgets feed the persisted settings payload, which read accessors count as 'reading a widget' for policy purposes, which MainWindow methods are sanctioned to read them outside the single-reader rule, where the payload policy functions may be referenced, and the schema keys whose hand-rolled copies outside gui_settings the net forbids. The net vacuity-guards this section (field floors) and cross-checks every payload_widgets entry against MainWindow.__init__'s assignments, so a stale or over-typed widget name fails here rather than blinding the reader scan.",
+    "payload_widgets": [
+      "variant_combo",
+      "correction_mode_combo",
+      "loudness_combo",
+      "crossfade_spin",
+      "inference_backend_combo",
+      "outdir_path",
+      "output_name",
+      "export_srt_check",
+      "monologue_check"
+    ],
+    "read_accessors": ["text", "currentText", "value", "isChecked", "currentData"],
+    "sanctioned_readers": [
+      "_widget_snapshot",
+      "_render_settings",
+      "_apply_gui_settings_payload",
+      "_load_project_into_ui",
+      "_handle_outdir_changed",
+      "prepare_project",
+      "render_project",
+      "preview_utterance",
+      "_sync_plan_from_table",
+      "new_project",
+      "_speaker_settings",
+      "_build_project_settings",
+      "_build_ui",
+      "_build_menu",
+      "_register_ctrl_help_descriptions",
+      "_set_correction_mode",
+      "_apply_inference_wizard_selection",
+      "_apply_inference_wizard_preferences",
+      "_apply_remembered_backend",
+      "_pick_outdir",
+      "_persist_remembered_settings",
+      "_refresh_vulkan_preflight_button",
+      "_handle_vulkan_model_downloaded",
+      "_refresh_audio_cpp_knob_options",
+      "_refresh_cast_bar",
+      "_refresh_inference_backend_options",
+      "_refresh_language_options",
+      "apply_cast"
+    ],
+    "policy_references": [
+      "current_gui_settings_payload",
+      "default_gui_settings_payload",
+      "cast_request_from_payload",
+      "speaker_config_from_payload",
+      "WidgetSnapshot",
+      "PayloadDefaults"
+    ],
+    "policy_owners": {"the_oracle.gui_settings": "definition", "the_oracle.app_gui": "delegates"},
+    "schema_keys": [
+      "model_variant",
+      "correction_mode",
+      "loudness_preset",
+      "crossfade_ms",
+      "inference_backend",
+      "device_mode",
+      "cuda_device",
+      "output_dir",
+      "output_filename",
+      "export_srt",
+      "monologue",
+      "delete_confirm_enabled",
+      "output_filename_warning",
+      "audio_cpp_device",
+      "audio_cpp_threads",
+      "audio_cpp_timeout",
+      "audio_cpp_max_batch"
+    ],
+    "schema_exempt_modules": ["the_oracle.gui_settings", "the_oracle.app_gui"]
   }
 }
