@@ -342,12 +342,24 @@ No change in this unit lands without a recorded finding attached to it.
       findings into a tracked digest (`docs/ARCHITECTURE_REVIEW-2026-09-25.md`),
       promote at most three deepening items into this unit; log the rest in
       STATE "Noticed".
-- [ ] **U4.2 Stability / segfault** — with U1's faulthandler records live,
+- [x] **U4.2 Stability / segfault** — with U1's faulthandler records live,
       recreate `/tmp/gui_crash_catcher.sh` if absent and drive the candidate
       state (render-after-render, preview-active) from
       `.serpent-circle/04-debug/root-causes.md`; fix the root cause with a
       regression test, or document a data-backed workaround. Exit probe:
       the scripted smoke path runs repeatedly with zero fatal records.
+      DONE 2026-09-28: catcher recreated (`scripts/u42_crash_catcher.sh`);
+      deterministic headless driver (`scripts/u42_crash_repro.py`) ran the
+      real MainWindow choreography with the U1 net armed; pass 2
+      (render -> preview -> render with playback active) SEGFAULTED rc=139
+      and `crash_reports/native-crash.txt` named the fingerprint: first
+      import of mutagen inside the render worker thread racing the Qt main
+      thread via shiboken6's import hook. FIXED: worker-call-graph imports
+      preloaded at module level (gui_render, export_flac, pipeline json);
+      no behavior change; regression net `test_gui_render_import_safety.py`
+      (RED first, mutation-proven x2, byte-identical reverts); post-fix pass
+      2 rc=0 and all four candidate states clean; full suite 1490 passed.
+      Full resolution narrative in `.serpent-circle/04-debug/root-causes.md`.
 - [x] **U4.3 Pipeline efficiency** — profile a representative render
       (`cProfile` over `scripts/smoke_render.py`), record wall/CPU per stage
       in `docs/PERFORMANCE_BASELINE.md`, land the top bounded win(s) with

@@ -10,6 +10,16 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+# mutagen used to be first imported inside _tag_with_mutagen — i.e. inside
+# whatever thread ran the export. A module whose first import happens on a
+# worker thread races the GUI's main thread through shiboken6's signature
+# import hook and the pair segfaults natively (reproduced and
+# faulthandler-verified, U4.2). It is imported here, at module level, so the
+# first import always lands wherever this module itself is first imported
+# (the main thread for GUI renders).
+import mutagen.flac
+import mutagen.oggvorbis
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -29,6 +39,8 @@ def next_available_output_path(path: str | Path) -> Path:
 
 
 def _tag_with_mutagen(path: Path, metadata: dict[str, str]) -> None:
+    # mutagen.flac is preloaded at module level above (worker-thread
+    # first-imports of it segfault the GUI — see the comment there).
     from mutagen.flac import FLAC
 
     tags = FLAC(str(path))

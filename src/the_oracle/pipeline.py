@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json  # noqa: F401 - preloaded: _load_previous_plan ran this lazily inside worker threads (U4.2 import-safety)
 import multiprocessing
 import os
 from dataclasses import dataclass, field, replace
@@ -2356,8 +2357,6 @@ class OraclePipeline:
         path = Path(project_cache.project_dir) / "render_plan.json"
         if not path.exists():
             return {"utterances": []}
-        import json
-
         return json.loads(path.read_text(encoding="utf-8"))
 
     def _write_correction_log(self, project_cache: ProjectCache, plan: RenderPlan) -> None:
