@@ -174,7 +174,9 @@ MOVED_OWNERS: dict[str, frozenset[str]] = load_moved_owners()
 #: Top-level manifest sections. Every section of the record must be routed
 #: through a validated loader; a section landing in the JSON without one is a
 #: bug to fix, not a free pass to ship unvalidated policy.
-_MANIFEST_SECTIONS = frozenset({"moved_owners", "payload_policy", "writer_manifest"})
+_MANIFEST_SECTIONS = frozenset(
+    {"moved_owners", "payload_policy", "writer_manifest", "patch_couple_policy"}
+)
 
 
 def load_payload_policy(manifest_path: Path = MANIFEST_PATH) -> dict[str, object]:
@@ -754,3 +756,221 @@ def test_moved_owner_names_are_current() -> None:
         owner_mod = importlib.import_module(owner_module)
         assert hasattr(window_mod, name), f"{window_module} lost its {name} site"
         assert hasattr(owner_mod, name), f"{owner_module} lost the {name} it owns"
+
+
+# ---------------------------------------------------------------------------
+# Patch-couple seam net: the app_gui-level rebind census vs. moved gui_* code
+# ---------------------------------------------------------------------------
+
+def load_patch_couple_policy(manifest_path: Path = MANIFEST_PATH) -> dict[str, object]:
+    """Read the ``patch_couple_policy`` section from the manifest, validating it.
+
+    The seam net's rule data lives in the ownership record beside the other
+    rule sets (the writer-manifest consolidation precedent). Shapes: census
+    noise names, anchor names that must stay in the census, blindness floors,
+    and the sanctioned per-module exemption map with a reason on every entry.
+    """
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise AssertionError(f"{manifest_path.name}: top level must be an object")
+    policy = data.get("patch_couple_policy")
+    if not isinstance(policy, dict):
+        raise AssertionError(
+            f"{manifest_path.name}: 'patch_couple_policy' must be an object"
+        )
+
+    def string_list(field: str) -> list[str]:
+        values = policy.get(field)
+        if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+            raise AssertionError(
+                f"{manifest_path.name}: patch_couple_policy.{field} must be a list of strings"
+            )
+        return values
+
+    string_list("census_noise_names")
+    if not string_list("census_anchor_names"):
+        raise AssertionError(
+            f"{manifest_path.name}: census_anchor_names must not be empty"
+        )
+
+    def positive_int(field: str) -> int:
+        value = policy.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise AssertionError(
+                f"{manifest_path.name}: patch_couple_policy.{field} must be a positive integer"
+            )
+        return value
+
+    positive_int("min_census_names")
+    positive_int("min_modules_scanned")
+    positive_int("min_bare_pairs")
+
+    exemptions = policy.get("sanctioned_exemptions")
+    if not isinstance(exemptions, dict) or not exemptions:
+        raise AssertionError(
+            f"{manifest_path.name}: sanctioned_exemptions must be a non-empty object"
+        )
+    for module, names in exemptions.items():
+        if not (module.startswith("gui_") and module.endswith(".py")):
+            raise AssertionError(
+                f"{manifest_path.name}: exemption module {module!r} must be a gui_*.py module"
+            )
+        if not isinstance(names, dict) or not names:
+            raise AssertionError(
+                f"{manifest_path.name}: exemptions for {module} must be a non-empty name map"
+            )
+        for name, reason in names.items():
+            if not isinstance(name, str) or not name.isidentifier():
+                raise AssertionError(
+                    f"{manifest_path.name}: exemption name {name!r} is not an identifier"
+                )
+            if not isinstance(reason, str) or not reason.strip():
+                raise AssertionError(
+                    f"{manifest_path.name}: exemption {module}.{name} needs a reason"
+                )
+    return policy
+
+
+def _is_app_gui_expr(node: ast.expr) -> bool:
+    """True for ``app_gui`` or ``the_oracle.app_gui`` as a patch target."""
+    if isinstance(node, ast.Name):
+        return node.id == "app_gui"
+    if isinstance(node, ast.Attribute):
+        return (
+            node.attr == "app_gui"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "the_oracle"
+        )
+    return False
+
+
+def _app_gui_rebind_census(tests_dir: Path) -> set[str]:
+    """Names the suite rebinds on the app_gui module object (AST census).
+
+    Same no-import/no-execution contract as the committed scanner above:
+    ``setattr(app_gui, "NAME", ...)`` (positional or ``name=`` keyword, on
+    ``app_gui`` or ``the_oracle.app_gui``) and the string spellings
+    ``patch("app_gui.NAME")`` / ``patch("the_oracle.app_gui.NAME")`` count;
+    everything else does not. The census is DERIVED from the tests so it
+    self-updates as patch sites move — no hand-maintained name list.
+    """
+    census: set[str] = set()
+    for path in sorted(tests_dir.glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            is_setattr = (
+                isinstance(node, ast.Call)
+                and (
+                    (isinstance(node.func, ast.Attribute) and node.func.attr == "setattr")
+                    or (isinstance(node.func, ast.Name) and node.func.id == "setattr")
+                )
+                and bool(node.args)
+            )
+            if is_setattr:
+                first = node.args[0]
+                if _is_app_gui_expr(first):
+                    second = node.args[1] if len(node.args) > 1 else next(
+                        (k.value for k in node.keywords if k.arg == "name"), None
+                    )
+                    if isinstance(second, ast.Constant) and isinstance(second.value, str):
+                        census.add(second.value)
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "patch"
+                and node.args
+            ):
+                spelling = node.args[0]
+                if isinstance(spelling, ast.Constant) and isinstance(spelling.value, str):
+                    for prefix in ("the_oracle.app_gui.", "app_gui."):
+                        if spelling.value.startswith(prefix):
+                            tail = spelling.value[len(prefix):]
+                            if tail.isidentifier():
+                                census.add(tail)
+                            break
+    return census
+
+
+def _gui_module_bare_uses(module_name: str, coupled: set[str]) -> set[str]:
+    """Coupled names a gui_* module binds and loads as its own globals.
+
+    The harm class is OWN-BINDING, not merely "not imported": a moved module
+    that carries any module-global binding for a coupled name — its own
+    PySide6/stdlib import, a def/class, an assignment, or a back-import from
+    app_gui (that last one is separately caught by the import-direction net)
+    — resolves the name independently of app_gui, so every app_gui-level
+    rebind of it is a silent no-op for this body. Injected names (call-boundary
+    parameters) never appear: they are not module globals. Function-local
+    shadowing would false-positive here; if that ever fires, rename the local
+    or adjudicate the pair in the record.
+    """
+    path = Path(__file__).resolve().parents[1] / "src" / "the_oracle" / module_name
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    loads = {
+        n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+    }
+    return loads & coupled
+
+
+def test_moved_gui_modules_resolve_every_patch_coupled_name_by_the_seam_rule():
+    """The suite-wide seam net: what the suite rebinds at app_gui level must
+    stay interceptable. A moved gui_* module may load an app_gui-rebound
+    name bare ONLY when the record sanctions it — a future extraction that
+    leaves a coupled name bare fails here until the call boundary injects
+    the name (the 2ba2392 find_audiocpp_binary pattern) or the split is
+    consciously sanctioned with a reason. The raw bare set must equal the
+    sanctioned set EXACTLY, so a stale exemption cannot hide a deleted flow.
+    """
+    policy = load_patch_couple_policy()
+    census = _app_gui_rebind_census(
+        Path(__file__).resolve().parents[1] / "tests"
+    ) - set(policy["census_noise_names"])
+    assert len(census) >= policy["min_census_names"], (
+        f"the rebind census went blind: {len(census)} names found (floor "
+        f"{policy['min_census_names']}); fix the scanner, not this assertion"
+    )
+    for anchor in policy["census_anchor_names"]:
+        assert anchor in census, (
+            f"the census lost {anchor} — the suite stopped patching it or "
+            "the scanner broke; adjudicate before removing the anchor"
+        )
+
+    modules = sorted((Path(__file__).resolve().parents[1] / "src" / "the_oracle").glob("gui_*.py"))
+    assert len(modules) >= policy["min_modules_scanned"], (
+        f"only {len(modules)} gui_* modules found (floor {policy['min_modules_scanned']})"
+    )
+
+    raw: set[tuple[str, str]] = {
+        (path.name, name)
+        for path in modules
+        for name in _gui_module_bare_uses(path.name, census)
+    }
+    assert len(raw) >= policy["min_bare_pairs"], (
+        f"the bare-use scan went blind: {len(raw)} pairs found (floor "
+        f"{policy['min_bare_pairs']}); fix the scanner, not this assertion"
+    )
+
+    # Own-bound coupled pairs must be adjudicated EXACTLY: a gui_* module
+    # binding an app_gui-rebounded name for itself means app_gui-level rebinds
+    # are no-ops for that body — each surviving pair needs a reasoned split in
+    # the record, and a stale reason must be pruned.
+    exemptions = policy["sanctioned_exemptions"]
+    assert isinstance(exemptions, dict)
+    sanctioned = {
+        (module, name) for module, names in exemptions.items() for name in names
+    }
+    problems = []
+    for module, name in sorted(raw - sanctioned):
+        problems.append(
+            f"{module} resolves app_gui-patch-coupled name {name!r} as a bare "
+            "global — an app_gui-level rebind of it is a silent no-op for that "
+            "flow; inject the name at the call boundary (see gui_vulkan's "
+            "find_binary pattern) or sanction the split in "
+            "patch_couple_policy.sanctioned_exemptions with a reason"
+        )
+    for module, name in sorted(sanctioned - raw):
+        problems.append(
+            f"stale exemption {module}.{name}: no bare use remains — prune it "
+            "from the record"
+        )
+    assert not problems, "\n\n".join(problems)
