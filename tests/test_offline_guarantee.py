@@ -440,3 +440,99 @@ def test_unseeded_model_fails_fast_instead_of_reaching_out(
     assert "NotFound" in type(excinfo.value).__name__, type(excinfo.value).__name__
     assert elapsed < 10.0, f"took {elapsed:.1f}s: that is the retry storm, not a local miss"
     assert not no_network, f"resolution attempted a connection: {no_network}"
+
+
+# --- CRASH §8 pins: the crash unit is offline by construction -----------------
+
+
+def _fresh_crash_modules():
+    """Import crash/ clean (its modules are tiny; re-import is harmless)."""
+    import importlib
+    import sys
+
+    for name in [n for n in sys.modules if n.startswith("the_oracle.crash")]:
+        del sys.modules[name]
+    import the_oracle.crash  # noqa: F401
+    import the_oracle.crash.handlers  # noqa: F401
+
+    import the_oracle.crash.bundle as bundle
+    import the_oracle.crash.consent as consent
+    import the_oracle.crash.handlers as handlers
+    import the_oracle.crash.record as record
+    import the_oracle.crash.sanitize as sanitize
+
+    return bundle, consent, handlers, record, sanitize
+
+
+def test_crash_capture_performs_no_network_io(tmp_path, no_network) -> None:
+    """CRASH §8.1: with outbound connections forbidden, a synthetic exception
+    through the installed handlers writes a record and escapes nothing."""
+    bundle, consent, handlers, _record, _sanitize = _fresh_crash_modules()
+    root = tmp_path / "repo"
+    root.mkdir()
+    consent.write_consent(root, True)
+    handlers.install(root)
+    try:
+        try:
+            raise RuntimeError("synthetic crash for the offline pin")
+        except RuntimeError:
+            import sys as _sys
+
+            _sys.excepthook(*_sys.exc_info())
+    finally:
+        if hasattr(handlers, "uninstall"):
+            handlers.uninstall(root)
+    records = bundle.list_records(root)
+    assert records, "no record written under network-forbidden conditions"
+    assert not no_network, f"crash capture attempted a connection: {no_network}"
+
+
+def test_importing_crash_never_imports_heavyweight_modules() -> None:
+    """CRASH §8.2: importing the_oracle.crash must not ADD torch/huggingface/
+    ML modules to sys.modules (module-delta, same technique as licensing)."""
+    before = set(sys.modules)
+    _bundle, _consent, _handlers, _record, _sanitize = _fresh_crash_modules()
+    added = set(sys.modules) - before
+    offenders = sorted(
+        name
+        for name in added
+        if any(marker in name for marker in ("huggingface", "torch", "transformers", "chatterbox", "sklearn", "scipy"))
+    )
+    assert offenders == [], f"crash import pulled in: {offenders}"
+
+
+def test_crash_package_imports_no_network_modules() -> None:
+    """CRASH §8.3: crash/ may not import socket/urllib/http/requests at all —
+    the structural pin that makes 'capture is local-only' an architecture,
+    not a behavior."""
+    package_dir = Path(_fresh_crash_modules()[0].__file__).parent
+    forbidden = (
+        "import socket",
+        "import urllib",
+        "from urllib",
+        "import http",
+        "from http",
+        "import requests",
+        "import ssl",
+        "from urllib",
+    )
+    for source_file in sorted(package_dir.glob("*.py")):
+        text = source_file.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            stripped = line.strip()
+            assert not any(stripped.startswith(marker) for marker in forbidden), (
+                f"{source_file.name}: {stripped}"
+            )
+
+
+def test_consent_writes_only_the_local_flag(tmp_path, no_network) -> None:
+    """CRASH §8.3: opting in/out writes one local file and does nothing else —
+    no network, no scheduled work, no downloads."""
+    bundle, consent, _handlers, _record, _sanitize = _fresh_crash_modules()
+    root = tmp_path / "repo"
+    root.mkdir()
+    consent.write_consent(root, True)
+    assert consent.read_consent(root) is True
+    consent.write_consent(root, False)
+    assert consent.read_consent(root) is False
+    assert not no_network, f"consent writes attempted a connection: {no_network}"

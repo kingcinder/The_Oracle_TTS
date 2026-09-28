@@ -114,6 +114,16 @@ contains a space and is part of the install-boundary test suite). If a
 launcher misbehaves after moving the checkout, re-run
 `.\oracle.ps1 install` to regenerate it.
 
+## Crash reports (if a crash was captured)
+
+If local crash reporting was enabled (check with `the-oracle
+privacy-status`), a captured crash leaves a sanitized JSON report in this
+install's `crash_reports/` folder — the newest report names the exception
+type and where it happened. Review it, then share it only through a
+channel you choose (The Oracle never uploads anything): the report is
+plain JSON, safe to read before sending. Delete everything with
+`the-oracle privacy-opt-out --purge`.
+
 ## Still stuck
 
 `python scripts/doctor.py --json > report.json` attached to a bug report
