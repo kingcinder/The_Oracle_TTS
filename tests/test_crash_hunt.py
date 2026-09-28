@@ -83,6 +83,51 @@ def test_harvest_ignores_preexisting_records(tmp_path: Path):
 # --- Task 11: acceptance summary ---
 
 
+def test_kernel_crash_scan_parses_journal(monkeypatch):
+    """Kernel segfault lines during the run window must count as crashes."""
+    fake_output = (
+        "Sep 27 16:41:06 codypc kernel: python[10010]: segfault at 12 ip 00007af2 in libQt6Widgets.so.6\n"
+        "Sep 27 16:47:56 codypc kernel: traps: python[10825] general protection fault ip:795f\n"
+        "Sep 27 16:48:00 codypc kernel: something harmless\n"
+    )
+    monkeypatch.setattr(crash_hunt, "_journal_kernel_log", lambda since: fake_output)
+    assert crash_hunt._kernel_crash_count("2026-09-27 16:40:00") == 2
+
+
+def test_kernel_crash_scan_unavailable_is_none(monkeypatch):
+    def boom(since):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(crash_hunt, "_journal_kernel_log", boom)
+    assert crash_hunt._kernel_crash_count("2026-09-27 16:40:00") is None
+
+
+def test_acceptance_fails_on_kernel_crash():
+    summary = {
+        "render_pytorch": {"runs": 5, "non_zero": 0},
+        "render_vulkan": {"runs": 3, "non_zero": 0},
+        "gui": {"runs": 3, "non_zero": 0},
+        "new_crash_records": 0,
+        "kernel_crashes": 1,
+    }
+    verdict, reasons = crash_hunt._acceptance_summary(summary)
+    assert verdict is False
+    assert any("kernel" in reason for reason in reasons)
+
+
+def test_acceptance_kernel_scan_unavailable_stays_visible_but_passes():
+    summary = {
+        "render_pytorch": {"runs": 5, "non_zero": 0},
+        "render_vulkan": {"runs": 3, "non_zero": 0},
+        "gui": {"runs": 3, "non_zero": 0},
+        "new_crash_records": 0,
+        "kernel_crashes": None,
+    }
+    verdict, reasons = crash_hunt._acceptance_summary(summary)
+    assert verdict is True
+    assert any("kernel" in reason for reason in reasons)  # degraded scan is visible
+
+
 def test_acceptance_summary_all_clean_passes():
     summary = {
         "render_pytorch": {"runs": 5, "non_zero": 0},

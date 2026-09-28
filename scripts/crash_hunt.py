@@ -70,6 +70,13 @@ def _vulkan_available() -> bool:
         return False
 
 
+def _now_since_arg() -> str:
+    """journalctl --since value for 'now', second resolution (run window start)."""
+    import time
+
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _run_acceptance(outdir: Path) -> int:
     """The plan's hard gate: 5x pytorch, 3x vulkan (or explicit skip), 3x GUI,
     zero non-zero exits and zero new crash records."""
@@ -77,6 +84,7 @@ def _run_acceptance(outdir: Path) -> int:
 
     root = REPO_ROOT
     records_before = set(crash.list_records(root))
+    window_start = _now_since_arg()
     summary: dict = {"new_crash_records": 0}
 
     for leg, runs, extra in (
@@ -107,6 +115,7 @@ def _run_acceptance(outdir: Path) -> int:
     summary["gui"] = {"runs": 3, "non_zero": gui_non_zero}
 
     summary["new_crash_records"] = len(harvest_crash_records(root, records_before))
+    summary["kernel_crashes"] = _kernel_crash_count(window_start)
     verdict, reasons = _acceptance_summary(summary)
     summary["verdict_pass"] = verdict
     summary["reasons"] = reasons
@@ -123,6 +132,40 @@ def harvest_crash_records(root: Path, before: set) -> list[str]:
 
 
 # --- Task 11: acceptance verdict ---
+
+
+def _journal_kernel_log(since: str) -> str:
+    """Kernel log lines since `since` (raises when journalctl is unavailable)."""
+    proc = subprocess.run(
+        ["journalctl", "-k", "--since", since, "--no-pager"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or f"journalctl exit {proc.returncode}")
+    return proc.stdout
+
+
+def _kernel_crash_count(since: str) -> int | None:
+    """Native-crash lines in the kernel log since `since`.
+
+    Every historical app crash left its trace here (segfault / general
+    protection fault / traps: python) — a channel exit codes and
+    crash_records do not cover. None = scan unavailable (visible, not fatal).
+    """
+    try:
+        log = _journal_kernel_log(since)
+    except (FileNotFoundError, RuntimeError, subprocess.SubprocessError, OSError):
+        return None
+    count = 0
+    for line in log.splitlines():
+        lowered = line.lower()
+        if "segfault" in lowered or "general protection fault" in lowered:
+            count += 1
+        elif "traps:" in lowered and "python" in lowered:
+            count += 1
+    return count
 
 
 def _acceptance_summary(summary: dict) -> tuple[bool, list[str]]:
@@ -143,7 +186,13 @@ def _acceptance_summary(summary: dict) -> tuple[bool, list[str]]:
     new_records = summary.get("new_crash_records", 0)
     if new_records:
         reasons.append(f"{new_records} new crash record(s) written during acceptance")
-    failures = [r for r in reasons if "vulkan_unavailable" not in r]
+    if "kernel_crashes" in summary:
+        kernel = summary["kernel_crashes"]
+        if kernel is None:
+            reasons.append("kernel_crashes: scan unavailable (journalctl missing/denied) — degraded, not counted")
+        elif kernel:
+            reasons.append(f"kernel_crashes: {kernel} native crash line(s) in the run window")
+    failures = [r for r in reasons if "vulkan_unavailable" not in r and "scan unavailable" not in r]
     return (not failures), reasons
 
 
