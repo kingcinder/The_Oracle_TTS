@@ -28,8 +28,11 @@ engine gate and take the whole batch down with it.
 
 This file pins both sides: per-path stale-entry rejection, the pause-only
 exemption, and a writer manifest — the scan of every stem/preview-shaped
-write call in ``src/the_oracle`` must land in the gated owners (pipeline.py,
-real_engine_smoke.py) and must not come up empty.
+write call in ``src/the_oracle`` must land in the gated owners and must not
+come up empty. The manifest's rule data (write functions, target-name
+classifiers, per-kind owner sets, blindness floors) lives in the validated
+``writer_manifest`` section of ``scripts/patch_surface_manifest.json`` —
+one record per rule set, none of it spelled out here.
 """
 
 from __future__ import annotations
@@ -350,14 +353,23 @@ class TestWriteGateContract:
 # Writer manifest: stem/preview-shaped writes land only in the gated owners
 # ---------------------------------------------------------------------------
 
-_WRITE_FNS = frozenset({"save_wav", "atomic_write"})
-_STEM_TARGET_NAMES = frozenset({"stem_path"})
-_PREVIEW_TARGET_NAMES = frozenset({"preview_path"})
-_EXPECTED_STEM_WRITERS = frozenset({"pipeline.py", "real_engine_smoke.py"})
+# The writer manifest's rule data lives in the validated ownership record
+# (scripts/patch_surface_manifest.json, 'writer_manifest' section), read
+# through the same loud-failure loader family as the patch-surface and
+# payload-policy nets — future tooling reads the record, this net enforces it.
+from tests.test_app_gui_patch_surface import load_writer_manifest
+
+_WRITER_MANIFEST: dict[str, object] = load_writer_manifest()
+_WRITE_FNS: frozenset[str] = _WRITER_MANIFEST["write_functions"]
+_STEM_TARGET_NAMES: frozenset[str] = _WRITER_MANIFEST["stem_target_names"]
+_PREVIEW_TARGET_NAMES: frozenset[str] = _WRITER_MANIFEST["preview_target_names"]
+_EXPECTED_STEM_WRITERS: frozenset[str] = _WRITER_MANIFEST["stem_writers"]
 # The preview-side gate: preview audio is produced by
 # OraclePipeline.render_preview alone — pause-only utterances route through
 # _write_pause_only_stem there, spoken ones through the gated engine path.
-_EXPECTED_PREVIEW_WRITERS = frozenset({"pipeline.py"})
+_EXPECTED_PREVIEW_WRITERS: frozenset[str] = _WRITER_MANIFEST["preview_writers"]
+_MIN_STEM_SITES: int = _WRITER_MANIFEST["min_stem_sites"]
+_MIN_PREVIEW_SITES: int = _WRITER_MANIFEST["min_preview_sites"]
 
 
 def _classify_write_target(target: ast.expr) -> str | None:
@@ -420,8 +432,8 @@ class TestWriterManifest:
             "New modules are writing stem-cache-shaped files directly. Voice "
             "stems must be written only after the engine-output gate "
             "(sanitize_engine_audio) — route the write through pipeline.py's "
-            "gated paths, or extend _EXPECTED_STEM_WRITERS consciously with a "
-            f"reason. Offending modules: {offenders}"
+            "gated paths, or extend the record's stem_writers consciously with "
+            f"a reason. Offending modules: {offenders}"
         )
 
     def test_preview_writes_land_only_in_gated_owners(self):
@@ -439,7 +451,7 @@ class TestWriterManifest:
             "New modules are writing preview files directly. Preview audio is "
             "owned by OraclePipeline.render_preview (pause-only utterances via "
             "_write_pause_only_stem, spoken ones via the gated engine path) — "
-            "route the write there, or extend _EXPECTED_PREVIEW_WRITERS "
+            "route the write there, or extend the record's preview_writers "
             f"consciously with a reason. Offending modules: {offenders}"
         )
 
@@ -447,20 +459,21 @@ class TestWriterManifest:
         sites = _scan_cache_write_sites()
         stem_sites = [site for site in sites if site[3] == "stem"]
         preview_sites = [site for site in sites if site[3] == "preview"]
-        assert len(stem_sites) >= 4, (
-            f"stem-write scan found only {len(stem_sites)} sites; the known "
-            "surface is 4 (pipeline's pause/sequential/batched writes and "
-            "real_engine_smoke). The scan went blind — fix the scan, not this "
-            "assertion."
+        assert len(stem_sites) >= _MIN_STEM_SITES, (
+            f"stem-write scan found only {len(stem_sites)} sites; the record's "
+            f"floor is {_MIN_STEM_SITES} (pipeline's pause/sequential/batched "
+            "writes and real_engine_smoke). The scan went blind — fix the "
+            "scan, not this assertion."
         )
         stem_owners = {name for name, _line, _fn, _kind in stem_sites}
         assert stem_owners == set(_EXPECTED_STEM_WRITERS), (
             f"stem-write owners drifted: found {sorted(stem_owners)}, expected "
             f"{sorted(_EXPECTED_STEM_WRITERS)}"
         )
-        assert len(preview_sites) >= 1, (
+        assert len(preview_sites) >= _MIN_PREVIEW_SITES, (
             f"preview-write scan found only {len(preview_sites)} sites; the "
-            "known surface is exactly 1 (pipeline's spoken-preview save_wav — "
+            "record's floor is exactly "
+            f"{_MIN_PREVIEW_SITES} (pipeline's spoken-preview save_wav — "
             "pause-only previews write through _write_pause_only_stem's "
             "counted atomic_write). The scan went blind — fix the scan, not "
             "this assertion."
@@ -470,6 +483,24 @@ class TestWriterManifest:
             f"preview-write owners drifted: found {sorted(preview_owners)}, "
             f"expected {sorted(_EXPECTED_PREVIEW_WRITERS)}"
         )
+
+    def test_writer_manifest_record_is_live(self):
+        """Vacuity guard for the record-fed rule data itself.
+
+        The loader already rejects malformed shapes loudly; this pins the
+        loaded policy's self-consistency so a future edit that emptied a set
+        or overlapped the target classifiers fails here, named, instead of
+        narrowing the scan's reach.
+        """
+        assert len(_WRITE_FNS) >= 2, "the record lost its write-function set"
+        assert _STEM_TARGET_NAMES and _PREVIEW_TARGET_NAMES
+        assert _STEM_TARGET_NAMES.isdisjoint(_PREVIEW_TARGET_NAMES), (
+            "stem and preview target classifiers must stay disjoint — an "
+            "overlap would misclassify writes into the wrong owner gate"
+        )
+        assert "pipeline.py" in _EXPECTED_STEM_WRITERS
+        assert "pipeline.py" in _EXPECTED_PREVIEW_WRITERS
+        assert _MIN_STEM_SITES >= 4 and _MIN_PREVIEW_SITES >= 1
 
 
 # ---------------------------------------------------------------------------

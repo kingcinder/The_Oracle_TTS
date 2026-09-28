@@ -1,5 +1,5 @@
 {
-  "description": "Consolidated policy data for the extraction-slice safety nets: each rule set is read from this one record so neither test file hard-codes policy that belongs to the ownership map. Read by tests/test_app_gui_patch_surface.py (the patch-surface net), tests/test_payload_policy_ownership.py (the payload-policy net) and extraction-slice tooling that needs to know what has already been moved.",
+  "description": "Consolidated policy data for the extraction-slice safety nets: each rule set is read from this one record so no test file hard-codes policy that belongs to an ownership map. Read by tests/test_app_gui_patch_surface.py (the patch-surface net, whose load_* loaders validate every section), tests/test_payload_policy_ownership.py, tests/test_stem_cache_write_path.py (the writer-manifest net) and extraction-slice tooling that needs to know what has already been moved.",
   "moved_owners": {
     "the_oracle.gui_settings": {
       "names": [
@@ -104,5 +104,15 @@
       "audio_cpp_max_batch"
     ],
     "schema_exempt_modules": ["the_oracle.gui_settings", "the_oracle.app_gui"]
+  },
+  "writer_manifest": {
+    "description": "Policy data for tests/test_stem_cache_write_path.py's writer manifest: which write functions count as cache writes, which call/target shapes classify a write as stem- or preview-shaped, which source files are the gated owners of each kind, and the blindness floors under which the scan has demonstrably not gone blind. Stem writes must pass the engine-output gate (sanitize_engine_audio); preview writes are owned by OraclePipeline.render_preview (pause-only via _write_pause_only_stem, spoken via the gated engine path).",
+    "write_functions": ["save_wav", "atomic_write"],
+    "stem_target_names": ["stem_path"],
+    "preview_target_names": ["preview_path"],
+    "stem_writers": ["pipeline.py", "real_engine_smoke.py"],
+    "preview_writers": ["pipeline.py"],
+    "min_stem_sites": 4,
+    "min_preview_sites": 1
   }
 }
