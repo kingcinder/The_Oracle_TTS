@@ -1055,10 +1055,17 @@ rewritten by the loop).
   TDD steps per unit, mutation-proven pins, one bounded unit per session). The
   built units' design contracts are recorded in Done and their design docs;
   what remains of them is the next bullet.
-- **Remainder of the built units**: the crash unit's GUI slice (Qt message
-  handler + the §12 next-session consent prompt) and the licensing unit's
-  step 6 GUI slice — both fold into campaign U3. Step 7 (PRIVACY.md) landed
-  with its offline pins (2026-09-28). U2 needs the crypto-decision
+- **U3 landed (2026-09-28) — the GUI surfaces are built**: `gui_crash.py`
+  (first-run consent, next-session crash review, D8 startup branch, and the
+  Qt message handler U1.2 deliberately deferred — Qt fatal/critical join the
+  consent-gated pipeline) and `gui_license.py` (offline paste-a-token
+  activation surfacing the CLI/doctor's typed states; About panel reading
+  `current_license()`), wired through a new Help menu. Commit `4db0852`, 21
+  click-through-fake tests; the tests caught a real bug in the new activation
+  dialog (DialogCode attribute on an injected factory crashed after the token
+  was saved). With this, the "remainder of the built units" bullet above is
+  fully closed: U1, U2 steps 1–5, U3, and step 7 (PRIVACY.md) have all landed.
+  U2 needs the crypto-decision
   ratification flagged in "Noticed" (Option B's own record exists; the spec
   still says pynacl).
 - The same audit question is worth asking of the *GUI*'s readiness surfaces (the
