@@ -147,10 +147,10 @@ class _FakeAudioOutput:
 def test_successful_take_auto_auditions_and_enables_actions(tmp_path, monkeypatch, qt_app):
     import numpy as np
 
-    import the_oracle.app_gui as app_gui
+    import the_oracle.gui_recording as gui_recording
 
-    monkeypatch.setattr(app_gui, "QMediaPlayer", _FakeMediaPlayer)
-    monkeypatch.setattr(app_gui, "QAudioOutput", _FakeAudioOutput)
+    monkeypatch.setattr(gui_recording, "QMediaPlayer", _FakeMediaPlayer)
+    monkeypatch.setattr(gui_recording, "QAudioOutput", _FakeAudioOutput)
     dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
     assert dialog.audition_check.isChecked() is True
     assert dialog.play_button.isEnabled() is False
@@ -173,10 +173,10 @@ def test_successful_take_auto_auditions_and_enables_actions(tmp_path, monkeypatc
 def test_auto_audition_can_be_disabled(tmp_path, monkeypatch, qt_app):
     import numpy as np
 
-    import the_oracle.app_gui as app_gui
+    import the_oracle.gui_recording as gui_recording
 
-    monkeypatch.setattr(app_gui, "QMediaPlayer", _FakeMediaPlayer)
-    monkeypatch.setattr(app_gui, "QAudioOutput", _FakeAudioOutput)
+    monkeypatch.setattr(gui_recording, "QMediaPlayer", _FakeMediaPlayer)
+    monkeypatch.setattr(gui_recording, "QAudioOutput", _FakeAudioOutput)
     _FakeMediaPlayer.last = None
     dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
     dialog.audition_check.setChecked(False)
@@ -241,10 +241,10 @@ def test_end_of_media_does_not_delete_or_stop_player_in_handler(
     """
     import numpy as np
 
-    import the_oracle.app_gui as app_gui
+    import the_oracle.gui_recording as gui_recording
 
-    monkeypatch.setattr(app_gui, "QMediaPlayer", _SpyMediaPlayer)
-    monkeypatch.setattr(app_gui, "QAudioOutput", _SpyAudioOutput)
+    monkeypatch.setattr(gui_recording, "QMediaPlayer", _SpyMediaPlayer)
+    monkeypatch.setattr(gui_recording, "QAudioOutput", _SpyAudioOutput)
     _SpyMediaPlayer.last = None
     dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
     dialog._on_captured(np.full(4800, 0.2, dtype=np.float32))  # saves + auditions
@@ -270,10 +270,10 @@ def test_playback_reuses_one_player_across_takes(tmp_path, monkeypatch, qt_app):
     """
     import numpy as np
 
-    import the_oracle.app_gui as app_gui
+    import the_oracle.gui_recording as gui_recording
 
-    monkeypatch.setattr(app_gui, "QMediaPlayer", _SpyMediaPlayer)
-    monkeypatch.setattr(app_gui, "QAudioOutput", _SpyAudioOutput)
+    monkeypatch.setattr(gui_recording, "QMediaPlayer", _SpyMediaPlayer)
+    monkeypatch.setattr(gui_recording, "QAudioOutput", _SpyAudioOutput)
     dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
     dialog._on_captured(np.full(4800, 0.2, dtype=np.float32))
     first = _SpyMediaPlayer.last

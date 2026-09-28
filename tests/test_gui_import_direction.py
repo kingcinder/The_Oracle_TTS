@@ -49,7 +49,7 @@ GUI_RENDER = PACKAGE_DIR / "gui_render.py"
 
 # Known gui-layer modules the rule must see; a future slice adding another
 # gui_* file is covered by the name pattern without touching this file.
-KNOWN_SIBLINGS = ("gui_chrome", "gui_settings", "gui_vulkan")
+KNOWN_SIBLINGS = ("gui_chrome", "gui_recording", "gui_settings", "gui_vulkan")
 
 
 def _gui_siblings() -> tuple[str, ...]:
@@ -255,9 +255,9 @@ def test_gui_sibling_set_is_visible() -> None:
         f"{siblings} — the extraction campaign's layout changed; update "
         "this guard deliberately."
     )
-    assert len(siblings) >= 5, (
+    assert len(siblings) >= 10, (
         f"only {len(siblings)} gui_* siblings found: {siblings} — the known "
-        "set is 9. The listing went blind — fix the listing, not this assertion."
+        "set is 10. The listing went blind — fix the listing, not this assertion."
     )
 
 
@@ -281,6 +281,7 @@ _FORBIDDEN_FORMS = (
     ("from . import gui_settings", "the_oracle.gui_settings"),
     ("from .gui_ingest import IngestPanel", "the_oracle.gui_ingest"),
     ("from .gui_sections import build_section", "the_oracle.gui_sections"),
+    ("from .gui_recording import RecordStudioWorker", "the_oracle.gui_recording"),
     ("from app_gui import MainWindow", "app_gui"),
     ("from gui_widgets import Floater", "gui_widgets"),
     ("importlib.import_module('the_oracle.app_gui')", "the_oracle.app_gui"),

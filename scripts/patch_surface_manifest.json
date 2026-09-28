@@ -25,6 +25,10 @@
     "the_oracle.gui_render": {
       "names": ["_render_child_environment"],
       "note": "Only the no-op-after-move name. The three class names must NOT be listed: MainWindow (still in app_gui) constructs RenderWorker, PreviewWorker and RenderProgressDialog from app_gui globals, so app_gui-level class patches remain live and legitimate."
+    },
+    "the_oracle.gui_recording": {
+      "names": ["RecordStudioWorker"],
+      "note": "Only the worker: MainWindow constructs it only via RecordingStudioDialog's body, which resolves the name from gui_recording's globals, so an app_gui-level patch is a silent no-op. RecordingStudioDialog must NOT be listed: MainWindow constructs it directly from app_gui globals, so app_gui-level class patches remain live and legitimate - the RenderWorker precedent. The dialog's QMediaPlayer/QAudioOutput fakes patch the_oracle.gui_recording by module object, never app_gui."
     }
   },
   "payload_policy": {
