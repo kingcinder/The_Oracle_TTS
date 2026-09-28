@@ -536,7 +536,43 @@ def _recording_pool(monkeypatch):
     return _RecordingPool
 
 
-class TestWorkerPoolFailureIsolation:
+class TestSeedCrossesTheSpawnBoundary:
+    """The pool-path determinism record depends on the configured seed
+    reaching the spawned workers: ``_worker_initialize`` builds each worker's
+    engine with it, and the engines re-apply the seed on every generate call.
+    The A/B reproducibility pin (test_synthesis_retry_visibility.py) cannot
+    see this directly on the deterministic double — its audio derives from
+    text, not the seed — so the crossing is pinned at the boundary itself:
+    whatever ``render`` passes to the pool's initargs is what workers seed
+    with. Dropping the seed there must fail here, named.
+    """
+
+    def test_pool_initargs_carry_the_configured_seed(self, tmp_path, _recording_pool):
+        from the_oracle.pipeline import _worker_initialize
+
+        tasks = [_pool_task(i, f"text {i}", tmp_path) for i in range(1, 5)]
+        _run_tasks_with_worker_pool(
+            tasks,
+            _FakePoolEngine,
+            "standard",
+            "cpu",
+            str(tmp_path / "project"),
+            worker_count=2,
+            stream=False,
+            seed=11,
+        )
+        pool = _RecordingPool.instances[-1]
+        # The initializer and its initargs: exactly (_worker_initialize,
+        # (engine_cls, variant, device, project_dir, seed)). Any edit that
+        # drops or reorders the seed in initargs lands here, named.
+        assert pool._initializer is _worker_initialize
+        assert pool._initargs[-1] == 11, (
+            "the pool initializer's initargs must carry the configured seed "
+            f"last, got {pool._initargs!r}"
+        )
+
+
+
     def test_one_failing_utterance_does_not_abort_render(self, tmp_path, _recording_pool):
         ref = tmp_path / "ref.wav"
         _write_wav(ref, np.zeros(240, dtype=np.float32))
