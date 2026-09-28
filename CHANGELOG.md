@@ -5,8 +5,42 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
 ## [Unreleased]
 
+### Changed
+
+- **The self-healing guarantee now covers the worker-pool path and the Live
+  sidebar.** A multi-task seeded render that heals one hiccup reproduces
+  byte-identically when the spawn pool runs the synthesis (the configured seed
+  crosses the pool boundary through its initializer; retry notes ride home
+  from whichever worker drained them), and the persistent Live column counts
+  self-heals for the session — during the render and after it ends.
+
+### Fixed
+
+- Subtitle files that mix encodings (one UTF-8 cue exported into a
+  mostly-CP1252 file — the classic two-editors concatenation) now recover
+  **each cue on its own encoding** instead of turning the UTF-8 cue into
+  deterministic mojibake. Clean whole-file UTF-8 and CP1252 files decode
+  byte-identically to before; undecodable cues degrade to visible replacement
+  marks instead of blocking the conversion.
+
+## [1.3.1] — 2026-09-28
+
 ### Added
 
+- **Release artifact checksums are tracked in the repo.** Every release build
+  now stores a byte-identical copy of its `checksums-<version>.sha256` manifest
+  in `release_checksums/`, so a published artifact is verifiable from a fresh
+  clone rather than only from the gitignored build folder — and an existing
+  record for a version is never rewritten silently: a rebuild producing
+  different hashes is a refusal with instructions, not an overwrite.
+- **The extraction safety nets read one validated ownership record.**
+  `scripts/patch_surface_manifest.json` is the single record behind the
+  MainWindow extraction campaign's nets — which moved names each `gui_*`
+  module owns (an app_gui-level patch of them is a silent no-op), where the
+  settings-payload policy functions may be referenced, and the writer manifest
+  that gates stem/preview cache writes — with every section validated loudly
+  at load, so a malformed record fails the suite instead of quietly shrinking
+  a net to match nothing.
 - **Local, private crash reporting.** Opt in with `the-oracle privacy-opt-in`;
   reports stay in this install's `crash_reports/` folder (sanitized, capped at
   20 × 32 KiB), are never uploaded, and the doctor surfaces them for review.
@@ -77,18 +111,6 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   three read routes validate content (with the sanctioned pause-only silence
   exception), and the batched path banks pause silence itself instead of
   asking the engine to synthesize empty text.
-
-## [1.3.1] — 2026-09-28
-
-### Changed
-
-- (nothing yet)
-
-## [Unreleased]
-
-### Changed
-
-- (nothing yet)
 
 ## [1.2.0] — 2026-09-20
 
@@ -164,7 +186,14 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 - GUI settings files that are missing or corrupt JSON now raise a clear
   error instead of failing obscurely.
 
-## [1.1.1]
+## [1.1.1] — 2026-09-14
+
+> This section was written retrospectively: CHANGELOG.md itself was created
+> only in the 1.2.0 cycle, so the pre-1.2.0 sections summarize the shipped
+> feature inventory rather than day-of release notes — the bullets below
+> include features that first shipped in the earlier V1.01/V1.10 releases
+> (workspace persistence, the CUDA/onboarding waves) which have no sections
+> of their own.
 
 - CUDA inference through the PyTorch/Chatterbox path with NVIDIA suitability
   detection, CPU fallback, and selectable device index (GUI/CLI pickers,
