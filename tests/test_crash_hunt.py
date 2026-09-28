@@ -44,3 +44,37 @@ def test_sigsegv_child_is_recorded(tmp_path: Path, monkeypatch):
     assert rc == 1
     report = json.loads((tmp_path / "report.json").read_text())
     assert report["failures"][0]["kind"] == "sigsegv"
+
+
+# --- Task 3: real render command + crash-record harvest ---
+
+
+def test_render_command_uses_real_input():
+    cmd = crash_hunt._render_command()
+    assert "--input" in cmd and "--outdir" in cmd
+    assert any("the_oracle" in part or part.endswith("the-oracle") for part in cmd)
+    input_path = Path(cmd[cmd.index("--input") + 1])
+    assert input_path.exists(), f"input file must exist for a real repro: {input_path}"
+
+
+def test_harvest_detects_new_records(tmp_path: Path):
+    from the_oracle import crash
+
+    root = tmp_path
+    before = set(crash.list_records(root))
+    # simulate a crash record landing between snapshots
+    crash.crash_dir(root).mkdir(parents=True, exist_ok=True)
+    crash.crash_dir(root).joinpath("crash-20260928-000000-aaaaaaaa.json").write_text("{}")
+    new = crash_hunt.harvest_crash_records(root, before)
+    assert len(new) == 1
+
+
+def test_harvest_ignores_preexisting_records(tmp_path: Path):
+    from the_oracle import crash
+
+    root = tmp_path
+    crash.crash_dir(root).mkdir(parents=True, exist_ok=True)
+    old = crash.crash_dir(root).joinpath("crash-20260927-000000-bbbbbbbb.json")
+    old.write_text("{}")
+    before = set(crash.list_records(root))
+    assert crash_hunt.harvest_crash_records(root, before) == []
