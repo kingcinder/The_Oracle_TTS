@@ -4277,6 +4277,9 @@ class MainWindow(QMainWindow):
 
         self.preview_dialog = RenderProgressDialog(self, title="Generating Preview")
         self.preview_dialog.show()
+        # A new preview session starts its own self-heal tally (the tally
+        # deliberately survives set_idle; this is its reset point).
+        self.live_panel.reset_retry_tally()
         self._set_preview_busy(True)
         inference_backend = self.inference_backend_combo.currentData() or "pytorch"
         if inference_backend == "vulkan" and _vulkan_prerequisite_missing():
@@ -4444,6 +4447,9 @@ class MainWindow(QMainWindow):
         self._log_action_timing("render_click", render_click_wall)
         self.progress_dialog = RenderProgressDialog(self, title="Rendering")
         self.progress_dialog.show()
+        # A new render session starts its own self-heal tally (the tally
+        # deliberately survives set_idle; this is its reset point).
+        self.live_panel.reset_retry_tally()
         self._set_render_busy(True)
         render_settings.metadata["output_filename"] = output_filename
         self.render_worker = RenderWorker(

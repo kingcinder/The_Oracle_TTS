@@ -48,6 +48,15 @@ class LivePanel(QWidget):
         self.backend_label.setWordWrap(True)
         self.synth_label = QLabel("")
         self.synth_label.setWordWrap(True)
+        # Hiccup-retry tally: every RenderProgress carrying a retry_note is
+        # one healed synthesis. The count is CUMULATIVE for the render (and
+        # the preview that follows in the same session) and deliberately
+        # survives set_idle — a self-heal is part of the session's record,
+        # not a transient frame. reset_retry_tally clears it when the next
+        # render or preview starts.
+        self._retry_count = 0
+        self.retry_label = QLabel("")
+        self.retry_label.setWordWrap(True)
         self.stage_label = QLabel("")
         self.stage_label.setWordWrap(True)
         self.segment_label = QLabel("")
@@ -60,11 +69,17 @@ class LivePanel(QWidget):
 
         outer.addWidget(self.backend_label)
         outer.addWidget(self.synth_label)
+        outer.addWidget(self.retry_label)
         outer.addWidget(self.stage_label)
         outer.addWidget(self.segment_label)
         outer.addWidget(self.eta_label)
         outer.addWidget(self.progress_bar)
         outer.addStretch(1)
+
+    @property
+    def retry_count(self) -> int:
+        """Self-heals counted so far this session (test/observer surface)."""
+        return self._retry_count
 
     def update_from_progress(self, progress: RenderProgress) -> None:
         """Update the sidebar with live render data (same logic as
@@ -81,6 +96,15 @@ class LivePanel(QWidget):
             if progress.device_label:
                 label += f" — {progress.device_label}"
             self.backend_label.setText(f"Backend: {label}")
+
+        # Hiccup-retry tally. retry_note rides exactly one event per healed
+        # synthesis (staged by the render loop, cleared on delivery), so
+        # counting note-bearing events counts self-heals. Both the render and
+        # the preview progress handlers mirror through here.
+        if progress.retry_note:
+            self._retry_count += 1
+            plural = "" if self._retry_count == 1 else "s"
+            self.retry_label.setText(f"Self-healed: {self._retry_count} hiccup{plural}")
 
         # Render time
         if progress.synth_seconds_total is not None:
@@ -107,13 +131,30 @@ class LivePanel(QWidget):
             )
 
     def set_idle(self) -> None:
-        """Reset to the idle state after a render finishes or fails."""
+        """Reset to the idle state after a render finishes or fails.
+
+        The hiccup-retry tally deliberately survives: a self-heal is part of
+        what this session's renders produced, so the user can still see it
+        after the render ends — that is the point of putting the count on the
+        persistent mirror instead of only the modal dialog. The next render
+        or preview calls reset_retry_tally to start a fresh count.
+        """
         self.backend_label.setText("Backend: idle")
         self.synth_label.setText("")
         self.stage_label.setText("")
         self.segment_label.setText("")
         self.eta_label.setText("")
         self.progress_bar.setValue(0)
+
+    def reset_retry_tally(self) -> None:
+        """Clear the hiccup-retry tally for a new render or preview.
+
+        MainWindow calls this when a new activity starts, so the count always
+        reflects the current session's self-heals rather than an unbounded
+        lifetime total.
+        """
+        self._retry_count = 0
+        self.retry_label.setText("")
 
 
 def build_live_section(panel: LivePanel, *, minimum_width: int = 220) -> QHSectionGroup:

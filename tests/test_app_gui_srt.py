@@ -11,7 +11,7 @@ from the_oracle.models.settings import RenderSettings, SpeakerSettings;
 from the_oracle.pipeline import RenderProgress
 from the_oracle.project_manifest import build_saved_project
 
-from tests.test_app_gui_profiles import _build_window
+from tests.test_app_gui_profiles import _build_window, _FakeRenderWorker
 
 pytestmark = pytest.mark.slow
 
@@ -262,6 +262,111 @@ def test_finish_render_returns_the_live_sidebar_to_idle(
         assert window.live_panel.segment_label.text() == ""
         assert window.live_panel.eta_label.text() == ""
     finally:
+        window.close()
+
+
+def test_finish_render_keeps_the_session_retry_tally_visible(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Self-healing stays on the persistent mirror after the render ends.
+
+    A healed hiccup rides exactly one progress event; the sidebar counts it
+    and, unlike the transient fields, KEEPS the count through _finish_render's
+    set_idle — that persistence is the point of putting the tally on the
+    Live column instead of only the modal dialog or the error panel.
+    """
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        plan = _plan_with_utterance(paths.output_dir)
+
+        # During: two healed hiccups arrive on the render's progress stream.
+        window._update_render_progress(
+            RenderProgress(
+                stage="Rendering segment",
+                detail="Self-healed segment 2 (A)",
+                current_step=1,
+                total_steps=4,
+                current_segment=1,
+                total_segments=4,
+                elapsed_seconds=3.0,
+                fraction=0.25,
+                backend="pytorch",
+                device_label="CPU",
+                retry_note="hiccup retry (chatterbox): flat silence",
+            )
+        )
+        window._update_render_progress(
+            RenderProgress(
+                stage="Rendering segment",
+                detail="Self-healed segment 4 (B)",
+                current_step=2,
+                total_steps=4,
+                current_segment=2,
+                total_segments=4,
+                elapsed_seconds=6.0,
+                fraction=0.5,
+                backend="pytorch",
+                device_label="CPU",
+                retry_note="hiccup retry (chatterbox): DC tone",
+            )
+        )
+        assert window.live_panel.retry_count == 2
+        assert "2 hiccups" in window.live_panel.retry_label.text()
+
+        # After: the render finishes; the tally is the field that survives.
+        window._finish_render(plan.to_dict(), str(tmp_path / "render_out.flac"))
+
+        assert window.live_panel.retry_count == 2
+        assert "2 hiccups" in window.live_panel.retry_label.text()
+        assert "Backend: idle" == window.live_panel.backend_label.text()
+    finally:
+        window.close()
+
+
+def test_render_project_resets_the_retry_tally_for_the_next_session(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The next render starts its own count.
+
+    The tally survives set_idle by design; reset_retry_tally is the one
+    transition that clears it, and render_project is where MainWindow calls
+    it — so the sidebar never shows a stale prior render's hiccups as if they
+    belonged to the new one.
+    """
+    window, paths = _build_window(monkeypatch, tmp_path)
+    try:
+        plan = _plan_with_utterance(paths.output_dir)
+        window.plan = RenderPlan.from_dict(plan.to_dict())
+
+        # A finished session left its self-heals on the mirror.
+        window.live_panel.update_from_progress(
+            RenderProgress(
+                stage="Rendering segment",
+                detail="segment",
+                current_step=1,
+                total_steps=4,
+                current_segment=1,
+                total_segments=4,
+                elapsed_seconds=2.0,
+                retry_note="hiccup retry (chatterbox): flat silence",
+            )
+        )
+        window.live_panel.set_idle()
+        assert window.live_panel.retry_count == 1
+
+        # Starting the next render resets the tally before any progress flows.
+        # A custom output name keeps the generic-filename warning modal out of
+        # the way (the established pattern in the profiles suite), and the
+        # fake worker never spawns a real QThread.
+        monkeypatch.setattr("the_oracle.app_gui.RenderWorker", _FakeRenderWorker)
+        window.output_name.setText("custom_render")
+        window.render_project()
+        assert isinstance(window.render_worker, _FakeRenderWorker)
+        assert window.render_worker.started is True
+        assert window.live_panel.retry_count == 0
+        assert window.live_panel.retry_label.text() == ""
+    finally:
+        window.render_worker = None
         window.close()
 
 
