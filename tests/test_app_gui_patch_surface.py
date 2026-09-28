@@ -83,6 +83,61 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = REPO_ROOT / "scripts" / "patch_surface_manifest.json"
 
 
+def load_writer_manifest(manifest_path: Path = MANIFEST_PATH) -> dict[str, object]:
+    """Read the ``writer_manifest`` section from the manifest, validating it.
+
+    The stem/preview writer-manifest net's rule data used to be hardcoded in
+    ``tests/test_stem_cache_write_path.py``; it lives in the record now so
+    future tooling reads the same validated data the net enforces. Every
+    field must be present with the right shape — a typo that quietly emptied
+    an owner set would let every cache write through ungated, the exact
+    failure mode this record exists to prevent.
+    """
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise AssertionError(f"{manifest_path.name}: top level must be an object")
+    policy = data.get("writer_manifest")
+    if not isinstance(policy, dict):
+        raise AssertionError(f"{manifest_path.name}: 'writer_manifest' must be an object")
+
+    def string_list(field: str) -> frozenset[str]:
+        values = policy.get(field)
+        if not isinstance(values, list) or not values or not all(isinstance(v, str) for v in values):
+            raise AssertionError(
+                f"{manifest_path.name}: writer_manifest.{field} must be a "
+                "non-empty list of strings"
+            )
+        return frozenset(values)
+
+    def positive_int(field: str) -> int:
+        value = policy.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise AssertionError(
+                f"{manifest_path.name}: writer_manifest.{field} must be a positive integer"
+            )
+        return value
+
+    owners_valid = all(
+        isinstance(owner, str) and owner.endswith(".py") and "/" not in owner
+        for owner in string_list("stem_writers") | string_list("preview_writers")
+    )
+    if not owners_valid:
+        raise AssertionError(
+            f"{manifest_path.name}: writer_manifest owners must be bare "
+            "source file names like 'pipeline.py'"
+        )
+
+    return {
+        "write_functions": string_list("write_functions"),
+        "stem_target_names": string_list("stem_target_names"),
+        "preview_target_names": string_list("preview_target_names"),
+        "stem_writers": string_list("stem_writers"),
+        "preview_writers": string_list("preview_writers"),
+        "min_stem_sites": positive_int("min_stem_sites"),
+        "min_preview_sites": positive_int("min_preview_sites"),
+    }
+
+
 def load_moved_owners(manifest_path: Path = MANIFEST_PATH) -> dict[str, frozenset[str]]:
     """Read ``moved_owners`` from the manifest, validating its shape.
 
@@ -119,7 +174,7 @@ MOVED_OWNERS: dict[str, frozenset[str]] = load_moved_owners()
 #: Top-level manifest sections. Every section of the record must be routed
 #: through a validated loader; a section landing in the JSON without one is a
 #: bug to fix, not a free pass to ship unvalidated policy.
-_MANIFEST_SECTIONS = frozenset({"moved_owners", "payload_policy"})
+_MANIFEST_SECTIONS = frozenset({"moved_owners", "payload_policy", "writer_manifest"})
 
 
 def load_payload_policy(manifest_path: Path = MANIFEST_PATH) -> dict[str, object]:
@@ -632,6 +687,42 @@ def test_a_malformed_manifest_fails_loudly(tmp_path: Path) -> None:
     bad.write_text(policy_json()[:-1] + ', "surprise_section": {}}', encoding="utf-8")
     with pytest.raises(AssertionError, match="unrecognized top-level section"):
         load_payload_policy(bad)
+
+    # The writer-manifest section gets the same loud-failure rule; each case
+    # breaks exactly one field of a complete valid section.
+    def writer_json(**overrides: object) -> str:
+        writer: dict[str, object] = {
+            "write_functions": ["save_wav"],
+            "stem_target_names": ["stem_path"],
+            "preview_target_names": ["preview_path"],
+            "stem_writers": ["pipeline.py"],
+            "preview_writers": ["pipeline.py"],
+            "min_stem_sites": 1,
+            "min_preview_sites": 1,
+        }
+        writer.update(overrides)
+        return json.dumps(
+            {
+                "moved_owners": {"the_oracle.gui_render": {"names": ["x"]}},
+                "writer_manifest": writer,
+            }
+        )
+
+    bad.write_text('{"moved_owners": {"the_oracle.gui_render": {"names": ["x"]}}}', encoding="utf-8")
+    with pytest.raises(AssertionError, match="'writer_manifest' must be an object"):
+        load_writer_manifest(bad)
+
+    bad.write_text(writer_json(stem_writers=[]), encoding="utf-8")
+    with pytest.raises(AssertionError, match=r"writer_manifest\.stem_writers must be a non-empty list"):
+        load_writer_manifest(bad)
+
+    bad.write_text(writer_json(min_preview_sites=0), encoding="utf-8")
+    with pytest.raises(AssertionError, match=r"writer_manifest\.min_preview_sites must be a positive integer"):
+        load_writer_manifest(bad)
+
+    bad.write_text(writer_json(preview_writers=["the_oracle/pipeline.py"]), encoding="utf-8")
+    with pytest.raises(AssertionError, match="owners must be bare source file names"):
+        load_writer_manifest(bad)
 
 
 def test_moved_owner_names_are_current() -> None:
