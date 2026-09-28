@@ -304,16 +304,32 @@ Both slices follow the `gui_ingest.py` injected-Qt pattern and get
 patch-surface manifest entries (`scripts/patch_surface_manifest.json` +
 its test).
 
-- [ ] `gui_crash.py`: first-run consent dialog (enable local reports / open
+- [x] `gui_crash.py`: first-run consent dialog (enable local reports / open
       privacy policy / not now = no, never asked again this install;
       enabling available later from Help) + post-crash next-session review
       ("review / share / delete", share = open sanitized JSON then copy or
       save; no upload code). Tests `tests/test_gui_crash.py` in the
       `tests/test_gui_settings.py` style.
-- [ ] `gui_license.py`: activation dialog (paste token, typed errors) +
+      **Landed 2026-09-28** (commit `4db0852`): all three consent outcomes per
+      contract; review = open-with-OS-viewer / delete / keep; startup branch
+      D8 (review → first-run ask → nothing); the U1.2-deferred Qt message
+      handler wired here (fatal/critical only). 16 tests with click-through
+      fakes.
+- [x] `gui_license.py`: activation dialog (paste token, typed errors) +
       About panel showing edition/licensee/key_id/expiry; tests
       `tests/test_gui_license.py`.
-- [ ] Manifest + ownership tests green; suite green; JUNO/STATE; commit.
+      **Landed 2026-09-28** (commit `4db0852`): activation surfaces the same
+      typed states as CLI/doctor; a bad token writes nothing; About reads
+      `current_license()` (one source of truth). 5 tests; the tests caught
+      one real bug in the new dialog (DialogCode on an injected factory).
+- [x] Manifest + ownership tests green; suite green; JUNO/STATE; commit.
+      **Landed 2026-09-28** (commit `4db0852`): the new modules need no
+      manifest entry (they are leaf presentation modules, not moved app_gui
+      names — the import-direction net stays green); full suite 1444/0. The
+      MainWindow wiring hunks were index-split from a concurrent actor's
+      in-flight gui_recording extraction in the same file (4 hunks mine,
+      3 theirs, zero mixed, leak-checked). The STATE 'Next' pointer update
+      rode the concurrent actor's own STATE reorganization.
 
 ---
 
