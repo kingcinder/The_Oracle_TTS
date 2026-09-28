@@ -849,12 +849,13 @@ rewritten by the loop).
   (84 tests in the batching/backend/synthesis/render-worker files). Pacing
   and emotion live in shared plan/assembly code, never in the engine call,
   so both inference backends behave identically by construction.
-- **The MainWindow extraction campaign — six slices landed, then a seventh
-  follow-on (2026-09-27)** (the
+- **The MainWindow extraction campaign — six slices landed (2026-09-19 to
+  2026-09-21; commits d4388e3, a70aef3, 9a90281, 69989f4, a397943, 5a297a0),
+  then a seventh follow-on (2026-09-27; commit 5d26f1a)** (the
   JUNO journal's *numbered* extraction slices stop at four — "Fourth" is
   gui_render — because the gui_vulkan and gui_chrome entries were never
   numbered there; this record settles the count at six for the campaign
-  proper, the seventh being the Vulkan thread-cluster slice `5d26f1a` that
+  proper, the seventh being the Vulkan thread-cluster slice that
   moved the half the 2026-09-20 damage assessment kept in app_gui), each its
   own revertable commit. The original "zero edits to existing tests" seam
   claim was already inaccurate when written — gui_render repointed one test,
