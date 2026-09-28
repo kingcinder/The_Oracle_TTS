@@ -348,10 +348,17 @@ No change in this unit lands without a recorded finding attached to it.
       `.serpent-circle/04-debug/root-causes.md`; fix the root cause with a
       regression test, or document a data-backed workaround. Exit probe:
       the scripted smoke path runs repeatedly with zero fatal records.
-- [ ] **U4.3 Pipeline efficiency** — profile a representative render
+- [x] **U4.3 Pipeline efficiency** — profile a representative render
       (`cProfile` over `scripts/smoke_render.py`), record wall/CPU per stage
       in `docs/PERFORMANCE_BASELINE.md`, land the top bounded win(s) with
       before/after numbers; no behavior change; suite green after each.
+      DONE 2026-09-28: SymSpell dictionary deserialized 2× per smoke render
+      (0.786 s in `_pickle.load`, 34% of profiled time) → process-level memo
+      of the load (success and failure both cached; mutation-proven M1/M2).
+      Wall 2.04 s → 1.82 s (~21%); load path ncalls 2 → 1. Baseline recorded
+      in `docs/PERFORMANCE_BASELINE.md`; second candidate (pool.join 0.751 s,
+      `_generate`, pipeline.py:347) documented there as not-taken. Full suite
+      1452 passed, 261 s; smoke rc=0, output identical.
 - [ ] **U4.4 UX / accessibility audit** — run the `accessibility` skill
       checklist over the main windows and the two new dialogs
       (names/roles, keyboard-only path, focus order), plus scripted persona
