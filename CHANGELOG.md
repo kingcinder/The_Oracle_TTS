@@ -5,6 +5,20 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
 ## [Unreleased]
 
+### Added
+
+- **The trust features got GUI surfaces.** Crash-report consent and review,
+  and license activation, are now in-app dialogs alongside the existing CLI
+  flags (`the-oracle privacy-opt-in`, `the-oracle activate`).
+- The doctor's cache audit gained the disk side: every project `previews/`
+  directory is scanned for files outside the gated preview owner's naming
+  scheme — runtime evidence of a writer that bypassed
+  `OraclePipeline.render_preview`.
+- Release tooling: a crash-hunt reproduction harness (exit-code
+  classification, per-backend render loops, offscreen GUI launch loop) whose
+  `--acceptance` gate requires zero non-zero exits, zero crash records, and —
+  reading the kernel log — zero native crashes inside the run window.
+
 ### Changed
 
 - **The self-healing guarantee now covers the worker-pool path and the Live
@@ -13,6 +27,10 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   crosses the pool boundary through its initializer; retry notes ride home
   from whichever worker drained them), and the persistent Live column counts
   self-heals for the session — during the render and after it ends.
+- **Renders start faster.** The 19 MB SymSpell frequency dictionary is
+  deserialized once per process instead of once per corrector instance
+  (~21% off the profiled synthesis total, ~11% off wall clock on the
+  representative smoke render).
 
 ### Fixed
 
@@ -22,6 +40,13 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   deterministic mojibake. Clean whole-file UTF-8 and CP1252 files decode
   byte-identically to before; undecodable cues degrade to visible replacement
   marks instead of blocking the conversion.
+- **The months-old render-click segfault is root-caused and fixed.** The
+  render worker's lazy imports (SRT export, FLAC tagging) first-imported
+  `mutagen` inside the QThread, racing the GUI main thread through
+  shiboken6's signature import hook; everything the worker call graph needs
+  now preloads on the main thread before any worker starts. Relatedly, a
+  missing cache stem is now a cache miss, not corruption — the Vulkan path
+  no longer logs false "System error" warnings and deletes nothing.
 
 ## [1.3.1] — 2026-09-28
 
