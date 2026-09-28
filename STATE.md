@@ -1118,9 +1118,15 @@ rewritten by the loop).
   Setup tour and the CUDA picker both reject cards below it — README.md:276,284,
   STATE.md:801), while CPU/system DRAM is the guaranteed fallback. Both may be
   true (different resources), but they are not yet reconciled in one place and
-  sale copy must not overclaim. Owned by plan step U4.5: evidence pass first,
-  owner decision after. No code or copy was changed — flagged, not silently
-  aligned.
+  sale copy must not overclaim. RESOLVED 2026-09-28 by U4.5's evidence pass
+  (plan box carries the full digest): the 3 GB figure is an overclaim on the
+  VRAM side (the enforced floor is 4 GiB, render-time enforced too) and an
+  unenforced assertion on the DRAM side (nothing in the code measures DRAM;
+  CPU is unconditionally available). Decision presented to the owner: drop
+  the numeric claim from sale copy in favor of README's exact framing
+  (optional NVIDIA 4+ GiB VRAM for CUDA; CPU/DRAM guaranteed fallback); DRAM
+  guidance stays a recommendation until U4.3 measures the real CPU memory
+  profile. Still awaiting the owner's ratification — no copy changed.
 
 - **`.ps1` executable bits are inconsistent (2026-09-18)**: `bootstrap_oracle_tts.ps1`,
   `doctor_oracle_tts.ps1` and `oracle.ps1` are tracked 100644 while

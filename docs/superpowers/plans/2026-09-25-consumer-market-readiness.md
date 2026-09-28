@@ -358,9 +358,33 @@ No change in this unit lands without a recorded finding attached to it.
       walkthroughs (first render, multi-speaker, recording studio,
       settings); fix only labeled findings; capture the audit in
       `docs/UX_AUDIT-2026-09-25.md`.
-- [ ] **U4.5 Hardware-claim reconciliation** — find the code's actual
+- [x] **U4.5 Hardware-claim reconciliation** — find the code's actual
       hardware floor, compare with the 3 GB claim, probe where feasible, and
       present the decision; do not silently change code or copy.
+      **Evidence complete, decision presented 2026-09-28 — owner to ratify.**
+      Code-enforced floor: `CUDA_MIN_VRAM_BYTES = 4 * 1024**3`
+      (`device_support.py:22`, from V1.10 commit `8eb895e`), enforced on the
+      torch-properties path, the nvidia-smi path, AND at render time
+      (`resolve_chatterbox_device`). Live probe: this machine's Quadro K600
+      (1.0 GiB) is correctly disabled with an actionable reason; CPU stays
+      available. **No DRAM floor exists anywhere** (no memory probe in the
+      codebase — CPU is unconditionally available), and the Vulkan/audio.cpp
+      path has no memory gate either. The 3 GB claim appears only in
+      campaign-internal documents; README never states it (it documents the
+      4 GiB CUDA floor + CPU fallback). Reconciliation: on the VRAM side the
+      3 GB claim is an *overclaim* (3 GB < 4 GiB — a customer with a 3 GB
+      card would buy and find CUDA disabled); on the DRAM side it asserts a
+      floor the app neither measures nor enforces. **Recommended decision
+      (Option A, copy-only):** drop "min 3 GB free VRAM/DRAM"; sell copy
+      should say "optional NVIDIA GPU with 4+ GiB VRAM for CUDA
+      acceleration; CPU/system DRAM is the always-available fallback" —
+      matching README exactly — with any DRAM guidance phrased as a
+      recommendation, not a minimum, until U4.3's baseline measures the real
+      CPU memory profile (a full-load probe needs the Chatterbox weights,
+      a multi-GB download not performed unbidden). Option B (add a DRAM
+      gate) was considered and NOT recommended: a DRAM gate contradicts the
+      design promise that CPU is the guaranteed fallback. No copy or code
+      changed per this unit's contract.
 - [ ] **U4.6 Noticed-item promotion** — up to three STATE "Noticed" items
       with explicit approval (candidates: `.ps1` bits, `pkg_resources`
       warning when its pinned dependency is next touched).
