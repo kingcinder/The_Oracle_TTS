@@ -114,5 +114,29 @@
     "preview_writers": ["pipeline.py"],
     "min_stem_sites": 4,
     "min_preview_sites": 1
+  },
+  "patch_couple_policy": {
+    "description": "Policy data for the patch-couple seam net (tests/test_app_gui_patch_surface.py): a name the suite rebinds at the app_gui module level is patch-coupled, and a moved gui_* module whose body resolves it as a bare global turns every app_gui-level rebind of it into a silent no-op. The net derives the coupled set from the test suite itself (self-updating census), scans every gui_* module's bare Name loads, and requires the raw bare set to equal the sanctioned exemptions EXACTLY: a new bare use fails until the call boundary injects the name (the 2ba2392 find_audiocpp_binary pattern) or the split is sanctioned here with a reason; a stale exemption fails until pruned.",
+    "census_noise_names": ["name"],
+    "census_anchor_names": ["QMessageBox", "OraclePipeline", "find_audiocpp_binary", "QMediaPlayer"],
+    "min_census_names": 15,
+    "min_modules_scanned": 13,
+    "min_bare_pairs": 8,
+    "sanctioned_exemptions": {
+      "gui_render.py": {
+        "OraclePipeline": "documented split-readership rule: direct-path worker bodies resolve from gui_render globals (tests patch it there); app_gui-level rebinds target app_gui-resident constructions only",
+        "QDialog": "import-time class base of RenderProgressDialog; no app_gui-level rebind targets dialog class identity",
+        "RenderWorker": "documented precedent split: MainWindow constructs RenderWorker from app_gui globals (rebinds there cover window-assembly tests); the class body and PreviewWorker's inheritance resolve from gui_render globals, where worker-path tests patch them"
+      },
+      "gui_recording.py": {
+        "QDialog": "documented repointed split (e053ef5): dialog-level fakes patch gui_recording globals; window-fixture level stays app_gui",
+        "QMessageBox": "documented repointed split (e053ef5)",
+        "QMediaPlayer": "documented repointed split (e053ef5): window-fixture level stays app_gui",
+        "QAudioOutput": "documented repointed split (e053ef5): window-fixture level stays app_gui"
+      },
+      "gui_settings.py": {
+        "load_recent_reference_paths": "documented split: app_gui imports the loader and its two call sites resolve from app_gui globals (app_gui-level rebinds stay live); gui_settings' internal recursion inside the recents-add helper resolves from its own module by design"
+      }
+    }
   }
 }
