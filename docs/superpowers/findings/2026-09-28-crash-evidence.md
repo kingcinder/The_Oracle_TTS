@@ -4,6 +4,64 @@ Evidence collected by `scripts/crash_hunt.py` per plan Task 5. Crash capture
 armed at 04:40 (`privacy-opt-in`; `crash_reports/` exists, faulthandler armed —
 `native-crash.txt` present and empty = no native crash since arming).
 
+## COMPLETE crash inventory (user: "many many crashes")
+
+Channels swept: kernel journal (master list — every native crash logs here),
+`/var/crash` apport dumps, `.serpent-circle/04-debug/root-causes.md`,
+`Output/logs/`, `crash_reports/`.
+
+### A. Qt native crashes — THE "many" (7 in kernel log, Sep 27–28)
+
+| When | Signature |
+|---|---|
+| Sep 09 16:41:59, 16:44:45, 16:55:17 | null-ip segfault ×2 + libQt6Widgets GPF |
+| Sep 10 13:49:25 | null-ip, 5 s after `render_click` (action-timing cross-ref) |
+| **Sep 27 16:40:42** | GPF in libQt6Core |
+| **Sep 27 16:41:06** | segfault in libQt6Widgets @ offset 0x5dc49 (the original Render-click signature) |
+| **Sep 27 16:47:56** | GPF libQt6Widgets @ 0x5dc49 |
+| **Sep 27 16:48:17** | null-ip — same second as render_child.log's `Queuing segment 1/11` (the user's crash-retry visible in logs) |
+| **Sep 27 16:48:29** | GPF libQt6Widgets @ 0x5d9b5 |
+| **Sep 27 16:48:42** | GPF libQt6Widgets @ 0x5dc49 |
+| **Sep 28 01:18:03** | jump into libQt6Core non-exec page (error 15) |
+
+Six of these fired in **8 minutes during the user's Sep 27 evening render
+session** — six GUI deaths in one sitting. Root cause family, traced through
+three generations of fixes:
+1. Recording Studio QMediaPlayer/QThread lifetime UAFs — fixed 2026-09-08.
+2. **Worker-thread first-imports vs shiboken6's import hook** — reproduced
+   rc=139 with fingerprint (mutagen first-import vs Qt main thread) and FIXED
+   2026-09-28 05:52 in `ed6ef8b` (module-level preloads + regression net
+   `test_gui_render_import_safety.py`, mutation-proven).
+3. **Post-fix: kernel crashes since 05:52 = 0**; the other session's scripted
+   repro passes green; this campaign's acceptance (11 processes) green.
+
+The crash-hunt acceptance gate now scans the kernel log too (`kernel_crashes`
+field) — the channel where every historical crash lived but exit codes and
+`crash_records` never looked. Scan live-validated: 7 in the Sep 27→now window,
+  0 since the fix.
+
+### B. Apport SIGABRT dumps (2, origin UNRESOLVED — stated honestly)
+
+- `doctor.py --ci`, Sep 28 01:38:53, SIGABRT while blocked in
+  `poll(1800000ms)` = the `--model-timeout` model-init probe wait; frame
+  layout shows faulthandler's handler re-raising an externally-sent SIGABRT.
+  Overlaps the other session's BUG-1 (silent model-init download, doc in
+  `docs/DEBUG_SWEEP-2026-09-28.md`). Sender of the signal: not established
+  (no oomd kill in journal, no `timeout -s ABRT` in repo, no bash-history
+  entry).
+- `python3 -m unittest discover` in a deleted `/tmp` sandbox, Sep 28 04:45:26,
+  SIGABRT — system python (not our venv), C.UTF-8 env: likely another
+  project's or a harness' test run, not The Oracle's suite.
+- ffmpeg crash (Sep 26) is `/opt/bcam-nvr` (different project). Desktop app
+  crashes (xfdesktop, ChatGPT, parole, nm-applet) are unrelated noise.
+
+### C. Vulkan `VK_ERROR_DEVICE_LOST` (intermittent, RDNA1)
+
+Not reproduced in 4 Vulkan renders (1 evidence + 3 acceptance). Hardware/
+driver-level hang on the RX 5700 XT; GUI contains it as a clean Render Failed
+dialog (session survives). Watch item: next occurrence lands in
+`crash_reports/` with capture armed.
+
 ## Runs performed
 
 | # | Mode | Backend | Runs | Result |
