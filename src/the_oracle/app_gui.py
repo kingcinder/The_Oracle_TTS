@@ -14,7 +14,7 @@ import threading
 from typing import Callable
 
 from PySide6.QtCore import QThread, Qt, QUrl, Signal, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QApplication,
@@ -1527,6 +1527,16 @@ class MainWindow(QMainWindow):
         # it left off. If the persisted paths are stale, the normal
         # selection-time prerequisite check auto-starts the setup again.
         self._apply_remembered_backend()
+        # Crash surface (U3, CRASH §11 steps 3–4): install the Qt message
+        # handler once (fatal/critical Qt messages join the crash pipeline),
+        # then the next-session review / first-run consent branch. Both are
+        # consent-driven and never block startup: consent-off installs get a
+        # single ask, reviewed installs get the report review, everyone else
+        # gets nothing.
+        from the_oracle.gui_crash import install_qt_message_handler, maybe_run_startup_flow
+
+        install_qt_message_handler()
+        QTimer.singleShot(0, self._maybe_run_crash_startup_flow)
         # Restore the saved workspace layout (theme, splitters, section
         # sliders/collapses, window size) before enabling persistence, so the
         # restore itself never writes over the stored values.
@@ -1859,6 +1869,27 @@ class MainWindow(QMainWindow):
         )
         self.recording_studio_action.triggered.connect(self.open_recording_studio)
         self.menuBar().addAction(self.recording_studio_action)
+
+        # Help menu: privacy/crash reports, license activation, About (U3).
+        help_menu = self.menuBar().addMenu("Help")
+        self.privacy_action = QAction("Privacy && Crash Reports…", self)
+        self.privacy_action.setToolTip(
+            "Review crash reports from last session, change crash-report consent, "
+            "and open the privacy policy. Reports never leave this machine unless "
+            "you share one yourself."
+        )
+        self.privacy_action.triggered.connect(self._open_crash_privacy_dialog)
+        help_menu.addAction(self.privacy_action)
+        self.activate_license_action = QAction("Activate License…", self)
+        self.activate_license_action.setToolTip(
+            "Paste your license token (offline activation — no server is contacted)."
+        )
+        self.activate_license_action.triggered.connect(self._open_license_activation)
+        help_menu.addAction(self.activate_license_action)
+        self.about_action = QAction("About The Oracle…", self)
+        self.about_action.setToolTip("Which edition this install runs, and the privacy posture in one glance.")
+        self.about_action.triggered.connect(self._open_about_panel)
+        help_menu.addAction(self.about_action)
 
         # Keep references for Ctrl+hover help registration (see
         # _register_ctrl_help_descriptions).
@@ -2919,6 +2950,70 @@ class MainWindow(QMainWindow):
             self._model_download_thread.deleteLater()
             self._model_download_thread = None
             self.download_vulkan_model_action.setEnabled(True)
+
+    # ---------------------
+    # Help-menu surfaces (U3): crash privacy/review, license activation, About.
+
+    @staticmethod
+    def _consent_root() -> Path:
+        """The repo-local root the crash/privacy consent store lives under
+        (the same repo-root convention utils.logging.default_log_file uses)."""
+        return Path(__file__).resolve().parents[2]
+
+    def _open_path_with_viewer(self, path: str) -> None:
+        """Open a file with the OS-assigned viewer (the share flow's first
+        half — the user copies or sends the report themselves; no upload)."""
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _maybe_run_crash_startup_flow(self) -> None:
+        """Startup branch (D8): next-session review when reports exist,
+        otherwise the one-time first-run consent ask. Consent-off installs
+        that already answered get nothing."""
+        from the_oracle.gui_crash import maybe_run_startup_flow
+
+        maybe_run_startup_flow(
+            self,
+            consent_root=self._consent_root(),
+            dialog_cls=QDialog,
+            message_box_cls=QMessageBox,
+            open_path_fn=self._open_path_with_viewer,
+        )
+
+    def _open_crash_privacy_dialog(self) -> None:
+        from the_oracle.crash import consent as crash_consent
+        from the_oracle.gui_crash import run_first_run_consent, run_next_session_review
+
+        root = self._consent_root()
+        run_next_session_review(
+            self, root, dialog_cls=QDialog, message_box_cls=QMessageBox, open_path_fn=self._open_path_with_viewer
+        )
+        # The enabling path for a previously-declined install lives here:
+        # the first-run dialog's "not now" means never asked again, so Help
+        # is the only route back (plan contract).
+        if not crash_consent.read_consent(root):
+            if run_first_run_consent(self, root, dialog_cls=QDialog):
+                from the_oracle.crash import handlers as crash_handlers
+
+                crash_handlers.enable_faulthandler_catch(root)
+                self.error_panel.append("Local crash reporting enabled.")
+        else:
+            from the_oracle.crash import bundle as crash_bundle
+
+            count = len(crash_bundle.list_records(root))
+            self.error_panel.append(
+                f"Local crash reporting is enabled ({count} report(s) on disk)."
+            )
+
+    def _open_license_activation(self) -> None:
+        from the_oracle.gui_license import run_activation_dialog
+
+        if run_activation_dialog(self, self._consent_root(), dialog_cls=QDialog, message_box_cls=QMessageBox):
+            self.error_panel.append("License activated — see About for the new edition.")
+
+    def _open_about_panel(self) -> None:
+        from the_oracle.gui_license import run_about_panel
+
+        run_about_panel(self, dialog_cls=QDialog)
 
     def closeEvent(self, event) -> None:
         """Close only after every GUI-owned QThread has stopped.
