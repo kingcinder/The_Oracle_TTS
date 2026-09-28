@@ -112,7 +112,7 @@ class _FakeVulkanPreflightThread:
     """Stand-in for VulkanPreflightThread so GUI tests never spawn a real
     QThread or probe the actual audio.cpp binary."""
 
-    def __init__(self, _parent=None, *, device_index=None) -> None:
+    def __init__(self, _parent=None, *, device_index=None, **_kwargs) -> None:
         self.completed = _FakeSignal()
         self.failed = _FakeSignal()
         self.finished = _FakeSignal()
@@ -1557,7 +1557,9 @@ def test_vulkan_preflight_thread_emits_report(monkeypatch: pytest.MonkeyPatch) -
     captured: dict[str, str] = {}
     monkeypatch.setattr(app_gui, "_vulkan_preflight_report", lambda device_index: f"report for device {device_index}")
 
-    thread = app_gui.VulkanPreflightThread(None, device_index=3)
+    thread = app_gui.VulkanPreflightThread(
+        None, device_index=3, preflight_report=app_gui._vulkan_preflight_report
+    )
     thread.completed.connect(lambda report: captured.update({"completed": report}))
     thread.failed.connect(lambda message: captured.update({"failed": message}))
     thread.run()
@@ -1575,7 +1577,9 @@ def test_vulkan_preflight_thread_emits_failed_on_error(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(app_gui, "_vulkan_preflight_report", boom)
 
-    thread = app_gui.VulkanPreflightThread(None)
+    thread = app_gui.VulkanPreflightThread(
+        None, preflight_report=app_gui._vulkan_preflight_report
+    )
     thread.completed.connect(lambda report: captured.update({"completed": report}))
     thread.failed.connect(lambda message: captured.update({"failed": message}))
     thread.run()
