@@ -542,6 +542,65 @@ def test_doctor_output_is_identical_across_consecutive_runs(
     assert rendered[0] == rendered[1], f"report changed between runs: {differing}"
 
 
+def test_chatterbox_probe_announces_before_spawning_and_names_the_escape_hatches(
+    doctor_module, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """BUG-1 (2026-09-28): the model-init probe can legitimately download the
+
+    model for minutes on a first run while the doctor prints NOTHING — a
+    healthy bootstrap was indistinguishable from a hang. The probe must
+    announce on stderr BEFORE spawning, and the announcement must name both
+    escape hatches (--model-timeout bound, --skip-model-init skip).
+    """
+    captured: list[str] = []
+
+    def fake_probe(repo_root, code, *, timeout, extra_env=None):
+        # Read stderr at spawn time: the announcement must already be out —
+        # proving ordering, not just existence.
+        captured.append(capsys.readouterr().err)
+        return {
+            "ok": True, "returncode": 0, "stdout": "", "stderr": "", "timed_out": False,
+            "import_ok": True, "perth_ok": True, "watermarker_callable": True,
+            "init_ok": True, "init_seconds": 0.1, "sample_rate": 24000,
+        }
+
+    monkeypatch.setattr(doctor_module, "_run_python_probe", fake_probe)
+    probe = doctor_module._chatterbox_probe(tmp_path, timeout=42.0, skip_model_init=False)
+
+    assert probe["ok"] is True
+    assert len(captured) == 1, "probe spawned more than once"
+    err = captured[0]
+    assert err, "no announcement on stderr before the probe spawned"
+    assert "--model-timeout" in err and "--skip-model-init" in err, (
+        f"announcement must name the escape hatches, got: {err!r}"
+    )
+    assert "42" in err, "announcement must state the current timeout bound"
+
+
+def test_chatterbox_probe_is_silent_when_model_init_is_skipped(
+    doctor_module, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """--skip-model-init runs (every CI invocation) must stay silent: there
+
+    is nothing long-running to warn about, and the doctor's report is the
+    only output a scripted run should produce on stderr-quiet CI.
+    """
+
+    def fake_probe(repo_root, code, *, timeout, extra_env=None):
+        return {
+            "ok": True, "returncode": 0, "stdout": "", "stderr": "", "timed_out": False,
+            "import_ok": True, "perth_ok": True, "watermarker_callable": True,
+            "init_ok": False, "init_skipped": True,
+        }
+
+    monkeypatch.setattr(doctor_module, "_run_python_probe", fake_probe)
+    probe = doctor_module._chatterbox_probe(tmp_path, timeout=5.0, skip_model_init=True)
+
+    assert probe["ok"] is True
+    assert probe.get("init_skipped") is True
+    assert capsys.readouterr().err == "", "skipped model init must not announce"
+
+
 # --- manage_install.py: a fresh install verifies once, and that run must count --
 # install() called bootstrap() (which runs the doctor) and then ran the doctor
 # again at the end. Each doctor run constructs the Chatterbox model, so a fresh
