@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from the_oracle.srt_ingest import (
+    _decode_subtitle_bytes,
     convert_srt_file,
+    ensure_subtitle_script,
     looks_like_srt,
     parse_srt,
     srt_to_dialogue_text,
@@ -156,6 +158,109 @@ def test_convert_srt_file_refuses_overwrite(tmp_path: Path) -> None:
         convert_srt_file(source)
     # overwrite=True is allowed for regeneration.
     _target, _cues, _speakers = convert_srt_file(source, overwrite=True)
+
+
+# ---------------------------------------------------------------------------
+# Mixed-encoding salvage: per-cue encoding recovery
+# ---------------------------------------------------------------------------
+
+
+def test_mixed_encoding_cue_recovers_through_convert_srt_file(tmp_path: Path) -> None:
+    """THE gap: one UTF-8 cue exported into a mostly-CP1252 file must decode
+    correctly instead of turning to mojibake.
+
+    The old whole-file chain decoded strict UTF-8, and on failure CP1252 for
+    everything — so the UTF-8 cue's ``é`` (C3 A9) read as ``Ã©``. Recovery is
+    per cue: each blank-line-delimited segment decodes on its own encoding.
+    """
+    source = tmp_path / "mixed.srt"
+    source.write_bytes(
+        b"1\n00:00:01,000 --> 00:00:02,000\n"
+        + "Renée works at the café.\n".encode("utf-8")
+        + b"\n2\n00:00:03,000 --> 00:00:04,000\n"
+        + "— dash — “quote”\n".encode("cp1252")
+        + b"\n"
+    )
+
+    target, cue_count, _speakers = convert_srt_file(source)
+
+    assert cue_count == 2
+    script = target.read_text(encoding="utf-8")
+    # Both cues decode on their own encoding; consecutive unlabeled cues
+    # legitimately merge into one Narrator turn (and cue 2's leading dash is
+    # a turn marker, stripped by the dash policy), so the fragments are
+    # asserted as substrings.
+    assert "Renée works at the café." in script
+    assert "dash — “quote”" in script
+    assert "Ã©" not in script, "mojibake leaked into the converted script"
+    assert "â€" not in script and "Ã¢" not in script
+
+
+def test_mixed_encoding_recovery_runs_on_the_ensure_path(tmp_path: Path) -> None:
+    """ensure_subtitle_script shares the decode (it re-parses the raw bytes
+    to detect subtitle shape before delegating), so the same mixed file must
+    convert there too — and the reused-script policy must hold afterwards."""
+    source = tmp_path / "mixed.srt"
+    source.write_bytes(
+        b"1\n00:00:01,000 --> 00:00:02,000\n"
+        + "José's café\n".encode("utf-8")
+        + b"\n2\n00:00:03,000 --> 00:00:04,000\n"
+        + "naïve — dash\n".encode("cp1252")
+        + b"\n"
+    )
+
+    used, result = ensure_subtitle_script(source)
+
+    assert result is not None and result[0] == "converted"
+    script = Path(used).read_text(encoding="utf-8")
+    assert "José's café" in script
+    assert "naïve — dash" in script
+    assert "Ã©" not in script and "Ã¯" not in script
+    # Second call reuses the conversion (the standing policy).
+    used2, result2 = ensure_subtitle_script(source)
+    assert used2 == used and result2 == "reused"
+
+
+def test_decode_is_byte_identical_for_clean_whole_file_encodings() -> None:
+    """Regression guard: per-cue recovery must not disturb the clean cases.
+
+    A whole-file UTF-8 subtitle and a whole-file CP1252 subtitle decode to
+    exactly what the historical chain produced — the mixed-file path is the
+    only behavior change.
+    """
+    utf8_text = "1\n00:00:01,000 --> 00:00:02,000\nCafé résumé\n\n2\n00:00:03,000 --> 00:00:04,000\nnaïve\n"
+    cp_text = "1\n00:00:01,000 --> 00:00:02,000\nCafé — “quotes”\n\n2\n00:00:03,000 --> 00:00:04,000\nnaïve\n"
+    assert _decode_subtitle_bytes(utf8_text.encode("utf-8")) == utf8_text
+    assert _decode_subtitle_bytes(cp_text.encode("cp1252")) == cp_text
+    # CRLF separators survive verbatim (byte-exact, punctuation included).
+    crlf = utf8_text.replace("\n\n", "\r\n\r\n").encode("utf-8")
+    assert _decode_subtitle_bytes(crlf) == utf8_text.replace("\n\n", "\r\n\r\n")
+
+
+def test_cp1252_bytes_valid_only_by_utf8_coincidence_stay_cp1252() -> None:
+    """The ambiguity guard: a cp1252 byte triple that happens to form valid
+    UTF-8 (E9 99 80 = é™€ in cp1252) must keep its cp1252 reading — the guard
+    demands every non-ASCII codepoint sit in the Latin-1 Supplement range the
+    Windows-1252 dialogue actually carries.
+    """
+    raw = b"1\n00:00:01,000 --> 00:00:02,000\n" + bytes([0xE9, 0x99, 0x80]) + b"\n"
+    decoded = _decode_subtitle_bytes(raw)
+    assert decoded == raw.decode("cp1252")
+    assert "\u9640" not in decoded, "the UTF-8/CJK coincidence reading leaked through"
+
+
+def test_undecodable_segment_degrades_to_visible_replacement_marks() -> None:
+    """A segment in some third encoding (or carrying cp1252's hole bytes)
+    must not abort the conversion: it degrades to visible U+FFFD marks so a
+    human sees exactly where the bytes were uninterpretable.
+    """
+    raw = b"1\n00:00:01,000 --> 00:00:02,000\nok " + bytes([0x81, 0x9D]) + b" end\n"
+    decoded = _decode_subtitle_bytes(raw)
+    assert "ok " in decoded and " end" in decoded
+    assert decoded.count("\ufffd") == 2, (
+        "each hole byte must surface as exactly one visible replacement mark "
+        f"(never silently dropped): {decoded!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
