@@ -22,7 +22,11 @@ Four contracts keep the move honest:
    render's ``progress_dialog`` AND the preview's ``preview_dialog``), so
    wherever MainWindow dismisses one it must reset the sidebar with it; a
    dismissal site that forgets ``set_idle()`` leaves the finished or failed
-   operation's last frame on screen indefinitely.
+   operation's last frame on screen indefinitely. Dismissals are watched in
+   every spelling — dropping the reference (``self.X = None``) or ending the
+   dialog (``close()`` and friends) — so a teardown that skips the
+   None-assign shape (a ``closeEvent`` path, say) cannot slide past the rule;
+   unclassifiable spellings fail the scan loudly.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from __future__ import annotations
 import ast
 import os
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -175,6 +180,118 @@ def test_main_window_builds_the_live_column_from_gui_chrome() -> None:
 #: ``preview_dialog``); a dismissal of either must reset the mirror.
 _PROGRESS_DIALOG_ATTRS = frozenset({"progress_dialog", "preview_dialog"})
 
+#: Ways a dialog can die that mean "the operation is over": dropping the
+#: reference or ending the dialog through one of its own methods. A dismissal
+#: that skips the None-assign shape (a ``closeEvent`` teardown, say) must not
+#: slide past the mirror rule.
+_DISMISSAL_METHODS = frozenset({"close", "done", "accept", "reject", "deleteLater"})
+
+#: Interactions that are *not* dismissals: dialog liveness only.
+_BENIGN_METHODS = frozenset({"show", "update_progress"})
+
+
+class _DialogScan(NamedTuple):
+    """The classified result of one scan pass over a window class."""
+
+    dismissers: list[str]  # methods containing any dismissal shape
+    offenders: list[str]  # dismissers lacking a same-method sidebar reset
+    dismissed_dialogs: set[str]  # dialog attr names seen being dismissed
+    dismissal_shapes: set[str]  # e.g. {"call:close", "assign:None"}
+    unclassified: list[str]  # interactions the scan refuses to guess about
+
+
+def _scan_dialog_interactions(window_cls: ast.ClassDef) -> _DialogScan:
+    """Classify every interaction with the two mirrored progress dialogs.
+
+    Dismissal shapes covered: dropping the reference (``self.X = None``)
+    and ending the dialog via one of its methods (``close``/``done``/
+    ``accept``/``reject``/``deleteLater``) — either way the sidebar must be
+    reset in the same method. ``__init__``'s ``= None`` is initialization,
+    not dismissal; ``show``/``update_progress`` and construction assignments
+    are benign liveness. Anything else lands in ``unclassified`` and fails
+    the scan loudly: a new spelling must be classified deliberately (add it
+    to ``_DISMISSAL_METHODS`` or ``_BENIGN_METHODS``), never absorbed by
+    guesswork — a dismissal hiding in an unclassified spelling is exactly
+    the bug this scan exists to catch.
+    """
+    dismissers: list[str] = []
+    offenders: list[str] = []
+    dismissed_dialogs: set[str] = set()
+    dismissal_shapes: set[str] = set()
+    unclassified: list[str] = []
+
+    for method in window_cls.body:
+        if not isinstance(method, ast.FunctionDef):
+            continue
+        dismissed = False
+        idles_sidebar = False
+        for node in ast.walk(method):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "set_idle"
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "live_panel"
+            ):
+                idles_sidebar = True
+
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if not (
+                        isinstance(target, ast.Attribute)
+                        and target.attr in _PROGRESS_DIALOG_ATTRS
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "self"
+                    ):
+                        continue
+                    value = node.value
+                    if value is None:
+                        continue  # bare annotation declares, never dismisses
+                    if isinstance(value, ast.Constant) and value.value is None:
+                        if method.name == "__init__":
+                            continue  # initialization, not dismissal
+                        dismissed = True
+                        dismissed_dialogs.add(target.attr)
+                        dismissal_shapes.add("assign:None")
+                    elif isinstance(value, ast.Call):
+                        pass  # (re)construction — benign liveness
+                    else:
+                        unclassified.append(
+                            f"{method.name} (line {node.lineno}): self.{target.attr} = "
+                            f"<{type(value).__name__}> — dismissal or not? Classify "
+                            "it deliberately, do not let the scan guess."
+                        )
+
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr in _PROGRESS_DIALOG_ATTRS
+                and isinstance(node.func.value.value, ast.Name)
+                and node.func.value.value.id == "self"
+            ):
+                callee = node.func.attr
+                if callee in _DISMISSAL_METHODS:
+                    dismissed = True
+                    dismissed_dialogs.add(node.func.value.attr)
+                    dismissal_shapes.add(f"call:{callee}")
+                elif callee not in _BENIGN_METHODS:
+                    unclassified.append(
+                        f"{method.name} (line {node.lineno}): "
+                        f"self.{node.func.value.attr}.{callee}() — is this a "
+                        "dismissal? Add it to _DISMISSAL_METHODS or "
+                        "_BENIGN_METHODS deliberately."
+                    )
+        if dismissed:
+            dismissers.append(method.name)
+            if not idles_sidebar:
+                offenders.append(f"{method.name} (line {method.lineno})")
+
+    return _DialogScan(
+        dismissers, offenders, dismissed_dialogs, dismissal_shapes, unclassified
+    )
+
 
 def test_dismissing_the_progress_dialog_also_idles_the_sidebar() -> None:
     """Every progress-dialog dismissal resets the persistent sidebar with it.
@@ -192,56 +309,110 @@ def test_dismissing_the_progress_dialog_also_idles_the_sidebar() -> None:
     main_window = _class(tree, "MainWindow")
     assert main_window is not None
 
-    dismissers: list[str] = []
-    offenders: list[str] = []
-    dismissed_dialogs: set[str] = set()
-    for method in main_window.body:
-        if not isinstance(method, ast.FunctionDef):
-            continue
-        clears_dialog = False
-        idles_sidebar = False
-        for node in ast.walk(method):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if (
-                        isinstance(target, ast.Attribute)
-                        and target.attr in _PROGRESS_DIALOG_ATTRS
-                        and isinstance(target.value, ast.Name)
-                        and target.value.id == "self"
-                        and isinstance(node.value, ast.Constant)
-                        and node.value.value is None
-                    ):
-                        clears_dialog = True
-                        dismissed_dialogs.add(target.attr)
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "set_idle"
-                and isinstance(node.func.value, ast.Attribute)
-                and node.func.value.attr == "live_panel"
-            ):
-                idles_sidebar = True
-        if clears_dialog:
-            dismissers.append(method.name)
-            if not idles_sidebar:
-                offenders.append(f"{method.name} (line {method.lineno})")
+    scan = _scan_dialog_interactions(main_window)
 
-    assert dismissers, (
+    assert scan.dismissers, (
         "no MainWindow method dismisses a progress dialog; the scan went "
         "blind — fix the scanner, not this assertion."
     )
-    assert dismissed_dialogs == _PROGRESS_DIALOG_ATTRS, (
-        f"the scan saw dismissals of {sorted(dismissed_dialogs)} only; both "
+    assert scan.dismissed_dialogs == _PROGRESS_DIALOG_ATTRS, (
+        f"the scan saw dismissals of {sorted(scan.dismissed_dialogs)} only; both "
         f"dialog families {sorted(_PROGRESS_DIALOG_ATTRS)} must stay visible. "
         "If one side genuinely stops being dismissed, update this guard "
         "deliberately — do not let the scan narrow silently."
     )
-    assert offenders == [], (
+    assert {"call:close", "assign:None"} <= scan.dismissal_shapes, (
+        f"the scan saw dismissal shapes {sorted(scan.dismissal_shapes)} only; "
+        "both the close-call and the reference-drop shapes must stay visible "
+        "(a close-only dismissal is exactly what a closeEvent teardown would "
+        "introduce). If a shape genuinely disappears, update this guard "
+        "deliberately — do not let the scan narrow silently."
+    )
+    assert scan.unclassified == [], (
+        "these dialog interactions use a spelling the scan has not "
+        "classified; decide whether each is a dismissal (add to "
+        "_DISMISSAL_METHODS) or benign liveness (add to _BENIGN_METHODS) — "
+        "a dismissal hiding in an unclassified spelling is the bug this "
+        "scan exists to catch:\n  " + "\n  ".join(scan.unclassified)
+    )
+    assert scan.offenders == [], (
         "these MainWindow methods dismiss a progress dialog but leave the "
         "persistent Live sidebar showing stale progress:\n  "
-        + "\n  ".join(offenders)
+        + "\n  ".join(scan.offenders)
         + "\nAdd live_panel.set_idle() alongside the dismissal."
     )
+
+
+def test_the_dismissal_scanner_covers_every_shape_form_by_form() -> None:
+    """Form-by-form proofs the classifier sees the shapes it claims to.
+
+    The live source only exercises close()+clear together, so a close-only
+    dismissal (the shape a ``closeEvent`` teardown would introduce) or a
+    result-based dismissal could regress the mirror rule with every scan pass
+    green. These synthetic forms run in every CI pass: every dismissal shape
+    without a reset must be flagged as that shape (not merely flagged), every
+    shape with a reset must pass *having been seen as a dismissal*, benign
+    interactions must not be flagged, and unknown spellings must fail loudly
+    rather than pass unseen.
+    """
+
+    def scan(method_body: str) -> _DialogScan:
+        indented = "\n".join("        " + line for line in method_body.splitlines())
+        tree = ast.parse(f"class _W:\n    def m(self) -> None:\n{indented}\n")
+        window_cls = _class(tree, "_W")
+        assert window_cls is not None
+        return _scan_dialog_interactions(window_cls)
+
+    dismissal_forms = (
+        "self.progress_dialog.close()",
+        "self.preview_dialog.close()",
+        "self.progress_dialog.done(0)",
+        "self.preview_dialog.accept()",
+        "self.progress_dialog.reject()",
+        "self.preview_dialog.deleteLater()",
+        "self.progress_dialog = None",
+        "self.preview_dialog = None",
+    )
+    for form in dismissal_forms:
+        got = scan(form)
+        assert got.dismissers == ["m"], f"{form!r} was not seen as a dismissal"
+        assert got.offenders and got.offenders[0].startswith("m ("), (
+            f"{form!r} without a same-method reset must be flagged"
+        )
+        assert got.unclassified == [], f"{form!r} misread: {got.unclassified}"
+
+        got = scan(form + "\nself.live_panel.set_idle()")
+        assert got.dismissers == ["m"], f"{form!r} was not seen as a dismissal"
+        assert got.offenders == [], f"{form!r} with a same-method reset must pass"
+        assert got.unclassified == [], f"{form!r} misread: {got.unclassified}"
+
+    # __init__'s = None is initialization, not dismissal.
+    tree = ast.parse(
+        "class _W:\n"
+        "    def __init__(self) -> None:\n"
+        "        self.progress_dialog = None\n"
+        "        self.preview_dialog: object | None = None\n"
+    )
+    init_scan = _scan_dialog_interactions(_class(tree, "_W"))  # type: ignore[arg-type]
+    assert init_scan.dismissers == [] and init_scan.offenders == []
+    assert init_scan.unclassified == []
+
+    for form in (
+        "self.progress_dialog.show()",
+        "self.preview_dialog.update_progress(progress)",
+        "self.preview_dialog = RenderProgressDialog(self)",
+    ):
+        got = scan(form)
+        assert got.dismissers == [], f"{form!r} is benign liveness, not a dismissal"
+        assert got.unclassified == [], f"{form!r} misread: {got.unclassified}"
+
+    for form in (
+        "self.progress_dialog.hide()",
+        "self.preview_dialog = other",
+    ):
+        got = scan(form)
+        assert got.unclassified, f"{form!r} must fail loudly as unclassified"
+        assert got.dismissers == [], f"{form!r} must not be absorbed as a dismissal"
 
 
 @pytest.mark.slow

@@ -34,6 +34,16 @@ class _FakeRenderer:
         return self.output_path
 
 
+class _FakePreviewDialog:
+    """Stand-in for the preview's RenderProgressDialog: tracks dismissal only."""
+
+    def __init__(self) -> None:
+        self.closed = 0
+
+    def close(self) -> None:
+        self.closed += 1
+
+
 def _plan_with_utterance(paths: Path) -> RenderPlan:
     profile_a = VoiceProfile(name="Speaker A", speaker="A", reference_audio=[], engine_params=VoiceSettings())
     profile_b = VoiceProfile(name="Speaker B", speaker="B", reference_audio=[], engine_params=VoiceSettings())
@@ -294,6 +304,98 @@ def test_failed_render_returns_the_live_sidebar_to_idle(
         assert window.live_panel.eta_label.text() == ""
     finally:
         window.render_worker = None
+        window.close()
+
+
+def test_preview_finish_returns_the_live_sidebar_to_idle(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A finished preview must not leave the sidebar on its last frame.
+
+    Preview half of the mirror contract
+    ``test_finish_render_returns_the_live_sidebar_to_idle`` pins for renders:
+    ``_update_preview_progress`` mirrors into ``live_panel``, so the finish
+    handler's dismissal of ``preview_dialog`` must reset the sidebar with it.
+    """
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        window._update_preview_progress(
+            RenderProgress(
+                stage="Synthesizing",
+                detail="utterance 2/4",
+                current_step=2,
+                total_steps=4,
+                current_segment=2,
+                total_segments=4,
+                elapsed_seconds=3.0,
+                fraction=0.5,
+                eta_seconds=4.0,
+                backend="vulkan",
+                device_label="AMD RX 5700 XT",
+            )
+        )
+        # Vacuity guard: the sidebar must be genuinely dirty through the mirror
+        # write side first, or the idle asserts below could pass without the
+        # handler ever resetting anything.
+        assert window.live_panel.progress_bar.value() == 50
+        assert "Vulkan" in window.live_panel.backend_label.text()
+        dialog = _FakePreviewDialog()
+        window.preview_dialog = dialog
+
+        window._finish_preview(0, str(tmp_path / "preview.wav"))
+
+        assert dialog.closed == 1
+        assert window.preview_dialog is None
+        assert window.live_panel.progress_bar.value() == 0
+        assert window.live_panel.backend_label.text() == "Backend: idle"
+        assert window.live_panel.synth_label.text() == ""
+        assert window.live_panel.stage_label.text() == ""
+        assert window.live_panel.segment_label.text() == ""
+        assert window.live_panel.eta_label.text() == ""
+    finally:
+        window.close()
+
+
+def test_preview_fail_returns_the_live_sidebar_to_idle(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed preview must not leave the sidebar frozen on its last frame."""
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        monkeypatch.setattr(
+            "the_oracle.app_gui.QMessageBox.critical",
+            lambda *_args, **_kwargs: None,
+        )
+        window._update_preview_progress(
+            RenderProgress(
+                stage="Synthesizing",
+                detail="utterance 1/4",
+                current_step=1,
+                total_steps=4,
+                current_segment=1,
+                total_segments=4,
+                elapsed_seconds=3.0,
+                fraction=0.25,
+                eta_seconds=9.0,
+                backend="pytorch",
+                device_label="CPU",
+            )
+        )
+        # Vacuity guard: prove the mirror wrote a non-idle frame first.
+        assert window.live_panel.progress_bar.value() == 25
+        assert "PyTorch" in window.live_panel.backend_label.text()
+        dialog = _FakePreviewDialog()
+        window.preview_dialog = dialog
+
+        window._fail_preview("Synthesis failed.")
+
+        assert dialog.closed == 1
+        assert window.preview_dialog is None
+        assert window.live_panel.progress_bar.value() == 0
+        assert window.live_panel.backend_label.text() == "Backend: idle"
+        assert window.live_panel.stage_label.text() == ""
+        assert window.live_panel.eta_label.text() == ""
+    finally:
         window.close()
 
 
