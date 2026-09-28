@@ -57,10 +57,14 @@ and M2 (retry failed loads) each caught by the suite; byte-identical reverts.
 | cProfile total | 1.83 s |
 | Load path (`_try_load_symspell` incl. `_load_from_cache`) | ct 0.412 s, ncalls 1 (was 2 × ~0.393 s) |
 
-**Net: ~0.48 s (~21%) off the representative render**, with the dictionary now
-deserialized exactly once per process regardless of how many pipelines are
-built. No behavior change: full suite green after the change (1452 passed,
-16 warnings, 261 s); smoke render rc=0 with identical output ("Stem count: 4",
+**Net: ~0.48 s off the representative render** — about **21 % of the
+profiled total** (2.309 s → 1.835 s) and about **11 % of wall-clock time**
+(2.038 s → 1.82 s) — with the dictionary now deserialized exactly once per
+process regardless of how many pipelines are built. [Corrected 2026-09-28:
+an earlier wording attributed the 21 % to wall clock; the two were
+conflated. Wall-clock ~11 % is the honest consumer-facing figure.] No
+behavior change: full suite green after the change (1452 passed, 16
+warnings, 261 s); smoke render rc=0 with identical output ("Stem count: 4",
 "Cache reused on second pass: True").
 
 ## Second candidate observed, not taken
