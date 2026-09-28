@@ -21,6 +21,19 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 - The doctor now announces *before* a first-run model download that can take
   several minutes (previously silent, indistinguishable from a hang) and names
   `--skip-model-init` as the way out.
+- **Visible, deterministic self-healing.** When the engine-output gate rejects
+  a take and the one-shot fresh-seed retry heals it, the render now says so:
+  progress and the completion summary report the retry, and the healed take is
+  bit-for-bit reproducible (a re-render serves the same cached audio).
+- `the-oracle sweep-cache` runs a project's stem cache through the
+  servable-stem gate on demand — dry run by default, `--apply` deletes,
+  `--json` for scripts — reporting every purged stem with its reason.
+
+### Fixed
+
+- The Live sidebar no longer sticks on a finished or failed job: renders,
+  previews, and preview teardown all return it to idle (and the mirror-drift
+  scan now covers every dialog-dismissal shape so it stays that way).
 
 ## [1.3.0] — 2026-09-21
 
@@ -64,6 +77,12 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   three read routes validate content (with the sanctioned pause-only silence
   exception), and the batched path banks pause silence itself instead of
   asking the engine to synthesize empty text.
+
+## [1.3.1] — 2026-09-28
+
+### Changed
+
+- (nothing yet)
 
 ## [Unreleased]
 

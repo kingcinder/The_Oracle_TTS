@@ -1,6 +1,6 @@
 # The Oracle
 
-**Release V1.3.0** — Self-healing synthesis, input-salvage diagnostics, and release tooling with a verified changelog gate.
+**Release V1.3.1** — Local private crash reporting, offline licensing, and a more visible, resilient render path.
 
 Changes between releases: [CHANGELOG.md](CHANGELOG.md). Upgrading an
 existing install: [docs/UPGRADING.md](docs/UPGRADING.md). Problems:
