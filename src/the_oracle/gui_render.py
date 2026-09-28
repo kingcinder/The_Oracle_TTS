@@ -31,6 +31,20 @@ import sys
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QDialog, QLabel, QProgressBar, QVBoxLayout, QWidget
 
+# Everything the workers' run() call graph lazily imports is loaded HERE, on
+# the main thread, before any QThread can start. A module whose first import
+# happens inside a worker thread races the GUI's main thread through
+# shiboken6's signature import hook (inspect.getsource runs during import)
+# and the pair segfaults natively — reproduced and faulthandler-verified for
+# mutagen (U4.2, see .serpent-circle/04-debug/root-causes.md). Keep this list
+# in lockstep with tests/test_gui_render_import_safety.py.
+import mutagen.flac  # noqa: F401 - preloaded for _tag_with_mutagen
+import mutagen.oggvorbis  # noqa: F401
+import tempfile  # noqa: F401 - used inside the subprocess helpers
+
+from the_oracle.audio.export_srt import write_srt
+from the_oracle.subtitle_targets import subtitle_sidecar_target
+
 from the_oracle.models.project import RenderPlan, Utterance, VoiceProfile
 from the_oracle.models.settings import RenderSettings
 from the_oracle.pipeline import OraclePipeline, RenderProgress
@@ -159,8 +173,6 @@ class RenderWorker(QThread):
         pipeline in this child process isolates that native failure; the GUI
         process can then turn any signal exit into a normal error message.
         """
-        import tempfile
-
         output_dir = Path(self.plan.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         temporary_dir: tempfile.TemporaryDirectory[str] | None = None
@@ -281,9 +293,9 @@ class RenderWorker(QThread):
                     force_sequential=True,
                 )
             if self.settings.metadata.get("export_srt"):
-                from the_oracle.audio.export_srt import write_srt
-                from the_oracle.subtitle_targets import subtitle_sidecar_target
-
+                # Preloaded at module import (main thread) — see the block at
+                # the top of this file; a lazy import here would be a
+                # worker-thread first-import.
                 srt_path = write_srt(subtitle_sidecar_target(output_path), self.plan.utterances)
                 self.plan.metadata["srt_path"] = str(srt_path)
         except Exception as exc:
@@ -356,8 +368,6 @@ class PreviewWorker(QThread):
         synthesis happen in a clean interpreter that only touches native
         torch/audio code, never Qt.
         """
-        import tempfile
-
         temporary_dir: tempfile.TemporaryDirectory[str] | None = None
         if self._subprocess_job is None:
             temporary_dir = tempfile.TemporaryDirectory(prefix=".oracle-preview-")
