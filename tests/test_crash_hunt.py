@@ -78,3 +78,56 @@ def test_harvest_ignores_preexisting_records(tmp_path: Path):
     old.write_text("{}")
     before = set(crash.list_records(root))
     assert crash_hunt.harvest_crash_records(root, before) == []
+
+
+# --- Task 4: offscreen GUI loop mode ---
+
+
+def test_gui_env_forces_offscreen():
+    env = crash_hunt._gui_env()
+    assert env["QT_QPA_PLATFORM"] == "offscreen"
+
+
+def test_gui_command_launches_gui():
+    cmd = crash_hunt._gui_command()
+    assert "gui" in cmd
+    assert any("the_oracle" in part or part.endswith("the-oracle") for part in cmd)
+
+
+def test_gui_launch_waits_for_mainwindow_built(tmp_path: Path, monkeypatch):
+    """A GUI child that writes mainwindow_built counts as a clean launch."""
+    timing_log = tmp_path / "gui_launch_timing.json"
+
+    def fake_child(timing_file: Path, baseline_mtime: float | None, timeout_s: float) -> int:
+        # child process: reports a successful launch, then exits 0
+        timing_file.write_text(json.dumps({"events": [["mainwindow_built", 1.0]]}))
+        return 0
+
+    monkeypatch.setattr(crash_hunt, "_gui_command", lambda: [sys.executable, "-c", "pass"])
+    monkeypatch.setattr(crash_hunt, "_gui_child", fake_child)
+    outcome = crash_hunt._run_gui_once(tmp_path, timeout_s=10)
+    assert outcome == "ok"
+
+
+def test_gui_mode_flag_drives_gui_loop(tmp_path: Path, monkeypatch):
+    """--mode gui must run the GUI cycle, not the render loop."""
+    calls = []
+    monkeypatch.setattr(crash_hunt, "_run_gui_once",
+                        lambda timing_dir, timeout_s=120.0: calls.append(timing_dir) or "ok")
+    rc = main(["--mode", "gui", "--runs", "2", "--outdir", str(tmp_path)])
+    assert rc == 0
+    assert len(calls) == 2
+    report = json.loads((tmp_path / "report.json").read_text())
+    assert report["runs"] == 2 and report["failures"] == []
+
+
+def test_gui_launch_timeout_is_classified(tmp_path: Path, monkeypatch):
+    """A child that never reports mainwindow_built must not count as a clean launch."""
+    monkeypatch.setattr(crash_hunt, "_gui_command", lambda: [sys.executable, "-c", "pass"])
+
+    def fake_child(timing_file: Path, baseline_mtime: float | None, timeout_s: float) -> int:
+        return 0  # exits without ever writing the timing log
+
+    monkeypatch.setattr(crash_hunt, "_gui_child", fake_child)
+    outcome = crash_hunt._run_gui_once(tmp_path, timeout_s=2)
+    assert outcome == "launch_timeout"
