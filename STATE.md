@@ -1164,6 +1164,15 @@ rewritten by the loop).
 
 ## Deferred (intentional)
 
+- **Recording Studio takes and the user's teleprompter script kept —
+  dispositioned KEEP, gitignored (2026-09-28)**: four Recording Studio takes
+  (`Seashells/Seashell_No_2.wav`, two `Seashells/*fransisco*.wav` takes and
+  their v5 cleaned render) and `Input/recording prompt.txt` (the teleprompter
+  working script) are the user's personal recording artifacts, not catalog
+  voice references (the tracked `Seashells/*.wav` references stay tracked).
+  Ignored alongside the `Seashell_No_1.wav` precedent so the release tooling's
+  dirty-tree gate stays meaningful for repo files without ever touching the
+  user's files. Disposition: KEEP, do not clean, do not track.
 - **`Output/render_plan.json.bak` kept — omega residue finding dispositioned
   KEEP (2026-09-25)**: serpent-circle's inventory has flagged this untracked
   file twice (campaign 7, cycle 2; fresh-campaign preview). It is a render-plan
