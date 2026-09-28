@@ -4787,6 +4787,9 @@ class MainWindow(QMainWindow):
             self._preview_row_queued_after_setup = row
             self.preview_dialog.close()
             self.preview_dialog = None
+            # The queued preview's dialog is gone: idle the persistent
+            # sidebar half too — the same mirror rule as _finish_render.
+            self.live_panel.set_idle()
             self._set_preview_busy(False)
             self.error_panel.append(
                 "Preview queued: the Vulkan backend is being set up automatically; "
@@ -4841,6 +4844,9 @@ class MainWindow(QMainWindow):
             if self.preview_dialog is not None:
                 self.preview_dialog.close()
                 self.preview_dialog = None
+            # Startup failure is still a dismissal: idle the persistent
+            # sidebar half — the same mirror rule as _finish_render.
+            self.live_panel.set_idle()
             self.error_panel.append(f"Preview failed: {exc}")
             QMessageBox.critical(self, "Preview Failed", str(exc))
 
@@ -5070,12 +5076,19 @@ class MainWindow(QMainWindow):
         if self.preview_dialog is not None:
             self.preview_dialog.close()
             self.preview_dialog = None
+        # The sidebar is the persistent half of the same progress mirror (see
+        # _finish_render): a finished preview must idle it too, or the last
+        # frame stays on screen indefinitely.
+        self.live_panel.set_idle()
 
     def _fail_preview(self, message: str) -> None:
         self.error_panel.append(f"Preview failed: {message}")
         if self.preview_dialog is not None:
             self.preview_dialog.close()
             self.preview_dialog = None
+        # A failed preview would otherwise leave the sidebar frozen on its
+        # last frame — the same persistent-mirror rule as _finish_render.
+        self.live_panel.set_idle()
         QMessageBox.critical(self, "Preview Failed", message)
 
     def _cleanup_preview_worker(self) -> None:

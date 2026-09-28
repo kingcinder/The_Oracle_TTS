@@ -18,10 +18,11 @@ Four contracts keep the move honest:
    splitter and ``_register_section`` persistence wiring stay in ``app_gui``.
    That is the split-readership the patch-surface net registers as
    ``PARTIAL_OWNED``.
-4. MIRROR — the sidebar is the *persistent* half of the progress mirror, so
-   wherever MainWindow dismisses the render progress dialog it must reset the
-   sidebar with it; a dismissal site that forgets ``set_idle()`` leaves the
-   finished render's last frame on screen indefinitely.
+4. MIRROR — the sidebar is the *persistent* half of the progress mirror (the
+   render's ``progress_dialog`` AND the preview's ``preview_dialog``), so
+   wherever MainWindow dismisses one it must reset the sidebar with it; a
+   dismissal site that forgets ``set_idle()`` leaves the finished or failed
+   operation's last frame on screen indefinitely.
 """
 
 from __future__ import annotations
@@ -169,14 +170,23 @@ def test_main_window_builds_the_live_column_from_gui_chrome() -> None:
     assert len(register_calls) == 1, "the 'live' section must stay registered for persistence"
 
 
+#: The progress dialogs MainWindow dismisses at the end of an operation. The
+#: sidebar mirrors both (renders drive ``progress_dialog``, previews drive
+#: ``preview_dialog``); a dismissal of either must reset the mirror.
+_PROGRESS_DIALOG_ATTRS = frozenset({"progress_dialog", "preview_dialog"})
+
+
 def test_dismissing_the_progress_dialog_also_idles_the_sidebar() -> None:
     """Every progress-dialog dismissal resets the persistent sidebar with it.
 
     The sidebar mirrors the dialog but is the half that stays on screen, so a
     dismissal site that forgets ``live_panel.set_idle()`` freezes the finished
-    or failed render's last frame there forever — the bug fixed in
-    ``_finish_render``/``_fail_render``. Pinning the shape keeps the next
-    dismissal site (or the next mirror) from re-introducing it.
+    or failed operation's last frame there forever — the bug fixed in
+    ``_finish_render``/``_fail_render``, and found again in the preview paths
+    (``_finish_preview``/``_fail_preview``, the queued-after-setup path, and
+    the worker-start failure teardown) once previews were seen mirroring into
+    the sidebar too. Pinning the shape keeps the next dismissal site (or the
+    next mirror) from re-introducing it.
     """
     tree = ast.parse(APP_GUI.read_text(encoding="utf-8"))
     main_window = _class(tree, "MainWindow")
@@ -184,6 +194,7 @@ def test_dismissing_the_progress_dialog_also_idles_the_sidebar() -> None:
 
     dismissers: list[str] = []
     offenders: list[str] = []
+    dismissed_dialogs: set[str] = set()
     for method in main_window.body:
         if not isinstance(method, ast.FunctionDef):
             continue
@@ -194,13 +205,14 @@ def test_dismissing_the_progress_dialog_also_idles_the_sidebar() -> None:
                 for target in node.targets:
                     if (
                         isinstance(target, ast.Attribute)
-                        and target.attr == "progress_dialog"
+                        and target.attr in _PROGRESS_DIALOG_ATTRS
                         and isinstance(target.value, ast.Name)
                         and target.value.id == "self"
                         and isinstance(node.value, ast.Constant)
                         and node.value.value is None
                     ):
                         clears_dialog = True
+                        dismissed_dialogs.add(target.attr)
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
@@ -215,11 +227,17 @@ def test_dismissing_the_progress_dialog_also_idles_the_sidebar() -> None:
                 offenders.append(f"{method.name} (line {method.lineno})")
 
     assert dismissers, (
-        "no MainWindow method dismisses the progress dialog; the scan went "
+        "no MainWindow method dismisses a progress dialog; the scan went "
         "blind — fix the scanner, not this assertion."
     )
+    assert dismissed_dialogs == _PROGRESS_DIALOG_ATTRS, (
+        f"the scan saw dismissals of {sorted(dismissed_dialogs)} only; both "
+        f"dialog families {sorted(_PROGRESS_DIALOG_ATTRS)} must stay visible. "
+        "If one side genuinely stops being dismissed, update this guard "
+        "deliberately — do not let the scan narrow silently."
+    )
     assert offenders == [], (
-        "these MainWindow methods dismiss the progress dialog but leave the "
+        "these MainWindow methods dismiss a progress dialog but leave the "
         "persistent Live sidebar showing stale progress:\n  "
         + "\n  ".join(offenders)
         + "\nAdd live_panel.set_idle() alongside the dismissal."
