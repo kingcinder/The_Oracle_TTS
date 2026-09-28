@@ -40,13 +40,13 @@ class CrashReport:
     crash_record_path: str | None = None
 
 
-def _render_command() -> list[str]:
+def _render_command(backend: str = "pytorch") -> list[str]:
     """A real render command against a tracked sample input.
 
     Output goes to build/crash_hunt/out so runs never touch Output/
     (the doctor's read-only gate only tolerates build/doctor_*).
     """
-    return [
+    command = [
         sys.executable,
         "-m",
         "the_oracle.cli",
@@ -56,6 +56,9 @@ def _render_command() -> list[str]:
         "--outdir",
         str(REPO_ROOT / "build" / "crash_hunt" / "out"),
     ]
+    if backend != "pytorch":
+        command += ["--inference-backend", backend]
+    return command
 
 
 def harvest_crash_records(root: Path, before: set) -> list[str]:
@@ -149,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--outdir", default=str(REPO_ROOT / "build" / "crash_hunt"))
     parser.add_argument("--mode", choices=("render", "gui"), default="render")
+    parser.add_argument("--backend", choices=("pytorch", "vulkan"), default="pytorch")
     args = parser.parse_args(argv)
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -161,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
                 failures.append(asdict(CrashReport(kind, _gui_command(), -1, "")))
     else:
         for _ in range(args.runs):
-            command = _render_command()
+            command = _render_command(backend=args.backend)
             proc = subprocess.run(
                 command,
                 cwd=str(REPO_ROOT),

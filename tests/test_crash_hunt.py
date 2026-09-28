@@ -29,7 +29,7 @@ def test_classify_exit_codes():
 
 def test_report_written(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(crash_hunt, "_render_command",
-                        lambda: [sys.executable, "-c", "raise SystemExit(0)"])
+                        lambda backend="pytorch": [sys.executable, "-c", "raise SystemExit(0)"])
     rc = main(["--runs", "1", "--outdir", str(tmp_path)])
     assert rc == 0
     report = json.loads((tmp_path / "report.json").read_text())
@@ -39,7 +39,7 @@ def test_report_written(tmp_path: Path, monkeypatch):
 
 def test_sigsegv_child_is_recorded(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(crash_hunt, "_render_command",
-                        lambda: [sys.executable, "-c", "import os; os._exit(245)"])
+                        lambda backend="pytorch": [sys.executable, "-c", "import os; os._exit(245)"])
     rc = main(["--runs", "1", "--outdir", str(tmp_path)])
     assert rc == 1
     report = json.loads((tmp_path / "report.json").read_text())
@@ -107,6 +107,20 @@ def test_gui_launch_waits_for_mainwindow_built(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(crash_hunt, "_gui_child", fake_child)
     outcome = crash_hunt._run_gui_once(tmp_path, timeout_s=10)
     assert outcome == "ok"
+
+
+# --- Task 5: --backend vulkan ---
+
+
+def test_backend_vulkan_flag_extends_render_command():
+    cmd = crash_hunt._render_command(backend="vulkan")
+    assert "--inference-backend" in cmd
+    assert cmd[cmd.index("--inference-backend") + 1] == "vulkan"
+
+
+def test_backend_default_is_pytorch():
+    cmd = crash_hunt._render_command()
+    assert "--inference-backend" not in cmd or "pytorch" in cmd
 
 
 def test_gui_mode_flag_drives_gui_loop(tmp_path: Path, monkeypatch):
