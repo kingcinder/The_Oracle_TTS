@@ -657,6 +657,20 @@ else:
 
 print({JSON_PREFIX!r} + json.dumps(payload))
 """
+    if not skip_model_init:
+        # BUG-1 (2026-09-28): the model-init probe can legitimately download
+        # the model for minutes on a first run while the doctor printed
+        # nothing — a healthy bootstrap was indistinguishable from a hang.
+        # Announce BEFORE spawning and name both escape hatches; the
+        # timeout itself stays the operator's choice (CI always pairs --ci
+        # with --skip-model-init, and a dev checkout's bootstrap download is
+        # designed behavior, so no offline clamp is forced here).
+        print(
+            "Chatterbox model check: a first run may download the model "
+            f"(this can take several minutes; bounded by --model-timeout, "
+            f"currently {timeout:g}s; skip entirely with --skip-model-init).",
+            file=sys.stderr,
+        )
     probe = _run_python_probe(repo_root, code, timeout=timeout, extra_env={"PYTHONWARNINGS": "ignore"})
     probe["ok"] = bool(probe.get("import_ok")) and (skip_model_init or bool(probe.get("init_ok"))) and bool(probe.get("perth_ok"))
     return probe
