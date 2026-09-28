@@ -849,12 +849,17 @@ rewritten by the loop).
   (84 tests in the batching/backend/synthesis/render-worker files). Pacing
   and emotion live in shared plan/assembly code, never in the engine call,
   so both inference backends behave identically by construction.
-- **The MainWindow extraction campaign is complete — six slices landed** (the
+- **The MainWindow extraction campaign — six slices landed, then a seventh
+  follow-on (2026-09-27)** (the
   JUNO journal's *numbered* extraction slices stop at four — "Fourth" is
   gui_render — because the gui_vulkan and gui_chrome entries were never
-  numbered there; this record settles the count at six for the same campaign),
-  each its own revertable commit, each requiring zero edits to existing tests
-  (the seam proof the per-cluster reviews demanded). Slice 1: the transformer
+  numbered there; this record settles the count at six for the campaign
+  proper, the seventh being the Vulkan thread-cluster slice `5d26f1a` that
+  moved the half the 2026-09-20 damage assessment kept in app_gui), each its
+  own revertable commit. The original "zero edits to existing tests" seam
+  claim was already inaccurate when written — gui_render repointed one test,
+  and the thread-cluster slice deliberately touched three more — so it is
+  corrected here. Slice 1: the transformer
   popups and preview dialogs live in `src/the_oracle/gui_ingest.py`, with the Qt classes the
   tests patch injected from MainWindow at call time. Slice 2: format-health
   bookkeeping (trusted-file approvals, backup records) lives in `gui_settings.py`,
@@ -869,7 +874,9 @@ rewritten by the loop).
   `RenderProgressDialog` and the isolated-render child-environment builder, with
   `OraclePipeline` split-owned between window assembly (app_gui) and the workers'
   direct fallback (gui_render). Slice 5: `gui_vulkan.py` owns the device-row text
-  and model-path parsing. Slice 6: `gui_chrome.py` owns `LivePanel` and
+  and model-path parsing (and, since the 2026-09-27 thread-cluster slice, the
+  four Vulkan thread classes, with `VulkanPreflightThread`'s policy dependency
+  crossing a `preflight_report=` constructor seam). Slice 6: `gui_chrome.py` owns `LivePanel` and
   `build_live_section`; app_gui re-imports both so construction, the progress
   handlers, and the existing test import resolve to identical objects, while the
   splitter  assembly and `_register_section("live", ...)` stay in app_gui where the
