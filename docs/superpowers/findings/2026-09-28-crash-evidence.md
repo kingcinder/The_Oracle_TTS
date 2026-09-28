@@ -70,10 +70,29 @@ Not a root cause of the *crashes* — it's a log-integrity/perf symptom
   today — the Sep 27 "unreadable" victims were re-synthesized then (mtimes
   16:50:34), consistent with the false-warning root cause above.
 
-## Next (Task 6)
+## Task 6 outcome (closed 2026-09-28)
 
-1. Interactive GUI drive (Analyze → Preview → Render cycles) to reproduce
-   exit 245; faulthandler now armed, so a native crash leaves
-   `crash_reports/native-crash.txt`.
-2. Repeated Vulkan runs (`--backend vulkan --runs 3+`) for DEVICE_LOST.
-3. Each reproduced crash: bucket → failing test → minimal fix.
+- **Bucket (a) Qt SIGSEGV 245/139 — ROOT-CAUSED AND FIXED** (commit
+  `ed6ef8b`, concurrent session on this branch): reproduced via scripted
+  render → preview → render with playback active (rc=139);
+  `crash_reports/native-crash.txt` named the fingerprint — first import of
+  `mutagen` inside the render worker thread while the main thread ran Qt
+  through shiboken6's import hook (not thread-safe). Fix: worker-call-graph
+  imports preloaded at module level; regression net
+  `tests/test_gui_render_import_safety.py` (RED first, mutation-proven ×2).
+  Post-fix: repro pass rc=0, four candidate states clean.
+- **Buckets (b)/(c)/(d): not reproduced.** Vulkan DEVICE_LOST did not fire
+  across 4 total Vulkan renders (1 evidence + 3 acceptance); the GUI already
+  surfaces it as a clean Render Failed dialog (session survives). No Python
+  exception records, no OOM kills (137) observed in any run.
+- My independent interactive drive (`scripts/gui_drive.py`, 6 cycles
+  offscreen + xcb) was clean even before the fix — consistent with the
+  fix's own finding that the race needs playback-active render sequencing.
+
+## Acceptance (plan Task 11 — PASSED)
+
+`scripts/crash_hunt.py --mode acceptance`: 5/5 pytorch renders, 3/3 vulkan
+renders, 3/3 GUI launches, **0 non-zero exits, 0 new crash records,
+verdict_pass=true** (`build/crash_hunt/acceptance.json`); all 8 renders
+produced FLACs. Full suite under `ORACLE_FAIL_ON_SKIP=1`: **1508 passed /
+0 failed / 0 skipped**.

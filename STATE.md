@@ -8,6 +8,32 @@ rewritten by the loop).
 
 ## Done
 
+- **Crash-eradication & performance campaign (2026-09-28, branch
+  `wip/crash-eradication`)**: evidence-first campaign per the spec/plan in
+  `docs/superpowers/{specs,plans}/2026-09-28-crash-eradication-*`. Armed the
+  fail-closed crash capture (consent was off — no record could ever have
+  existed), built a TDD'd reproduction harness (`scripts/crash_hunt.py`:
+  exit-code classifier for 245/139 sigsegv and 137 oom, per-backend render
+  loops, offscreen GUI launch loop, crash-record harvest; `scripts/gui_drive.py`
+  interactive drive; `scripts/perf_baseline.py` cProfile+tracemalloc). Fixed
+  the "Cached stem ... unreadable (System error)" cascade at its root
+  (`73de246`): the batched Vulkan read path probes with no `exists()` check, so
+  an ordinary cross-backend cache miss (hashes key on `inference_backend`) was
+  logged as corruption with a pointless unlink — live-reproduced (16 false
+  warnings) and mutation-proven silent-miss fix with a corruption-still-warns
+  vacuity guard. QtMultimedia-as-crash-trigger hypothesis disproved by probe;
+  the real exit-245/139 root cause (mutagen first-import in the render worker
+  thread vs. shiboken6's import hook) was concurrently reproduced and fixed in
+  `ed6ef8b` — this campaign's capture+harness are its evidence net. Perf
+  baseline: no non-inherent hot spot remains (SymSpell load-once already
+  landed; remainder is one-time init) — recorded, nothing optimized blind.
+  **GATE PASSED**: acceptance = 5/5 pytorch + 3/3 vulkan renders + 3/3 GUI
+  launches, 0 non-zero exits, 0 new crash records; full suite
+  `ORACLE_FAIL_ON_SKIP=1`: 1508 passed / 0 skipped. Honest boundary:
+  `VK_ERROR_DEVICE_LOST` not reproduced in 4 Vulkan renders (intermittent
+  RDNA1 hang; already surfaced as a clean dialog). Details:
+  `docs/superpowers/findings/2026-09-28-crash-evidence.md`.
+
 - **Subtitle-target naming and speaker-ref hint wording each have one owner (2026-09-18)**:
   `src/the_oracle/subtitle_targets.py` owns where a subtitle's companion files go (the
   converted `<stem>.srt.txt`/`<stem>.vtt.txt`/`<stem>.txt` script, and the render's `.srt`
