@@ -109,15 +109,20 @@ from the_oracle.voice_catalog import (
 )
 from the_oracle.tts_engines.chatterbox_engine import SUPPORTED_VARIANTS, ChatterboxEngine
 from the_oracle.gui_vulkan import (
+    AudioCppUnavailableError,  # re-export: tests raise/expect it via app_gui
     ModelDownloadThread,
     VulkanDeviceProbeThread,
     VulkanPreflightThread,
     VulkanSetupThread,
     _device_row_text,
     _parse_oracle_model_path,
+    _vulkan_preflight_report as _vulkan_preflight_report_impl,
+    _vulkan_prerequisite_missing as _vulkan_prerequisite_missing_impl,
 )
-from the_oracle.tts_engines.vulkan_backend import AudioCppUnavailableError, AudioCppVulkanEngine, find_audiocpp_binary
-from the_oracle.vulkan_setup import vulkan_setup_needed
+# find_audiocpp_binary is this module's PATCH SEAM: ~12 test sites monkeypatch
+# it here by name, and the delegates below resolve it at call time. It is also
+# a deliberate re-export (window-fixture tests patch app_gui.AudioCppVulkanEngine).
+from the_oracle.tts_engines.vulkan_backend import AudioCppVulkanEngine, find_audiocpp_binary  # noqa: F401
 
 # CPU is the only verified Chatterbox execution path in this project.
 # Preview and render always use "cpu"; the constant is defined here so
@@ -132,50 +137,21 @@ _SPEAKER_HINT_BULLET = "  \u2022 "
 
 
 def _vulkan_prerequisite_missing() -> list[str]:
-    """Return human-readable reasons the Vulkan backend is not ready, else [].
+    """Delegate to the gui_vulkan policy body (2026-09-28 extraction).
 
-    Delegates to :func:`the_oracle.vulkan_setup.vulkan_setup_needed` (the
-    single source of truth shared with the CLI), passing this module's own
-    ``find_audiocpp_binary`` reference so tests that monkeypatch it keep
-    working. Used to auto-start the setup at backend-selection time instead of
-    failing deep inside the render worker.
+    The body lives in gui_vulkan; the binary probe crosses as INJECTION: the
+    bare ``find_audiocpp_binary`` name resolves from THIS module's globals at
+    call time, so app_gui-level monkeypatches keep intercepting it exactly as
+    they did before the move (the 2026-09-20 harm history is why the seam is
+    shaped this way).
     """
-    return vulkan_setup_needed(find_binary=find_audiocpp_binary)
+    return _vulkan_prerequisite_missing_impl(find_binary=find_audiocpp_binary)
 
 
 def _vulkan_preflight_report(device_index: int | None) -> str:
-    """Run the audio.cpp preflight and return a human-readable report.
-
-    Checks the binary and model (same checks as ``_vulkan_prerequisite_missing``),
-    then lists the Vulkan devices audio.cpp sees and states which GPU a render
-    would use (the selected ``device_index``, or audio.cpp's default when None).
-    Raises :class:`AudioCppUnavailableError` when the setup is not ready.
-    """
-    missing = _vulkan_prerequisite_missing()
-    if missing:
-        raise AudioCppUnavailableError(
-            "Vulkan backend preflight failed. Missing: " + "; ".join(missing) + "."
-        )
-    engine = AudioCppVulkanEngine(device_index=device_index)
-    devices = engine.list_devices()
-    if not devices:
-        # The binary and model are present, but no GPU is visible to audio.cpp.
-        # Rendering would fail, so this must be a failure, not a "passed"
-        # report — the button exists to validate setup before rendering.
-        raise AudioCppUnavailableError(
-            "audio.cpp --list-devices reported no Vulkan devices. A Vulkan driver/"
-            "device must be visible before rendering on the Vulkan backend."
-        )
-    lines = ["Vulkan backend preflight passed."]
-    if device_index is None:
-        lines.append("GPU to be used: Auto (audio.cpp picks its default device)")
-    else:
-        lines.append(f"GPU to be used: Vulkan device {device_index}")
-    lines.append("Devices audio.cpp sees:")
-    for item in devices:
-        marker = " (selected)" if device_index == item["index"] else ""
-        lines.append(f"  Device {item['index']}: {item['name']}{marker}")
-    return "\n".join(lines)
+    """Delegate to the gui_vulkan policy body (2026-09-28 extraction);
+    the binary probe is injected from this module's globals at call time."""
+    return _vulkan_preflight_report_impl(device_index, find_binary=find_audiocpp_binary)
 
 
 class SpeakerGroup(QHSectionGroup):

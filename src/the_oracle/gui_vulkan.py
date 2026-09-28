@@ -1,33 +1,37 @@
 """Vulkan/audio.cpp GUI support surface: device labels, model-path parsing,
-and the background thread cluster.
+the policy functions, and the background thread cluster.
 
-Extracted from app_gui.py in two slices. The 2026-09-20 slice took only the
+Extracted from app_gui.py in three steps. The 2026-09-20 slice took only the
 module-level helpers with NO wholesale patch surface, after the per-cluster
 damage assessment (and its execution attempt) confirmed the two policy
 functions (``_vulkan_prerequisite_missing``, ``_vulkan_preflight_report``)
-must STAY in app_gui: tests patch ``app_gui.find_audiocpp_binary`` and
-``app_gui._vulkan_preflight_report`` by name, and a function body that
-resolves those names from its own module globals breaks under that
-patching — measured, not assumed (the first extraction attempt failed
+could not move as-is: tests patch ``app_gui.find_audiocpp_binary`` by name,
+and a function body that resolves that name from its own module globals
+breaks under that patching — measured, not assumed (the first attempt failed
 exactly those tests).
 
-The 2026-09-27 slice takes the four background threads
+The 2026-09-27 slice took the four background threads
 (``VulkanDeviceProbeThread``, ``VulkanPreflightThread``,
-``ModelDownloadThread``, ``VulkanSetupThread``) under the same constraints:
+``ModelDownloadThread``, ``VulkanSetupThread``):
 
 * their bodies resolve only move-safe names — ``subprocess``/``os``/``signal``
   are module objects whose attributes tests patch globally (identical from
   any importer), and ``AudioCppVulkanEngine`` patches are class-targets;
-  nothing here reads a patched *app_gui global*;
-* ``VulkanPreflightThread``'s one patch-coupled dependency — the report
-  builder, which must resolve app_gui's globals at call time — arrives as
-  constructor injection: MainWindow passes ``preflight_report=
-  _vulkan_preflight_report`` as a bare name, so app_gui-level patches reach
-  the seam exactly as they reached the old in-module call. This module never
-  imports app_gui (pinned in ``tests/test_gui_vulkan_owner.py``);
+* ``VulkanPreflightThread``'s patch-coupled dependency — the report builder —
+  arrives as constructor injection (MainWindow passes the bare
+  ``_vulkan_preflight_report`` name, which resolves from app_gui's globals at
+  call time). This module never imports app_gui (pinned in
+  ``tests/test_gui_vulkan_owner.py``);
 * app_gui re-imports all four classes (identical objects), so the wholesale
   class patches at app_gui level keep intercepting MainWindow's
   constructions.
+
+The 2026-09-28 slice moved the two policy BODIES here behind the same
+injection pattern, generalizing it: both take ``find_binary`` as a required
+parameter, and app_gui's delegates pass the bare ``find_audiocpp_binary``
+name — resolved from app_gui's globals at call time — so every app_gui-level
+patch site stays live while the logic lives with the rest of the Vulkan
+surface. The seam is enforced by ``tests/test_gui_vulkan_owner.py``.
 """
 
 from __future__ import annotations
@@ -43,8 +47,15 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QWidget
 
 from the_oracle.gui_utils import kill_process_tree
-from the_oracle.tts_engines.vulkan_backend import AudioCppVulkanEngine
-from the_oracle.vulkan_setup import parse_model_export, run_vulkan_setup
+from the_oracle.tts_engines.vulkan_backend import (
+    AudioCppUnavailableError,
+    AudioCppVulkanEngine,
+)
+from the_oracle.vulkan_setup import (
+    parse_model_export,
+    run_vulkan_setup,
+    vulkan_setup_needed,
+)
 
 
 def _parse_oracle_model_path(output: str) -> str:
@@ -60,6 +71,67 @@ def _device_row_text(index: int, name: str) -> str:
     """Human label for one Vulkan device, shared by the dropdown items and
     the picker's summary label so the two can never drift apart."""
     return f"Device {index}: {name}"
+
+
+def _vulkan_prerequisite_missing(find_binary: Callable[[], Path | None]) -> list[str]:
+    """Return human-readable reasons the Vulkan backend is not ready, else [].
+
+    The policy body lives here (moved from app_gui in the 2026-09-28 slice);
+    the binary probe arrives INJECTED: callers pass their own
+    ``find_audiocpp_binary`` reference, so the CALLER's module globals decide
+    what the probe sees. app_gui's delegates pass the bare
+    ``find_audiocpp_binary`` name — it resolves from app_gui's globals at
+    call time, keeping the ~12 app_gui-level monkeypatch sites live exactly
+    as they were before the move (the 2026-09-20 failed extraction is the
+    recorded harm history; this seam is its deliberate resolution).
+    Delegates to :func:`the_oracle.vulkan_setup.vulkan_setup_needed`, the
+    single source of truth shared with the CLI.
+    """
+    return vulkan_setup_needed(find_binary=find_binary)
+
+
+def _vulkan_preflight_report(
+    device_index: int | None, *, find_binary: Callable[[], Path | None]
+) -> str:
+    """Run the audio.cpp preflight and return a human-readable report.
+
+    Checks the binary and model (same checks as
+    :func:`_vulkan_prerequisite_missing`), then lists the Vulkan devices
+    audio.cpp sees and states which GPU a render would use (the selected
+    ``device_index``, or audio.cpp's default when None). Raises
+    :class:`AudioCppUnavailableError` when the setup is not ready.
+
+    ``find_binary`` is injected (see the prerequisite function above): the
+    caller's patch surface decides what the probe sees, while this body's
+    other collaborators (the engine class, the error type) are this module's
+    own imports, which class-target patches intercept identically from any
+    importer.
+    """
+    missing = _vulkan_prerequisite_missing(find_binary)
+    if missing:
+        raise AudioCppUnavailableError(
+            "Vulkan backend preflight failed. Missing: " + "; ".join(missing) + "."
+        )
+    engine = AudioCppVulkanEngine(device_index=device_index)
+    devices = engine.list_devices()
+    if not devices:
+        # The binary and model are present, but no GPU is visible to audio.cpp.
+        # Rendering would fail, so this must be a failure, not a "passed"
+        # report — the button exists to validate setup before rendering.
+        raise AudioCppUnavailableError(
+            "audio.cpp --list-devices reported no Vulkan devices. A Vulkan driver/"
+            "device must be visible before rendering on the Vulkan backend."
+        )
+    lines = ["Vulkan backend preflight passed."]
+    if device_index is None:
+        lines.append("GPU to be used: Auto (audio.cpp picks its default device)")
+    else:
+        lines.append(f"GPU to be used: Vulkan device {device_index}")
+    lines.append("Devices audio.cpp sees:")
+    for item in devices:
+        marker = " (selected)" if device_index == item["index"] else ""
+        lines.append(f"  Device {item['index']}: {item['name']}{marker}")
+    return "\n".join(lines)
 
 
 class VulkanDeviceProbeThread(QThread):

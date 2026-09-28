@@ -59,20 +59,52 @@ def test_app_gui_delegates_device_row_text_to_the_owner() -> None:
     assert owner._device_row_text(2, "AMD Radeon") == "Device 2: AMD Radeon"
 
 
-def test_patch_coupled_policies_stay_on_app_gui() -> None:
-    """The two policy functions' bodies resolve find_audiocpp_binary from
-    app_gui's own globals — the property the patch surface depends on."""
+def test_policy_bodies_live_in_gui_vulkan_behind_the_injection_seam() -> None:
+    """The 2026-09-28 extraction: the policy BODIES live in gui_vulkan with
+    the binary probe injected (``find_binary``); app_gui keeps delegates whose
+    bodies resolve the bare ``find_audiocpp_binary`` name from app_gui's own
+    globals at call time — the property the ~12 app_gui-level patch sites
+    depend on, and the deliberate resolution of the 2026-09-20 failed
+    extraction recorded in this file's docstring."""
+    owner = _import("the_oracle.gui_vulkan")
     app_gui = _import("the_oracle.app_gui")
+    import inspect
+
+    # The bodies (with the injected seam parameter) are gui_vulkan's.
+    owner_sig = inspect.signature(owner._vulkan_prerequisite_missing)
+    assert "find_binary" in owner_sig.parameters, (
+        "gui_vulkan's policy body must take find_binary as an injected "
+        "parameter — self-resolving it would reopen the harm class"
+    )
+    owner_sig = inspect.signature(owner._vulkan_preflight_report)
+    assert "find_binary" in owner_sig.parameters
+
+    # app_gui delegates: parameterless, resolving the bare name at call time.
     assert callable(app_gui._vulkan_prerequisite_missing)
     assert callable(app_gui._vulkan_preflight_report)
     app_gui_source = Path(app_gui.__file__).read_text(encoding="utf-8")
-    assert "def _vulkan_prerequisite_missing" in app_gui_source
-    assert "def _vulkan_preflight_report" in app_gui_source
+    tree = ast.parse(app_gui_source)
+    app_gui_defs = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    for name in ("_vulkan_prerequisite_missing", "_vulkan_preflight_report"):
+        assert name in app_gui_defs, f"app_gui must keep the {name} delegate"
+        body_source = ast.get_source_segment(app_gui_source, app_gui_defs[name]) or ""
+        assert "find_binary=find_audiocpp_binary" in body_source or (
+            "find_audiocpp_binary" in body_source
+        ), (
+            f"app_gui.{name} must pass the bare find_audiocpp_binary name into "
+            "the injected seam — a captured or gui_vulkan-resolved reference "
+            "would go deaf to app_gui-level patches"
+        )
 
 
 def test_prerequisite_missing_sees_app_gui_level_binary_patch(monkeypatch) -> None:
-    """The load-bearing patch property, exercised directly: patching
-    app_gui.find_audiocpp_binary must change what the policy function sees."""
+    """The load-bearing patch property, exercised live through the delegate:
+    patching app_gui.find_audiocpp_binary must change what the moved body
+    sees — the injected seam carries the app_gui-resolved probe across."""
     app_gui = _import("the_oracle.app_gui")
     from the_oracle.tts_engines import vulkan_backend
 
