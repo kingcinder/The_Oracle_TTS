@@ -40,7 +40,28 @@ class CrashReport:
 
 
 def _render_command() -> list[str]:
-    return [sys.executable, "-m", "the_oracle.cli", "render"]  # refined in Task 3
+    """A real render command against a tracked sample input.
+
+    Output goes to build/crash_hunt/out so runs never touch Output/
+    (the doctor's read-only gate only tolerates build/doctor_*).
+    """
+    return [
+        sys.executable,
+        "-m",
+        "the_oracle.cli",
+        "render",
+        "--input",
+        str(REPO_ROOT / "Input" / "What is, reality.txt"),
+        "--outdir",
+        str(REPO_ROOT / "build" / "crash_hunt" / "out"),
+    ]
+
+
+def harvest_crash_records(root: Path, before: set) -> list[str]:
+    """Paths (as strings) of crash records that appeared since the snapshot."""
+    from the_oracle import crash
+
+    return [str(p) for p in crash.list_records(root) if p not in before]
 
 
 def main(argv: list[str] | None = None) -> int:
