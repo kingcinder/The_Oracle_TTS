@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from collections.abc import Iterable, Sequence
 from dataclasses import is_dataclass, asdict
 import importlib
@@ -151,6 +152,121 @@ def snapshot_differences(before: dict[str, str], after: dict[str, str]) -> tuple
     removed = sorted(before.keys() - after.keys())
     changed = sorted(path for path in before.keys() & after.keys() if before[path] != after[path])
     return created, changed, removed
+
+
+# --- Shiboken import-hook invariant (U4.2) --------------------------------
+#
+# A module whose FIRST import happens inside a QThread races the GUI's main
+# thread through shiboken6's signature import hook (inspect.getsource runs
+# during import) and the pair segfaults natively — reproduced and
+# faulthandler-verified for mutagen (see
+# tests/test_gui_render_import_safety.py and
+# .serpent-circle/04-debug/root-causes.md). The reusable guard below pins the
+# invariant for every QThread subclass and every module a worker's call graph
+# can reach one hop out.
+
+_QTHREAD_BASE_NAMES = {"QThread"}
+
+
+def function_level_imports(tree: ast.AST) -> set[str]:
+    """Module names imported inside function or method bodies in *tree*.
+
+    A lazy import is safe only when some earlier import in the same process
+    has already loaded the module on the main thread; the sweep treats them
+    as violations so that safety is structural, not incidental.
+    """
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Import):
+                    found.update(alias.name for alias in sub.names)
+                elif isinstance(sub, ast.ImportFrom) and sub.module:
+                    found.add(sub.module)
+    return found
+
+
+def qthread_class_imports(source_root: Path) -> list[tuple[str, str, set[str]]]:
+    """Lazy imports inside each QThread subclass's OWN methods.
+
+    Only the worker's execution path matters: lazy imports elsewhere in the
+    same file (e.g. MainWindow's main-thread startup methods) are a
+    deliberate startup-latency pattern and are not part of the invariant.
+    Returns (relative path, class name, lazy module names) triples.
+    """
+    results: list[tuple[str, str, set[str]]] = []
+    for path in sorted(source_root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not any(getattr(base, "id", getattr(base, "attr", "")) in _QTHREAD_BASE_NAMES for base in node.bases):
+                continue
+            lazy: set[str] = set()
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
+                    for sub in ast.walk(item):
+                        if isinstance(sub, ast.Import):
+                            lazy.update(alias.name for alias in sub.names)
+                        elif isinstance(sub, ast.ImportFrom) and sub.module:
+                            lazy.add(sub.module)
+            results.append((path.relative_to(source_root).as_posix(), node.name, lazy))
+    return results
+
+
+def iter_qthread_classes(source_root: Path) -> list[tuple[str, str]]:
+    """Every QThread subclass in *source_root*, as (relative path, class name)."""
+    hits: list[tuple[str, str]] = []
+    for path in sorted(source_root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if any(getattr(base, "id", getattr(base, "attr", "")) in _QTHREAD_BASE_NAMES for base in node.bases):
+                hits.append((path.relative_to(source_root).as_posix(), node.name))
+    return hits
+
+
+def worker_module_import_violations(
+    source_root: Path,
+    *,
+    one_hop_targets: tuple[str, ...] = (),
+) -> list[str]:
+    """The shiboken invariant, as a list of violation strings (empty = clean).
+
+    Two rules:
+
+    1. every QThread subclass's OWN methods must contain no function-level
+       imports — the worker's execution path (run() and every helper it
+       calls in-class) must be fully module-scoped so no first import can
+       happen on the worker thread;
+    2. every module in *one_hop_targets* — the modules a worker's call graph
+       reaches one hop out (export helpers, engine frontends) — must be fully
+       module-scoped for the same reason.
+
+    Static by design: cheap enough for the fast suite, and it fails on the
+    edit that introduces the hazard rather than on a heisen-segfault later.
+    """
+    violations: list[str] = []
+    checked: set[Path] = set()
+
+    for rel, cls, lazy in qthread_class_imports(source_root):
+        if lazy:
+            violations.append(f"{rel}::{cls}: QThread methods carry function-level imports ({sorted(lazy)})")
+
+    for target in one_hop_targets:
+        path = source_root / target
+        if path in checked:
+            continue
+        checked.add(path)
+        if not path.exists():
+            violations.append(f"{target}: one-hop target missing")
+            continue
+        lazy = function_level_imports(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        if lazy:
+            violations.append(f"{target}: worker-reachable module carries function-level imports ({sorted(lazy)})")
+
+    return violations
 
 
 def isolate_user_config(monkeypatch, config_dir) -> None:
