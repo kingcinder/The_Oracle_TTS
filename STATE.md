@@ -1081,6 +1081,12 @@ rewritten by the loop).
 
 ## Next
 
+- **2026-09-29: the omega gate is open — tree clean at `fc7d78c`, full suite
+  1529 passed / 0 failed.** The parallel actor's U44 unit landed as-authored
+  (`486a59e`, owner-instructed) and the two red nets were settled per the
+  V1.3.2 checklist's Step 0 (`fc7d78c`): the export_flac FLAC re-bind hoisted
+  to module level, the 1697156 PID token classified in the record-integrity
+  net. The campaign cycle runs from this state.
 - **Consumer-market readiness campaign — U1 diagnostics landed; U2–U5 remain
   (designed 2026-09-25, executing slice by slice)**: the design record is
   `docs/superpowers/specs/2026-09-25-consumer-market-readiness-design.md` — unit
