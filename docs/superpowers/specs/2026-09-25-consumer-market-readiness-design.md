@@ -40,7 +40,14 @@ docs it ships must not describe behavior that has not landed.
 
 ## 3. Decisions resolved (defaulting to the contracts' recommendations)
 
-**D1 — Crypto: Option A, `pynacl` (Ed25519), pinned exactly.** The blocking
+**D1 — Crypto: ~~Option A, `pynacl`~~ → RATIFIED 2026-09-28: Option B.**
+Owner ratified the fallback against this clause's own escape hatch ("Option B
+with its own record"): the built licensing unit uses the vendored pure-Python
+Ed25519 verifier, DECIDED in `docs/LICENSING_DESIGN.md` §3 (61
+mutation-proven tests; no new dependency; the offline bundle carries no crypto
+wheels, making the U2.1 `--only-binary` pynacl probe moot). The Option A
+evidence below is retained as the record of why a compiled dependency was
+acceptable-but-unnecessary. Original decision text: **The blocking
 §3 caveat is resolved with repo evidence: `scripts/build_offline_bundle.py`
 derives `pypi_reqs` from `project_requirements()` (pyproject base
 `dependencies` + `ml` extra) and downloads them per platform with
@@ -108,9 +115,14 @@ A release commit is sale-ready when all of these are true and evidenced:
 7. Release gate: `scripts/release.py --check` passes (version +
    CHANGELOG dated), tracked checksums updated, fresh-clone acceptance and
    doctor idempotence scripts pass, offline bundle builds for both
-   platforms with `pynacl` + `cffi` wheels present.
+   platforms (crypto wheels no longer apply — ratified Option B adds no
+   dependency).
 8. The hardware claim ("min. 3 GB free VRAM/DRAM") has been reconciled with
    the code's actual floor and appears identically in README and docs.
+   (RATIFIED 2026-09-28: the numeric claim is dropped — no sale copy states a
+   GB figure; copy mirrors README's enforced framing — optional NVIDIA 4+ GiB
+   VRAM for CUDA, CPU/DRAM guaranteed fallback; DRAM guidance stays a
+   recommendation until U4.3 measures the CPU memory profile.)
 
 ## 5. Skill mapping (and honest substitutions)
 

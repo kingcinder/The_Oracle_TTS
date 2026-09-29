@@ -38,20 +38,45 @@ three generations of fixes:
 The crash-hunt acceptance gate now scans the kernel log too (`kernel_crashes`
 field) — the channel where every historical crash lived but exit codes and
 `crash_records` never looked. Scan live-validated: 7 in the Sep 27→now window,
-  0 since the fix.
+  0 since the fix (re-checked 2026-09-28: no kernel trap through 08:06:51,
+  when a GUI segfault occurred on the worktree *including* the other session's
+  uncommitted WIP — attribution and the capture gap in section D below; the
+  committed campaign commits remain kernel-clean).
 
-### B. Apport SIGABRT dumps (2, origin UNRESOLVED — stated honestly)
+### B. Apport SIGABRT dumps (2 — RESOLVED 2026-09-28)
 
 - `doctor.py --ci`, Sep 28 01:38:53, SIGABRT while blocked in
   `poll(1800000ms)` = the `--model-timeout` model-init probe wait; frame
   layout shows faulthandler's handler re-raising an externally-sent SIGABRT.
-  Overlaps the other session's BUG-1 (silent model-init download, doc in
-  `docs/DEBUG_SWEEP-2026-09-28.md`). Sender of the signal: not established
-  (no oomd kill in journal, no `timeout -s ABRT` in repo, no bash-history
-  entry).
+  **Sender identified: the debug sweep's own `timeout -s ABRT` instrumentation**
+  (`docs/DEBUG_SWEEP-2026-09-28.md:25` — "Faulthandler stack captured via
+  `PYTHONFAULTHANDLER=1 timeout -s ABRT`"; its reproduction runs ended rc=124).
+  Corroboration from the core dump itself: ProcStatus carries
+  `Pid=3724243 / PPid=3724241 / NSpgid=3724241 / NSsid=3724240` — a foreground
+  job of an interactive session whose parent led the job's process group — and
+  the core's environment block contains `_=/usr/bin/timeout` (bash exports `_`
+  as the last launched command; a direct shell invocation would name bash).
+  GNU `timeout` delivers its expiry signal to the wrapped child from exactly
+  that parent; the GDB pthread_kill→raise chain is that delivery passing
+  through faulthandler's SIGABRT handler. The poll still had its full 1800 s
+  budget: the wrapper fired seconds into the probe wait, not at the doctor's
+  own `--model-timeout` deadline. Not an app crash — the sweep's own capture
+  mechanism, seen from the inside.
+- **Second victim the first report hid**: `apport.log` at 01:42:22 records
+  another signal-6 delivery whose cmdline is the model-init probe's exact
+  command (`import perth … ChatterboxTTS.from_pretrained(device='cpu')`) —
+  apport skipped writing it ("report already exists and unseen"), so only one
+  dump ever landed in `/var/crash`. Same sweep, same mechanism (the probe
+  command most plausibly wrapped directly to capture the child's own stack).
 - `python3 -m unittest discover` in a deleted `/tmp` sandbox, Sep 28 04:45:26,
-  SIGABRT — system python (not our venv), C.UTF-8 env: likely another
-  project's or a harness' test run, not The Oracle's suite.
+  SIGABRT — system python (not our venv), C.UTF-8 env; ProcStatus
+  `State: I (idle)`, and its pid sits far below the doctor run's (the counter
+  wrapped in between, consistent with the chrome-cdp crash-loop churning
+  pids). Not The Oracle's suite (ours is pytest under `.venv`, never system
+  `python3 -m unittest`); apport.log shows a same-shaped second delivery at
+  05:22:25, again deduplicated away. External-ABRT-wrapper pattern like the
+  doctor dump — an agent/harness bounding a stuck test run. No Oracle code
+  involved; recorded here only because it surfaced in the same crash sweep.
 - ffmpeg crash (Sep 26) is `/opt/bcam-nvr` (different project). Desktop app
   crashes (xfdesktop, ChatGPT, parole, nm-applet) are unrelated noise.
 
@@ -60,7 +85,29 @@ field) — the channel where every historical crash lived but exit codes and
 Not reproduced in 4 Vulkan renders (1 evidence + 3 acceptance). Hardware/
 driver-level hang on the RX 5700 XT; GUI contains it as a clean Render Failed
 dialog (session survives). Watch item: next occurrence lands in
-`crash_reports/` with capture armed.
+`crash_reports/` with capture armed — **caveat found 2026-09-28: the
+faulthandler net currently arms only on consent *transitions*, so a normal
+GUI relaunch with consent already on runs unarmed (section D).**
+
+### D. Post-campaign events (2026-09-28 morning) — two new findings
+
+- **08:06:51 GUI segfault, capture net not armed.** Kernel:
+  `python[1697156]: segfault at 0 ip 0 … error 14` (null function-pointer
+  call); apport.log logged signal 11 for `the-oracle gui` but wrote no report
+  ("executable does not belong to a package"). `crash_reports/native-crash.txt`
+  is 0 bytes. Two honest caveats: (1) the process ran the worktree *including*
+  the other session's uncommitted WIP (`app_gui.py`, `gui_chrome.py`,
+  `gui_vulkan.py` dirty at the time) — it is not evidence against the 13
+  committed campaign commits; (2) the net produced nothing because
+  `enable_faulthandler_catch` is invoked only on consent transitions
+  (first-run accept in `gui_crash.py`, Help-menu re-enable in `app_gui.py`,
+  `privacy-opt-in` in `cli.py`) — never on a plain GUI launch with consent
+  already on. The section-C watch item's "capture armed" promise is therefore
+  currently false for GUI relaunches; logged in STATE's sweep list, not fixed
+  here (the owning files carry the other session's WIP).
+- **The SIGABRT family (section B) resolves as instrumentation, not crashes**:
+  every externally-sent SIGABRT on this machine that day traces to a
+  `timeout -s ABRT` wrapper used to capture stacks of hung processes.
 
 ## Runs performed
 

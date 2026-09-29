@@ -1126,6 +1126,25 @@ rewritten by the loop).
 
 ## Noticed, not yet actioned
 
+- **faulthandler net arms only on consent transitions — a normal GUI relaunch
+  runs unarmed (found 2026-09-28, off the 08:06:51 GUI segfault)**:
+  `enable_faulthandler_catch` is invoked only when consent *changes* —
+  first-run accept (`gui_crash.py`), Help-menu re-enable (`app_gui.py`,
+  `_open_crash_privacy_dialog`), and `the-oracle privacy-opt-in` (`cli.py`).
+  Nothing arms it on a plain `the-oracle gui` launch when consent is already
+  on, so the crash-evidence doc's Vulkan watch-item promise ("next occurrence
+  lands in `crash_reports/` with capture armed") is currently false for GUI
+  relaunches — proven by the 08:06:51 null-call segfault
+  (`python[1697156]: segfault at 0 ip 0 … error 14` in the kernel log) leaving
+  `crash_reports/native-crash.txt` at 0 bytes. Caveat kept honest: that process
+  ran the worktree *including* the other session's uncommitted WIP
+  (`app_gui.py`, `gui_chrome.py`, `gui_vulkan.py` dirty), so the segfault itself
+  is not evidence against the committed campaign. Fix shape: arm alongside the
+  existing handler install on every GUI start (idempotent; fails closed to
+  unarmed when consent is off). Not fixed in this session — the owning files
+  carry the other session's WIP. Full write-up:
+  `docs/superpowers/findings/2026-09-28-crash-evidence.md` §D.
+
 - **RESOLVED 2026-09-27** — `test_gui_vulkan_imports_nothing_from_app_gui`
   only saw absolute spellings (found 2026-09-27): that guard checked
   `alias.name == "app_gui"` / `node.module == "app_gui"` bare, so it would
@@ -1147,7 +1166,8 @@ rewritten by the loop).
   clause anticipated Option B "with its own record" — that record now exists.
   Owner ratification asked for (accept Option B and repoint the campaign spec,
   or hold U2 and revert to pynacl); nothing in the spec was changed
-  unilaterally. Also noted: one transient full-suite failure while the
+  unilaterally. **RATIFIED 2026-09-28: owner accepted Option B; the campaign
+  spec's D1 now records the ratification and points at the built unit.** Also noted: one transient full-suite failure while the
   licensing files were being written mid-run did not reproduce (their suites
   pass: 61, plus 11 in the two files outside the six I first ran).
 
@@ -1161,11 +1181,13 @@ rewritten by the loop).
   (plan box carries the full digest): the 3 GB figure is an overclaim on the
   VRAM side (the enforced floor is 4 GiB, render-time enforced too) and an
   unenforced assertion on the DRAM side (nothing in the code measures DRAM;
-  CPU is unconditionally available). Decision presented to the owner: drop
+  CPU is unconditionally available).  Decision presented to the owner: drop
   the numeric claim from sale copy in favor of README's exact framing
   (optional NVIDIA 4+ GiB VRAM for CUDA; CPU/DRAM guaranteed fallback); DRAM
   guidance stays a recommendation until U4.3 measures the real CPU memory
-  profile. Still awaiting the owner's ratification — no copy changed.
+  profile. **RATIFIED 2026-09-28: claim dropped.** No sale copy exists in-repo
+  (the "3 GB" figure lives only in campaign records), so the ratification
+  required no file change beyond this record and the spec's item 8.
 
 - **`.ps1` executable bits are inconsistent (2026-09-18)**: `bootstrap_oracle_tts.ps1`,
   `doctor_oracle_tts.ps1` and `oracle.ps1` are tracked 100644 while
@@ -1181,7 +1203,11 @@ rewritten by the loop).
   including `pkg_resources.resource_filename` coming from a dependency (not Oracle code
   — repo-wide scan finds no `pkg_resources` import in `src/` or `scripts/`). Harmless
   today; worth one look when the pinned dependency that imports it is next touched, since
-  a future setuptools major could turn it into an error.
+  a future setuptools major could turn it into an error. 2026-09-28: culprit pinned —
+  `perth`'s `perth_net/__init__.py` line 1 does `from pkg_resources import
+  resource_filename` at module level (verified in `.venv`), so the warning fires whenever
+  the watermarker is imported. The fix belongs upstream (or a `warnings.filterwarnings`
+  in the suite if it ever becomes an error); no Oracle code change warranted.
 
 - **Enum-vs-widget identity audit (2026-09-11, prompted by the Cancel-button
   bug)**: the full GUI was swept for the `clickedButton() is
