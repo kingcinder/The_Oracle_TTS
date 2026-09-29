@@ -236,3 +236,248 @@ def test_dry_run_commits_nothing(tmp_path: Path) -> None:
         ["git", "status", "--porcelain"], cwd=str(repo), check=True, capture_output=True, text=True
     ).stdout
     assert status.strip() == "?? a.py", "a dry run must not stage anything"
+
+
+# --- journal checking -----------------------------------------------------------
+
+
+def test_check_journal_accepts_the_house_formats_life() -> None:
+    """The validator must accept the journal's real shape — headers, the
+    Format: doc line, historical free-form notes, sibling-convention entries
+    that fold the suite note into the description — and pin only what
+    'malformed' means: bad dates, glued/short dates that would silently
+    skip, empty fields, and broken commit citations."""
+    tool = _load_tool()
+    lines = [
+        "# JUNO_FIXES.log — Oracle TTS launch-readiness",
+        "",
+        "Format: `<date> | <file> | <what was wrong> | <what you changed> | <test results>`",
+        "2026-09-17 | Noticed, not actioned | stale launcher note (two fields — fine)",
+        "2026-09-20 | Release V1.2.0 artifacts built (commit a397943) | description folded into three fields",
+        "2026-09-28 | files (commit b5b9683) | description | Full suite: 1517 passed / 0 failed.",
+        "2026-09-28 | files (commits 0445a72, 2ba2392) | hash list | green.",
+        "2026-09-28 | files (commit pending) | not yet committed | n/a.",
+        "Totally unformatted historical note.",
+        "",
+    ]
+    assert tool.check_journal_lines(lines, floors=False) == []
+
+
+def test_check_journal_flags_malformed_entries_by_name() -> None:
+    tool = _load_tool()
+    base = 20  # any lines before these are fine; floors disabled below
+    problems = tool.check_journal_lines(
+        [
+            "2026-09-28 | files (commit b5b9683) | ok | green.",
+            f"{base} filler",  # keep the list non-trivially short
+            "2026-13-45 | files (commit b5b9683) | impossible calendar date | green.",
+            "2026-1-5 | glued date and no separator — would silently skip",
+            "2026-09-28 |  | empty field | green.",
+            "2026-09-28 | files (commit b5b96) | truncated hash | green.",
+            "2026-09-28 | files (commit ) | empty citation body | green.",
+            "2026-09-28 | files (commits abc1234, b5b9683) | mixed short list is legal | green.",
+        ],
+        floors=False,
+    )
+    rendered = "\n".join(problems)
+    assert "is not a valid calendar date" in rendered
+    assert "does not match the entry shape" in rendered
+    assert "empty field" in rendered
+    assert "not 7-40 hex" in rendered
+    assert "empty (commit ...) citation" in rendered
+    # The mixed list must NOT be flagged (lenient citation body rule).
+    assert "abc1234" not in rendered
+
+
+def test_check_journal_vacuity_floors_apply_only_in_check_mode() -> None:
+    """The floors are a whole-file blindness guard: they must fail a journal
+    with too few entries, and equally they must NOT fire on a small pre-write
+    batch (the commit-time refusal runs per-line rules only)."""
+    tool = _load_tool()
+    small_batch = ["2026-09-28 | files (commit b5b9683) | d | green."]
+    assert tool.check_journal_lines(small_batch, floors=False) == []
+    problems = tool.check_journal_lines(small_batch, floors=True)
+    assert any("floor 10" in problem for problem in problems)
+    assert any("no (commit" in problem for problem in problems) is False or problems
+    # Exact citation floor message present when entries exist but no citation.
+    many_no_citation = [f"2026-09-28 | entry {i} | d | green." for i in range(12)]
+    problems = tool.check_journal_lines(many_no_citation, floors=True)
+    assert any("no (commit <hash>) citation found" in problem for problem in problems)
+
+
+def test_check_journal_mode_reads_the_real_file(tmp_path: Path, capsys) -> None:
+    """The CLI mode: a passing journal exits 0 with the hold message; a
+    malformed one exits 1 and renders every problem."""
+    tool = _load_tool()
+    repo = tmp_path
+    (repo / "JUNO_FIXES.log").write_text(
+        "# header\n"
+        "2026-09-28 | files (commit b5b9683) | d | green.\n"
+        + "".join(
+            f"2026-09-2{i} | entry {i} | d | green.\n" for i in range(9)
+        ),
+        encoding="utf-8",
+    )
+    assert tool.main(["--check-journal", "--repo-root", str(repo)]) == 0
+    assert "house format holds" in capsys.readouterr().out
+
+    (repo / "JUNO_FIXES.log").write_text(
+        "# header\n"
+        + "".join(f"2026-09-2{i} | entry {i} | d | green.\n" for i in range(9))
+        + "2026-09-28 | files (commit b5b9) | truncated | green.\n",
+        encoding="utf-8",
+    )
+    assert tool.main(["--check-journal", "--repo-root", str(repo)]) == 1
+    err = capsys.readouterr().err
+    assert "MALFORMED" in err and "b5b9" in err
+
+
+def test_commit_refuses_a_malformed_journal_entry_before_writing(tmp_path: Path) -> None:
+    """The pre-write refusal: --journal-entry text with a truncated commit
+    citation stops the run before JUNO_FIXES.log is touched."""
+    tool = _load_tool()
+    repo = _tmp_repo(tmp_path)
+    (repo / "a.py").write_text("a", encoding="utf-8")
+    slice_file = tmp_path / "slices.txt"
+    slice_file.write_text("# --- A ---\na.py\n", encoding="utf-8")
+
+    # The refusal raises out of main like every other validate()-class
+    # refusal (the __main__ wrapper turns it into a CLI exit 1).
+    raised = None
+    try:
+        tool.main(
+            [
+                str(slice_file),
+                "--repo-root",
+                str(repo),
+                "--journal-entry",
+                "1:d (commit b5b9) with a truncated hash",
+                "--suite-note",
+                "green.",
+            ]
+        )
+    except ValueError as exc:
+        raised = str(exc)
+    assert raised is not None and "b5b9" in raised
+    assert not (repo / "JUNO_FIXES.log").exists(), "the refusal must precede any write"
+    count = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD"], cwd=str(repo), check=True, capture_output=True, text=True
+    ).stdout.strip()
+    # The slice commit itself legitimately landed (the tool's contract:
+    # already-committed slices stay committed; the run stops at the failing
+    # step) — the journal write and its commit are what were refused.
+    assert count == "2"
+
+
+# --- per-slice verify commands ---------------------------------------------------
+
+
+def test_verify_commands_parse_and_validate() -> None:
+    tool = _load_tool()
+    text = (
+        "# --- A ---\n"
+        "a.py\n"
+        "! echo one\n"
+        "! echo two\n"
+        ">> Subject.\n"
+    )
+    slices = tool.parse_slice_file(text)
+    assert slices[0].verify_commands == ["echo one", "echo two"]
+
+    raised = None
+    try:
+        tool.parse_slice_file("! echo before any header\n")
+    except ValueError as exc:
+        raised = str(exc)
+    assert raised is not None and "before any" in raised
+
+    raised = None
+    try:
+        tool.parse_slice_file("# --- A ---\na.py\n!\n")
+    except ValueError as exc:
+        raised = str(exc)
+    assert raised is not None and "empty verify command" in raised
+
+
+def test_verify_flag_without_commands_is_refused(tmp_path: Path) -> None:
+    tool = _load_tool()
+    repo = _tmp_repo(tmp_path)
+    (repo / "a.py").write_text("a", encoding="utf-8")
+    slice_file = tmp_path / "slices.txt"
+    slice_file.write_text("# --- A ---\na.py\n", encoding="utf-8")
+    raised = None
+    try:
+        tool.main([str(slice_file), "--repo-root", str(repo), "--verify", "--no-journal"])
+    except ValueError as exc:
+        raised = str(exc)
+    assert raised is not None and "no slice defines a '!' verify command" in raised
+
+
+def test_verify_failure_stops_the_run_and_skips_the_journal(tmp_path: Path) -> None:
+    """A red slice stops the run right there: the failed slice stays committed
+    (independently revertable), later slices and the journal never land."""
+    tool = _load_tool()
+    repo = _tmp_repo(tmp_path)
+    (repo / "a.py").write_text("a", encoding="utf-8")
+    (repo / "b.py").write_text("b", encoding="utf-8")
+    slice_file = tmp_path / "slices.txt"
+    slice_file.write_text(
+        "# --- First ---\n"
+        "a.py\n"
+        ">> Move the first slice.\n"
+        "# --- Second ---\n"
+        "b.py\n"
+        "! exit 3\n"
+        ">> Add the second slice.\n",
+        encoding="utf-8",
+    )
+    raised = None
+    try:
+        tool.main(
+            [
+                str(slice_file),
+                "--repo-root",
+                str(repo),
+                "--verify",
+                "--journal-entry",
+                "1:first slice journal text",
+            ]
+        )
+    except ValueError as exc:
+        raised = str(exc)
+    assert raised is not None and "exit 3" in raised and "Second" in raised
+    subjects = subprocess.run(
+        ["git", "log", "--format=%s"], cwd=str(repo), check=True, capture_output=True, text=True
+    ).stdout.splitlines()
+    # The failed slice committed before its verify ran — revertable, per the
+    # tool's contract — but the journal commit is absent.
+    assert subjects[0] == "Add the second slice."
+    assert "Move the first slice." in subjects
+    assert "Record the committed slices in the journals" not in subjects
+    assert not (repo / "JUNO_FIXES.log").exists(), "a failed verify must precede the journal write"
+
+
+def test_verify_success_continues_to_the_journal(tmp_path: Path) -> None:
+    tool = _load_tool()
+    repo = _tmp_repo(tmp_path)
+    (repo / "a.py").write_text("a", encoding="utf-8")
+    slice_file = tmp_path / "slices.txt"
+    slice_file.write_text(
+        "# --- A ---\na.py\n! test -f a.py\n>> Add the slice.\n", encoding="utf-8"
+    )
+    exit_code = tool.main(
+        [
+            str(slice_file),
+            "--repo-root",
+            str(repo),
+            "--verify",
+            "--journal-entry",
+            "1:journal text",
+        ]
+    )
+    assert exit_code == 0
+    subjects = subprocess.run(
+        ["git", "log", "--format=%s"], cwd=str(repo), check=True, capture_output=True, text=True
+    ).stdout.splitlines()
+    assert subjects[0] == "Record the committed slices in the journals"
+    assert (repo / "JUNO_FIXES.log").is_file()
