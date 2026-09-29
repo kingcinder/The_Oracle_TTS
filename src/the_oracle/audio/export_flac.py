@@ -20,6 +20,11 @@ import soundfile as sf
 import mutagen.flac
 import mutagen.oggvorbis
 
+# The class binding lives at module level too: the suite-wide sweep
+# (tests/test_worker_import_sweep.py) requires worker-reachable modules to
+# carry no function-level imports at all — structural, not incidental.
+FLAC = mutagen.flac.FLAC
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -39,10 +44,9 @@ def next_available_output_path(path: str | Path) -> Path:
 
 
 def _tag_with_mutagen(path: Path, metadata: dict[str, str]) -> None:
-    # mutagen.flac is preloaded at module level above (worker-thread
-    # first-imports of it segfault the GUI — see the comment there).
-    from mutagen.flac import FLAC
-
+    # FLAC is bound at module level above; the preload comment there records
+    # why the import must never move inside a function (shiboken import-hook
+    # race on worker threads, U4.2).
     tags = FLAC(str(path))
     for key, value in metadata.items():
         if value:

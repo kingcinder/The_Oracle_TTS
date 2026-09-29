@@ -28,7 +28,7 @@ RECORD_FILES = ("STATE.md", "JUNO_FIXES.log")
 #: deliberate and additive: prose that happens to spell itself in hex joins
 #: this list with a comment, and an unclassifiable token fails the net loudly
 #: (with this list named in the message) rather than being absorbed.
-_NON_HASH_TOKENS = frozenset({"ed25519"})
+_NON_HASH_TOKENS = frozenset({"ed25519", "1697156"})  # the latter: a PID in a kernel-log quote (python[1697156]: segfault at 0), 2026-09-28 crash evidence — 7 digits slips the >8 all-digit rule
 
 
 def _cited_hashes(text: str) -> list[str]:
@@ -160,6 +160,7 @@ def test_the_hash_extractor_reads_every_citation_shape_form_by_form() -> None:
         "0000000 is the null object": [],
         "run 35039888506 on `main` is green": [],
         "`python: segfault at 0 ip 0000000000000000`": [],
+        "python[1697156]: segfault at 0 ip 0 … error 14": [],  # a process id, not a commit — see _NON_HASH_TOKENS
         "dated 2026-09-27 with 1394 passed / 0 failed.": [],
         "signing uses Ed25519 and ed25519 keys": [],
     }
