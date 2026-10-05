@@ -184,7 +184,13 @@ def validate(slices: list[Slice], repo: Path) -> None:
 
     Empty slices, paths that are neither dirty nor tracked, duplicates, and
     paths quoted with shell quoting (a copy-paste artifact) all stop the run
-    before the first commit.
+    before the first commit. A slice whose every path is already clean —
+    the work is already landed, or the slice file is a stale re-run — is
+    refused the same way, because committing nothing silently is exactly
+    the failure mode this tool exists to prevent (git's own empty-commit
+    refusal stays as the backstop for the race window between this check
+    and the commit). A slice with SOME clean paths warns on stderr and
+    proceeds: only those paths contribute nothing to the slice commit.
     """
     seen: set[str] = set()
     titles: set[str] = set()
@@ -218,6 +224,23 @@ def validate(slices: list[Slice], repo: Path) -> None:
                     f"slice {index}: path {path!r} is neither tracked nor "
                     "dirty — a typo would silently commit nothing"
                 )
+        clean_paths = [path for path in slice_.paths if path not in dirty]
+        if len(clean_paths) == len(slice_.paths):
+            raise ValueError(
+                f"slice {index} ({slice_.title}): every listed path is "
+                f"already clean ({', '.join(clean_paths)}) — this slice "
+                "would commit nothing: the work is already landed or the "
+                "slice file is stale; fix the paths or re-verify the work "
+                "is uncommitted before re-running"
+            )
+        if clean_paths:
+            print(
+                f"commit_slices: WARNING slice {index} ({slice_.title}): "
+                f"{len(clean_paths)} of {len(slice_.paths)} paths are "
+                f"already clean ({', '.join(clean_paths)}) — proceeding, "
+                "but they contribute nothing to the slice commit",
+                file=sys.stderr,
+            )
 
 
 _DATED_LINE_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2}) \| ")

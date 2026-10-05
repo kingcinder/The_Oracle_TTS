@@ -5,7 +5,8 @@ index-level commits — explicit paths per slice, house-format messages, then
 the journal commit — so a session's pile lands bisectable and revertable
 instead of as one lump. Its safety properties are the product: a slice file
 that double-claims a path, names a typo'd path (which would silently commit
-nothing), or lets the journal be skipped without a decision must be refused
+nothing), re-lists paths that are already clean (a stale re-run of an old
+slice file), or lets the journal be skipped without a decision must be refused
 BEFORE the first commit; a slice commit must contain exactly its listed
 paths (a concurrent session's dirty files must never ride along); and the
 journal must come out in the house format with the real commit hashes.
@@ -101,6 +102,10 @@ def test_validate_refuses_duplicate_paths_typos_and_quotes(tmp_path: Path) -> No
     tool = _load_tool()
     repo = _tmp_repo(tmp_path)
     (repo / "dirty.py").write_text("x", encoding="utf-8")
+    # tracked.py must be dirty here: the staleness guard refuses an all-clean
+    # slice before the duplicate rule on the second slice could fire, and this
+    # test pins the duplicate refusal specifically.
+    (repo / "tracked.py").write_text("changed", encoding="utf-8")
 
     slices = tool.parse_slice_file("# --- A ---\ntracked.py\n# --- B ---\ntracked.py\n")
     try:
@@ -125,6 +130,73 @@ def test_validate_refuses_duplicate_paths_typos_and_quotes(tmp_path: Path) -> No
         assert "quote" in str(exc)
     else:
         raise AssertionError("shell-quoted path must be refused")
+
+
+# --- staleness (already-clean paths refuse loudly) -------------------------------
+
+
+def test_validate_refuses_a_slice_whose_paths_are_all_already_clean(tmp_path: Path) -> None:
+    tool = _load_tool()
+    repo = _tmp_repo(tmp_path)
+    slices = tool.parse_slice_file("# --- Stale rerun ---\ntracked.py\n")
+    try:
+        tool.validate(slices, repo)
+    except ValueError as exc:
+        raised = str(exc)
+    else:
+        raise AssertionError("an all-clean slice must be refused before any commit")
+    assert "already clean" in raised and "commit nothing" in raised
+    assert "Stale rerun" in raised
+
+
+def test_validate_warns_but_proceeds_on_a_partially_clean_slice(tmp_path: Path, capsys) -> None:
+    tool = _load_tool()
+    repo = _tmp_repo(tmp_path)
+    (repo / "dirty.py").write_text("x", encoding="utf-8")
+    slices = tool.parse_slice_file("# --- Mixed ---\ntracked.py\ndirty.py\n")
+    tool.validate(slices, repo)  # must not raise
+    err = capsys.readouterr().err
+    assert "WARNING" in err and "already clean" in err and "tracked.py" in err
+
+
+def test_stale_second_slice_aborts_before_the_first_slice_commits(tmp_path: Path) -> None:
+    """The overtake guard's teeth: one stale slice anywhere in the file stops
+    the run in pre-flight, so an earlier fresh slice never half-lands."""
+    tool = _load_tool()
+    repo = _tmp_repo(tmp_path)
+    (repo / "a.py").write_text("a", encoding="utf-8")
+    slice_file = tmp_path / "slices.txt"
+    slice_file.write_text(
+        "# --- Fresh ---\n"
+        "a.py\n"
+        ">> Real work.\n"
+        "# --- Stale rerun ---\n"
+        "tracked.py\n",
+        encoding="utf-8",
+    )
+    raised = None
+    try:
+        tool.main([str(slice_file), "--repo-root", str(repo), "--no-journal"])
+    except ValueError as exc:
+        raised = str(exc)
+    assert raised is not None and "already clean" in raised
+    count = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD"], cwd=str(repo), check=True, capture_output=True, text=True
+    ).stdout.strip()
+    assert count == "1", "the pre-flight refusal must precede every slice commit"
+
+
+def test_dry_run_of_a_stale_slice_file_also_refuses(tmp_path: Path) -> None:
+    tool = _load_tool()
+    repo = _tmp_repo(tmp_path)
+    slice_file = tmp_path / "slices.txt"
+    slice_file.write_text("# --- Stale rerun ---\ntracked.py\n", encoding="utf-8")
+    raised = None
+    try:
+        tool.main([str(slice_file), "--repo-root", str(repo), "--dry-run", "--no-journal"])
+    except ValueError as exc:
+        raised = str(exc)
+    assert raised is not None and "already clean" in raised
 
 
 def test_journal_entry_specs_parse_and_range_check() -> None:
