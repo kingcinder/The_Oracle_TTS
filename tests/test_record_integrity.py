@@ -70,6 +70,23 @@ def _resolves(token: str) -> bool:
     return probe.returncode == 0
 
 
+def _broken_citation_lines(lines: list[str], tokens: set[str]) -> list[str]:
+    """Attribute each broken token to EVERY record line carrying it.
+
+    A first-match-only report would name one line and hide the rest — the
+    record must be fixed everywhere a stale hash is cited, so the return
+    is one ``<line>: <token>`` entry per line, in token-major order.
+    """
+    attributions: list[str] = []
+    for token in sorted(tokens):
+        if _resolves(token):
+            continue
+        attributions.extend(
+            f"{i + 1}: {token}" for i, row in enumerate(lines) if token in row
+        )
+    return attributions
+
+
 def _history_unavailable_reason() -> str | None:
     """``None`` when the net can run; otherwise why this tree cannot."""
     if not (REPO_ROOT / ".git").exists():
@@ -94,9 +111,11 @@ def _history_unavailable_reason() -> str | None:
 def test_every_commit_hash_cited_in_the_records_resolves() -> None:
     """Every hash the records cite must still exist in git.
 
-    The failure message names file and line per broken citation, and an
-    unclassifiable hash-shaped token is a failure too (see ``_NON_HASH_TOKENS``)
-    — a citation that cannot be checked must never pass silently.
+    The failure message names the file and EVERY line carrying each broken
+    citation (a hash cited on several lines is broken on all of them), and
+    an unclassifiable hash-shaped token is a failure too (see
+    ``_NON_HASH_TOKENS``) — a citation that cannot be checked must never
+    pass silently.
     """
     reason = _history_unavailable_reason()
     if reason:
@@ -123,14 +142,10 @@ def test_every_commit_hash_cited_in_the_records_resolves() -> None:
     broken: list[str] = []
     for name in RECORD_FILES:
         text = (REPO_ROOT / name).read_text(encoding="utf-8")
-        lines = text.splitlines()
-        for token in sorted(set(per_file[name])):
-            if _resolves(token):
-                continue
-            line = next(
-                (i + 1 for i, row in enumerate(lines) if token in row), "?"
-            )
-            broken.append(f"{name}:{line}: {token}")
+        for attribution in _broken_citation_lines(
+            text.splitlines(), set(per_file[name])
+        ):
+            broken.append(f"{name}:{attribution}")
 
     assert broken == [], (
         "these commit hashes are cited in the records but do not resolve in "
@@ -139,6 +154,30 @@ def test_every_commit_hash_cited_in_the_records_resolves() -> None:
         "prose rather than a hash, classify it in _NON_HASH_TOKENS:\n  "
         + "\n  ".join(broken)
     )
+
+
+def test_a_broken_citation_is_attributed_to_every_line_carrying_it() -> None:
+    """Synthetic pin: one stale hash cited on two lines is reported twice.
+
+    A first-match-only attribution would let a hash "fixed" on one line
+    stay broken on another while the net keeps pointing at a single spot.
+    The stale tokens here are pure fiction; the pin never touches git
+    resolution of real history (the probe itself is pinned form-by-form
+    in ``test_the_resolution_probe_can_pass_and_can_fail``).
+    """
+    lines = [
+        "2026-09-28 | files (commit deadbeef) | stale | red.",
+        "2026-09-28 | other (commit deadbe1) | stale pair | red.",
+        "2026-09-28 | again (commit deadbeef) | same stale hash | red.",
+    ]
+    attributions = _broken_citation_lines(lines, {"deadbeef", "deadbe1"})
+    # Token-major order, and BOTH lines of the twice-cited hash are named —
+    # the non-adjacent pair is the case a first-match report would miss.
+    assert attributions == [
+        "2: deadbe1",
+        "1: deadbeef",
+        "3: deadbeef",
+    ], attributions
 
 
 def test_the_hash_extractor_reads_every_citation_shape_form_by_form() -> None:
