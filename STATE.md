@@ -1,6 +1,6 @@
 # The Oracle — State (completeness manifest)
 
-**Current release: V1.3.1 (local private crash reporting + offline licensing + visible self-healing renders)**
+**Current release: V1.3.2 (local private crash reporting + offline licensing + visible self-healing renders)**
 
 This file is the repo's self-designated completeness record. It is the
 authoritative context for the Omega meta-skill loop (searched, never
