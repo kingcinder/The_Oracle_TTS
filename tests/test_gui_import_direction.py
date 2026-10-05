@@ -49,7 +49,7 @@ GUI_RENDER = PACKAGE_DIR / "gui_render.py"
 
 # Known gui-layer modules the rule must see; a future slice adding another
 # gui_* file is covered by the name pattern without touching this file.
-KNOWN_SIBLINGS = ("gui_chrome", "gui_recording", "gui_settings", "gui_vulkan")
+KNOWN_SIBLINGS = ("gui_cast", "gui_chrome", "gui_recording", "gui_settings", "gui_vulkan")
 
 
 def _gui_siblings() -> tuple[str, ...]:
