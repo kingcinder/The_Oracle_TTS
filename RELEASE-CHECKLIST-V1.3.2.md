@@ -26,13 +26,22 @@ are untracked. Every step below runs only once Step 0 clears.
   (calendar-date field, no empty fields, hash-shaped citations pure-hex
   7–40 digits — resolvability itself stays the record-integrity net's job
   inside the full suite). A release must not extend a malformed record.
+- Gate discipline: the cut later relies on the tool's proof machinery
+  (Step 4's journal entry is meant to run under `--verify` with `!`
+  commands), so cut day enforces it here: any slice landing performed today
+  goes through `commit_slices.py` with `--verify` and at least one `!`
+  command — without the flag, `!` lines are parsed but silently skipped.
+  The machinery's own proof (`tests/test_commit_slices.py`, 16 tests) is
+  inside the full-suite count below; if it is deselected or skipped, stop —
+  the gates the cut trusts are unproven.
 - Full suite: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/ -q`
-  — expect ~1560 passed / 0 failed. `tests/test_worker_import_sweep.py` must
-  pass (it is red at HEAD on the *committed* function-level
-  `from mutagen.flac import FLAC` at `export_flac.py:44`; the settle-edit is
-  to hoist it beside the existing module-level preload). A release run
-  tolerates no known-failing test: any failure = stop and root-cause. The perf-baseline cgroup caveat applies
-  only while that file is untracked; by cut day it must be committed.
+  — expect ~1530 passed / 0 failed (1529 on the settled tree per the
+  2026-09-29 record). `tests/test_worker_import_sweep.py` must pass (green
+  since `fc7d78c` hoisted the function-level `mutagen.flac` import in
+  `export_flac.py` to the module-level `FLAC` binding). A release run
+  tolerates no known-failing test: any failure = stop and root-cause. The
+  perf-baseline cgroup caveat applies only while that file is untracked; by
+  cut day it must be committed.
 
 ## Step 1 — notes coverage audit (both directions)
 
@@ -89,12 +98,21 @@ House shape, modeled on `0e68df6`:
 3. Append the `JUNO_FIXES.log` release entry as a separate docs commit,
    house style — record the numbers from THIS run's suite, not an earlier
    one. Route it through the tool so the entry is refused before it touches
-   the record and the whole file is re-checked after the commit. Scratch
-   slice file `release_journal.slices` (delete it afterwards — Step 0
-   forbids untracked leftovers):
+   the record and the committed runbook is re-checked after the commit.
+
+   The tool's commit order is: slice commits (one per `# ---` header), then
+   each slice's `!` verify commands, then the journal append + commit last.
+   So the slice MUST commit real content — a slice listing only a clean
+   `JUNO_FIXES.log` dies on the empty-commit refusal BEFORE the journal
+   phase ever runs (the pre-write refusal cannot save it; there is nothing
+   to append into a commit). The working shape proven live: the slice
+   commits the runbook change itself, and the journal phase appends the
+   entry citing that commit's real hash. Scratch slice file
+   `release_journal.slices` (delete it afterwards — Step 0 forbids
+   untracked leftovers):
 
        # --- release journal ---
-       JUNO_FIXES.log
+       RELEASE-CHECKLIST-V1.3.2.md
        ! .venv/bin/python scripts/commit_slices.py --check-journal
 
    then:
@@ -104,16 +122,18 @@ House shape, modeled on `0e68df6`:
            --journal-entry 1:'<the release entry text>' \
            --suite-note "Full suite: <N> passed / 0 failed (release build)."
 
-   Mechanics: the tool refuses a malformed entry BEFORE appending (the
-   pre-write refusal), appends, commits the journal with the house message,
-   then runs the `!` verify — `--check-journal` over the whole file
-   including the new line — and stops non-zero on any problem (the journal
-   commit stays, independently revertable). The `!` line runs only under
-   `--verify`; without the flag it is silently skipped, so the flag is not
-   optional here. If you journal by hand instead,
-   running `--check-journal` immediately after the commit is the minimum
-   gate: a malformed entry in the record is a release defect, not a style
-   nit (the record-integrity net reads this file too).
+   Mechanics, in run order: the slice commit lands the runbook text (the
+   edit below must exist in the worktree first — e.g. this very cut-day
+   correction); the `!` verify then runs `--check-journal` over the record
+   AS IT STANDS BEFORE the new entry — proving the record is clean before
+   it grows, not after; the journal phase then refuses a malformed entry
+   BEFORE appending (the pre-write refusal), appends, and commits
+   `JUNO_FIXES.log` with the house message, citing the slice's real hash.
+   The `!` line runs only under `--verify`; without the flag it is silently
+   skipped, so the flag is not optional here. If you journal by hand
+   instead, running `--check-journal` immediately after the commit is the
+   minimum gate: a malformed entry in the record is a release defect, not
+   a style nit (the record-integrity net reads this file too).
 
 ## Explicitly out of scope for the cut
 
