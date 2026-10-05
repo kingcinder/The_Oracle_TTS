@@ -1,8 +1,9 @@
 """Record-integrity net for the campaign's evidence trail.
 
-``STATE.md`` and ``JUNO_FIXES.log`` cite commit hashes as the evidence behind
-every record claim (``(commit 317d2f4)``, ``a320ab2 -> 96f5081``,
-`` `5d26f1a` ``). A citation that no longer resolves in git — rewritten
+The records — ``STATE.md``, ``JUNO_FIXES.log``, and every tracked root or
+``docs/`` prose file discovered carrying citations — cite commit hashes as
+the evidence behind every record claim (``(commit 317d2f4)``,
+``a320ab2 -> 96f5081``, `` `5d26f1a` ``). A citation that no longer resolves in git — rewritten
 history, a typo, or a hash recorded from another machine — makes the record
 misleading at exactly the moment someone trusts it to verify a claim. This net
 runs the whole trail through git on every pass.
@@ -22,13 +23,42 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RECORD_FILES = ("STATE.md", "JUNO_FIXES.log")
+#: The minimum record set the net must always discover. Discovery (below)
+#: sweeps new records in automatically, but if the discovered set ever
+#: drops below this floor — a record deleted from the repo, a record
+#: emptied of citations, or the discovery rule broken — the net fails
+#: until the shrink is acknowledged here. Removal is a floor edit, not an
+#: absorption.
+RECORD_SET_FLOOR = frozenset(
+    {
+        "STATE.md",
+        "JUNO_FIXES.log",
+        "RELEASE-CHECKLIST-V1.3.2.md",
+        "docs/superpowers/findings/2026-09-28-crash-evidence.md",
+        "docs/superpowers/plans/2026-09-25-consumer-market-readiness.md",
+        # (the 2026-09-28 crash-eradication plan is NOT floored: its only
+        # hash-shaped tokens were prose — a date and a placeholder stem in a
+        # synthetic filename — so it carries no citations to verify)
+        "docs/superpowers/specs/2026-09-06-voice-craft-and-recording-studio-design.md",
+        "docs/superpowers/specs/2026-09-25-consumer-market-readiness-design.md",
+    }
+)
 
 #: Hash-shaped tokens that are not commit citations. Classification is
 #: deliberate and additive: prose that happens to spell itself in hex joins
 #: this list with a comment, and an unclassifiable token fails the net loudly
 #: (with this list named in the message) rather than being absorbed.
-_NON_HASH_TOKENS = frozenset({"ed25519", "1697156"})  # the latter: a PID in a kernel-log quote (python[1697156]: segfault at 0), 2026-09-28 crash evidence — 7 digits slips the >8 all-digit rule
+_NON_HASH_TOKENS = frozenset(
+    {
+        "ed25519",  # a signing-algorithm name (mixed case never matches; lowercase does)
+        "1697156",  # a PID in a kernel-log segfault quote (python[1697156]: …) — 7 digits slips the >8 all-digit rule
+        "3724240",  # core-dump ProcStatus process ids (Pid=/PPid=/NSpgid=/NSsid=), crash-evidence findings
+        "3724241",  # …same quote
+        "3724243",  # …same quote
+        "20260928",  # the date inside a synthetic crash-record filename (crash-20260928-…json), campaign plan
+        "aaaaaaaa",  # the placeholder stem of that same synthetic filename
+    }
+)
 
 
 def _cited_hashes(text: str) -> list[str]:
@@ -50,6 +80,46 @@ def _cited_hashes(text: str) -> list[str]:
             continue
         hashes.append(token)
     return hashes
+
+
+def _tracked_record_files(repo: Path = REPO_ROOT) -> tuple[str, ...]:
+    """Discover the record set: core records + every tracked cited record.
+
+    A record is tracked prose at the repo root (``*.md``/``*.log``) or a
+    ``docs/**.md`` findings/spec/plan document that carries at least one
+    hash-shaped token — citing commits is what makes a file this net's
+    business, so a new record is swept in the moment it is committed, with
+    no list to edit. Untracked files are invisible by construction, and a
+    tracked file missing from the worktree cannot be scanned — discovery
+    drops it, and the floor (not a ``FileNotFoundError``) reports it.
+    """
+    tracked = subprocess.run(
+        ["git", "-C", str(repo), "ls-files"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    candidates = [
+        path
+        for path in sorted(tracked)
+        if (
+            ("/" not in path and path.endswith((".md", ".log")))
+            or (path.startswith("docs/") and path.endswith(".md"))
+        )
+    ]
+    return tuple(
+        path
+        for path in candidates
+        if (repo / path).is_file()
+        and _cited_hashes((repo / path).read_text(encoding="utf-8"))
+    )
+
+
+def _record_set_floor_missing(
+    discovered: set[str], floor: frozenset[str] = RECORD_SET_FLOOR
+) -> list[str]:
+    """Sorted floor entries the discovery set no longer contains."""
+    return sorted(floor - discovered)
 
 
 def _resolves(token: str) -> bool:
@@ -116,13 +186,27 @@ def test_every_commit_hash_cited_in_the_records_resolves() -> None:
     an unclassifiable hash-shaped token is a failure too (see
     ``_NON_HASH_TOKENS``) — a citation that cannot be checked must never
     pass silently.
+
+    The record set is discovered, not listed: root ``*.md``/``*.log`` and
+    tracked ``docs/**.md`` files carrying citations join automatically, and
+    ``RECORD_SET_FLOOR`` fails the net if the discovered set ever shrinks.
     """
     reason = _history_unavailable_reason()
     if reason:
         pytest.skip("record-integrity net: " + reason)
 
+    record_files = _tracked_record_files()
+    missing = _record_set_floor_missing(set(record_files))
+    assert not missing, (
+        "the record set shrank below its floor — these files are no longer "
+        "discovered (deleted from the repo or the worktree, emptied of "
+        "citations, or the discovery rule broke). A record's removal is a "
+        "deliberate act that must be acknowledged in RECORD_SET_FLOOR: "
+        + ", ".join(missing)
+    )
+
     per_file: dict[str, list[str]] = {}
-    for name in RECORD_FILES:
+    for name in record_files:
         text = (REPO_ROOT / name).read_text(encoding="utf-8")
         per_file[name] = _cited_hashes(text)
 
@@ -140,7 +224,7 @@ def test_every_commit_hash_cited_in_the_records_resolves() -> None:
     )
 
     broken: list[str] = []
-    for name in RECORD_FILES:
+    for name in record_files:
         text = (REPO_ROOT / name).read_text(encoding="utf-8")
         for attribution in _broken_citation_lines(
             text.splitlines(), set(per_file[name])
@@ -223,3 +307,77 @@ def test_the_resolution_probe_can_pass_and_can_fail() -> None:
     assert not _resolves("0000000deadbeef"), (
         "the probe claims a nonexistent hash resolves; it cannot fail"
     )
+
+
+# --- record discovery + shrink floor (disposable repo) ----------------------------
+
+
+def _tmp_record_repo(tmp_path: Path) -> Path:
+    """A disposable tracked tree: two core records, one cited docs record,
+    one zero-citation docs file, and one cited-but-untracked decoy."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(repo), check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=str(repo), check=True)
+    (repo / "STATE.md").write_text("records (commit 0badc0de)\n", encoding="utf-8")
+    (repo / "JUNO_FIXES.log").write_text(
+        "2026-10-05 | x (commit 0badc0de) | d | green.\n", encoding="utf-8"
+    )
+    findings = repo / "docs" / "superpowers" / "findings"
+    findings.mkdir(parents=True)
+    (findings / "2026-10-05-evidence.md").write_text(
+        "evidence cites (commit 0badc0de)\n", encoding="utf-8"
+    )
+    (findings / "2026-10-05-empty.md").write_text(
+        "no citations here\n", encoding="utf-8"
+    )
+    (repo / "decoy.md").write_text(
+        "untracked decoy (commit 0badc0de)\n", encoding="utf-8"
+    )
+    subprocess.run(
+        ["git", "add", "STATE.md", "JUNO_FIXES.log", "docs"],
+        cwd=str(repo),
+        check=True,
+    )
+    subprocess.run(["git", "commit", "-qm", "records"], cwd=str(repo), check=True)
+    return repo
+
+
+def test_discovery_sweeps_cited_records_and_skips_untracked_and_empty(
+    tmp_path: Path,
+) -> None:
+    """A new cited record is discovered with no list edit; untracked files
+    are invisible and a zero-citation file is not this net's business."""
+    repo = _tmp_record_repo(tmp_path)
+    assert set(_tracked_record_files(repo)) == {
+        "STATE.md",
+        "JUNO_FIXES.log",
+        "docs/superpowers/findings/2026-10-05-evidence.md",
+    }
+
+
+def test_the_floor_fails_when_a_record_file_disappears(tmp_path: Path) -> None:
+    """A record deleted from the worktree (still tracked) can no longer be
+    scanned, so discovery drops it — and the floor, not a crash, must name
+    the shrink."""
+    repo = _tmp_record_repo(tmp_path)
+    discovered = set(_tracked_record_files(repo))
+    (repo / "docs" / "superpowers" / "findings" / "2026-10-05-evidence.md").unlink()
+    shrunk = set(_tracked_record_files(repo))
+    assert shrunk < discovered, "the shrink scenario must actually shrink"
+    assert _record_set_floor_missing(shrunk, floor=frozenset(discovered)) == [
+        "docs/superpowers/findings/2026-10-05-evidence.md"
+    ]
+
+
+def test_the_floor_fails_when_a_record_is_emptied_of_citations(tmp_path: Path) -> None:
+    """The subtler shrink: the file still exists but no longer carries a
+    trail — discovery drops it, and the floor must fail just as loudly."""
+    repo = _tmp_record_repo(tmp_path)
+    (repo / "STATE.md").write_text("no citations remain\n", encoding="utf-8")
+    shrunk = set(_tracked_record_files(repo))
+    assert "STATE.md" not in shrunk
+    assert _record_set_floor_missing(
+        shrunk, floor=frozenset({"STATE.md", "JUNO_FIXES.log"})
+    ) == ["STATE.md"]
