@@ -29,6 +29,10 @@
     "the_oracle.gui_recording": {
       "names": ["RecordStudioWorker"],
       "note": "Only the worker: MainWindow constructs it only via RecordingStudioDialog's body, which resolves the name from gui_recording's globals, so an app_gui-level patch is a silent no-op. RecordingStudioDialog must NOT be listed: MainWindow constructs it directly from app_gui globals, so app_gui-level class patches remain live and legitimate - the RenderWorker precedent. The dialog's QMediaPlayer/QAudioOutput fakes patch the_oracle.gui_recording by module object, never app_gui."
+    },
+    "the_oracle.gui_cast": {
+      "names": ["_CastRow"],
+      "note": "Only the row widget: CastManagementDialog - which MainWindow constructs from app_gui globals, the RecordingStudioDialog precedent - builds its rows from gui_cast's globals, so an app_gui-level patch of _CastRow is a silent no-op. SpeakerGroup, CastManagementDialog, _speaker_settings_from_group and _apply_speaker_settings_to_group must NOT be listed: MainWindow reads/constructs them from app_gui globals too (split readership - the patch-surface net's PARTIAL_OWNED records the partial patch coverage)."
     }
   },
   "payload_policy": {
@@ -134,7 +138,14 @@
         "QMediaPlayer": "documented repointed split (e053ef5): window-fixture level stays app_gui",
         "QAudioOutput": "documented repointed split (e053ef5): window-fixture level stays app_gui"
       },
-      "gui_settings.py": {
+      "gui_cast.py": {
+  "QDialog": "documented split (slice 9): CastManagementDialog subclasses QDialog resolving from gui_cast globals; the app_gui-level QDialog fakes (ingest preview/batch tests) target app_gui-resident dialogs, which still resolve from app_gui globals",
+  "QMessageBox": "documented split (slice 9): the cast-full popup resolves from gui_cast globals; the ingest tests' app_gui-level QMessageBox fakes target app_gui-resident popups",
+  "blend_voice_choices": "documented split (slice 9): the cast dialog's picker refresh resolves the voice catalogs from gui_cast globals; app_gui-level rebinds cover app_gui's remaining picker call sites",
+  "default_voice_choices": "documented split (slice 9): same as blend_voice_choices — both modules have call sites and each resolves its own binding",
+  "load_recent_reference_paths": "documented split (slice 9): recents feed both modules' pickers; app_gui-level rebinds cover app_gui's sites while the cast dialog reads gui_cast's binding"
+ },
+ "gui_settings.py": {
         "load_recent_reference_paths": "documented split: app_gui imports the loader and its two call sites resolve from app_gui globals (app_gui-level rebinds stay live); gui_settings' internal recursion inside the recents-add helper resolves from its own module by design"
       }
     }

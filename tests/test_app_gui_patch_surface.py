@@ -269,6 +269,13 @@ WORKER_PATH_TESTS: frozenset[str] = frozenset(
 #: worker-path files: every app_gui-level patch of the name is partial.
 PARTIAL_OWNED: dict[str, tuple[str, str]] = {
     "QHSectionGroup": ("the_oracle.app_gui", "the_oracle.gui_chrome"),
+    # The gui_cast slice (2026-10-05, slice 9): MainWindow builds SpeakerGroup
+    # panels (A/B + extras) and reads the two settings helpers from app_gui
+    # globals, while CastManagementDialog builds/reads them from gui_cast's —
+    # an app_gui-level patch covers only app_gui's sites.
+    "SpeakerGroup": ("the_oracle.app_gui", "the_oracle.gui_cast"),
+    "_speaker_settings_from_group": ("the_oracle.app_gui", "the_oracle.gui_cast"),
+    "_apply_speaker_settings_to_group": ("the_oracle.app_gui", "the_oracle.gui_cast"),
 }
 
 #: Every name the scan must catch, for the failure message.
