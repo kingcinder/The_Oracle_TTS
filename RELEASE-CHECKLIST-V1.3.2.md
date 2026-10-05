@@ -103,9 +103,12 @@ House shape, modeled on `0e68df6`:
    The tool's commit order is: slice commits (one per `# ---` header), then
    each slice's `!` verify commands, then the journal append + commit last.
    So the slice MUST commit real content — a slice listing only a clean
-   `JUNO_FIXES.log` dies on the empty-commit refusal BEFORE the journal
-   phase ever runs (the pre-write refusal cannot save it; there is nothing
-   to append into a commit). The working shape proven live: the slice
+   `JUNO_FIXES.log` dies in PRE-FLIGHT on the staleness refusal ("every
+   listed path is already clean — this slice would commit nothing";
+   landed in `4331716`) before the journal phase ever runs, with git's
+   empty-commit refusal kept only as the race-window backstop (the
+   pre-write refusal cannot save it; there is nothing to append into a
+   commit). The working shape proven live twice: the slice
    commits the runbook change itself, and the journal phase appends the
    entry citing that commit's real hash. Scratch slice file
    `release_journal.slices` (delete it afterwards — Step 0 forbids
