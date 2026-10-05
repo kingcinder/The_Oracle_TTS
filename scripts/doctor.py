@@ -423,17 +423,73 @@ def _licensing_status(repo_root: Path) -> dict[str, Any]:
     }
 
 
-def _input_subtitles_status(repo_root: Path) -> dict[str, Any]:
-    """Scan Input/ for subtitle files that would take the CP1252 fallback.
+#: Cue separator: the blank-line runs that end one SubRip/WebVTT cue and
+#: start the next. Mirror of ``srt_ingest._CUE_SEPARATOR_RE`` — the doctor
+#: never imports the_oracle, so the decode chain's shapes are mirrored here
+#: and pinned against the real chain by tests/test_doctor_input_subtitles.py.
+_CUE_SEPARATOR_RE = re.compile(rb"(\r?\n\r?\n+)")
 
-    The subtitle decode chain (``srt_ingest``) reads UTF-8 with BOM first and
-    falls back to CP1252. A cleanly legacy-encoded ``.srt``/``.vtt`` converts
-    fine, but two encoding shapes are worth surfacing *before* a render: a
-    mixed-encoding file salvages only lossily (the whole file re-decodes under
-    CP1252, so a UTF-8 cue arrives as deterministic mojibake), and a file
-    containing bytes CP1252 does not define (0x81, 0x8D, 0x8F, 0x90, 0x9D)
-    passes the lossy pre-check and then BLOCKS the strict re-decode inside
-    ``convert_srt_file`` — the GUI reports "Could not convert".
+#: Characters cp1252 can express beyond Latin-1, DERIVED from the codec rather
+#: than hand-typed (mirror of ``srt_ingest._CP1252_EXTRA_CHARACTERS``).
+_CP1252_EXTRA_CHARACTERS = frozenset(
+    ch
+    for ch in (
+        bytes([value]).decode("cp1252", errors="replace")
+        for value in range(0x80, 0x100)
+    )
+    if ch != "\ufffd"
+)
+
+
+def _utf8_guard(text: str) -> bool:
+    """Mirror of ``srt_ingest._utf8_guard``: True when the UTF-8 reading
+    produces only cp1252-representable text, keeping a coincidentally-valid
+    UTF-8 cp1252 segment on its real encoding."""
+    return all(
+        ord(ch) <= 0xFF or ch in _CP1252_EXTRA_CHARACTERS
+        for ch in text
+    )
+
+
+def _mixed_encoding_under_per_cue_recovery(raw: bytes) -> bool:
+    """True when the per-cue recovery (``srt_ingest._decode_subtitle_bytes``,
+    landed 2026-09-28) rescues at least one cue of ``raw`` whose guarded
+    UTF-8 reading differs from its CP1252 reading — i.e. the file mixes
+    encodings and the recovery changes the outcome: the UTF-8 cue arrives
+    intact instead of as whole-file-CP1252 mojibake.
+
+    Only meaningful for bytes that fail the whole-file UTF-8 decode and pass
+    the whole-file CP1252 decode (the caller guarantees both); within that
+    branch no cue can carry CP1252-hole bytes, so the strict probe below
+    cannot raise."""
+    for index, part in enumerate(_CUE_SEPARATOR_RE.split(raw)):
+        if index % 2 == 1:
+            continue  # captured separator bytes: pure ASCII
+        try:
+            text = part.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            continue
+        if _utf8_guard(text) and text != part.decode("cp1252"):
+            return True
+    return False
+
+
+def _input_subtitles_status(repo_root: Path) -> dict[str, Any]:
+    """Scan Input/ for subtitle files whose encoding needs a salvage path.
+
+    The subtitle decode chain (``srt_ingest._decode_subtitle_bytes``) reads
+    UTF-8 with BOM first, then decodes each blank-line-delimited cue on its
+    own encoding — guarded UTF-8 wins per cue, CP1252 next, replacement as
+    the last resort (the 2026-09-28 per-cue recovery). Three shapes are
+    worth surfacing *before* a render: a cleanly legacy-encoded
+    ``.srt``/``.vtt`` converts via the whole-file CP1252 fallback; a
+    MIXED-encoding file (a UTF-8 cue inside a legacy file — the classic
+    two-editors concatenation) is no longer a lossy mojibake case, because
+    the per-cue recovery decodes that cue's UTF-8 intact, which is worth
+    naming so the user knows the salvage will engage; and a file containing
+    bytes CP1252 does not define (0x81, 0x8D, 0x8F, 0x90, 0x9D) passes the
+    lossy pre-check and degrades that cue to replacement marks in the
+    converted script instead of failing conversion.
 
     Read-only by contract: the path is computed without
     ``ensure_repo_default_paths`` (which mkdirs), and a missing Input/ is
@@ -449,6 +505,7 @@ def _input_subtitles_status(repo_root: Path) -> dict[str, Any]:
         "scanned": 0,
         "utf8_count": 0,
         "fallback": [],
+        "mixed": [],
         "blocked": [],
         "unreadable": [],
         "error": "",
@@ -481,14 +538,18 @@ def _input_subtitles_status(repo_root: Path) -> dict[str, Any]:
                     {
                         "path": rel,
                         "error": (
-                            "contains byte(s) CP1252 cannot decode; subtitle "
-                            "conversion would fail after the fallback pre-check. "
-                            "Re-save the file as UTF-8."
+                            "contains byte(s) CP1252 cannot decode; per-cue "
+                            "recovery degrades that cue to replacement marks "
+                            "(U+FFFD) instead of failing. Re-save the file as "
+                            "UTF-8 for clean output."
                         ),
                     }
                 )
             else:
-                report["fallback"].append({"path": rel})
+                if _mixed_encoding_under_per_cue_recovery(raw):
+                    report["mixed"].append({"path": rel})
+                else:
+                    report["fallback"].append({"path": rel})
         else:
             report["utf8_count"] += 1
     report["ok"] = not report["blocked"] and not report["unreadable"]
@@ -1595,6 +1656,11 @@ def _print_human_report(report: dict[str, Any]) -> None:
         fallback_names = [entry["path"] for entry in subtitles["fallback"]]
         if fallback_names:
             parts.append("CP1252 fallback: " + ", ".join(fallback_names))
+        mixed_names = [entry["path"] for entry in subtitles.get("mixed") or []]
+        if mixed_names:
+            parts.append(
+                "mixed-encoding, recovered per cue: " + ", ".join(mixed_names)
+            )
         label = "PASS" if subtitles["ok"] else "WARN"
         print(f"{label} Input subtitle encoding: {'; '.join(parts)}")
         for entry in subtitles["blocked"]:

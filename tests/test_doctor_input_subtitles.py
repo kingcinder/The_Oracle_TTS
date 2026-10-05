@@ -55,9 +55,47 @@ def test_classifies_utf8_fallback_and_blocked_files(tmp_path: Path) -> None:
     assert status["scanned"] == 4
     assert status["utf8_count"] == 2
     assert [entry["path"] for entry in status["fallback"]] == ["Input/sub/legacy.srt"]
+    # A cleanly legacy file is not mixed: per-cue recovery changes nothing.
+    assert status["mixed"] == []
     # 0x81 has no CP1252 mapping: blocked, with the actionable error.
     assert [entry["path"] for entry in status["blocked"]] == ["Input/broken.srt"]
     assert status["ok"] is False
+
+
+def test_classifies_mixed_encoding_file_as_recovered_per_cue(tmp_path: Path) -> None:
+    """A UTF-8 cue inside a legacy file is the shape the per-cue recovery
+    (f6b9418) fixed: the doctor must name it as mixed-encoding — recovered
+    per cue — instead of lumping it into the plain CP1252 fallback."""
+    doctor = _load_doctor()
+    input_dir = tmp_path / "Input"
+    input_dir.mkdir()
+    utf8_cue = "1\n00:00:01,000 --> 00:00:02,000\nWinston: café.\n".encode("utf-8")
+    legacy_cue = "2\n00:00:02,000 --> 00:00:03,000\nJulia: voilà.\n".encode("cp1252")
+    (input_dir / "mixed.srt").write_bytes(utf8_cue + b"\n\n" + legacy_cue)
+
+    status = doctor._input_subtitles_status(tmp_path)
+
+    assert status["scanned"] == 1
+    assert status["utf8_count"] == 0
+    assert [entry["path"] for entry in status["mixed"]] == ["Input/mixed.srt"]
+    assert status["fallback"] == []
+    assert status["ok"] is True
+
+
+def test_ascii_cue_alongside_legacy_cue_is_plain_fallback_not_mixed(tmp_path: Path) -> None:
+    """A cue that reads identically under both encodings (pure ASCII) is not
+    a rescue — the file is cleanly legacy from the recovery's point of view."""
+    doctor = _load_doctor()
+    input_dir = tmp_path / "Input"
+    input_dir.mkdir()
+    ascii_cue = b"1\n00:00:01,000 --> 00:00:02,000\nWinston: hello.\n"
+    legacy_cue = "2\n00:00:02,000 --> 00:00:03,000\nJulia: voilà.\n".encode("cp1252")
+    (input_dir / "mostly_legacy.srt").write_bytes(ascii_cue + b"\n\n" + legacy_cue)
+
+    status = doctor._input_subtitles_status(tmp_path)
+
+    assert [entry["path"] for entry in status["fallback"]] == ["Input/mostly_legacy.srt"]
+    assert status["mixed"] == []
 
 
 def test_flags_blocked_file_with_cp1252_undefined_bytes(tmp_path: Path) -> None:
@@ -73,6 +111,10 @@ def test_flags_blocked_file_with_cp1252_undefined_bytes(tmp_path: Path) -> None:
     entry = status["blocked"][0]
     assert entry["path"] == "Input/weird.vtt"
     assert "CP1252 cannot decode" in entry["error"]
+    # The per-cue recovery degrades hole-byte cues to replacement marks
+    # instead of failing conversion — the message must say so, not claim a
+    # failure that no longer happens.
+    assert "degrades that cue to replacement marks" in entry["error"]
     assert "Re-save the file as UTF-8" in entry["error"]
     assert "Input/weird.vtt" in status["error"]
 
@@ -182,6 +224,57 @@ def test_human_report_lists_fallback_files_and_blocked_detail(capsys) -> None:
     out = capsys.readouterr().out
     assert "Input subtitle encoding: 2 subtitle file(s) scanned; 1 UTF-8; CP1252 fallback: Input/legacy.srt" in out
     assert "Input/weird.vtt: contains byte(s) CP1252 cannot decode" in out
+
+
+def test_human_report_names_mixed_encoding_files_as_recovered_per_cue(capsys) -> None:
+    doctor = _load_doctor()
+    report = _full_report(
+        {
+            "ok": True,
+            "input_dir": "/repo/Input",
+            "exists": True,
+            "scanned": 1,
+            "utf8_count": 0,
+            "fallback": [],
+            "mixed": [{"path": "Input/mixed.srt"}],
+            "blocked": [],
+            "unreadable": [],
+            "error": "",
+        }
+    )
+
+    doctor._print_human_report(report)
+
+    out = capsys.readouterr().out
+    assert (
+        "Input subtitle encoding: 1 subtitle file(s) scanned; "
+        "mixed-encoding, recovered per cue: Input/mixed.srt"
+    ) in out
+
+
+def test_human_report_tolerates_older_reports_without_the_mixed_key(capsys) -> None:
+    """A report dict from before the mixed-encoding extension renders without
+    the new line and without crashing (same contract as input_subtitles)."""
+    doctor = _load_doctor()
+    report = _full_report(
+        {
+            "ok": True,
+            "input_dir": "/repo/Input",
+            "exists": True,
+            "scanned": 1,
+            "utf8_count": 0,
+            "fallback": [{"path": "Input/legacy.srt"}],
+            "blocked": [],
+            "unreadable": [],
+            "error": "",
+        }
+    )
+
+    doctor._print_human_report(report)
+
+    out = capsys.readouterr().out
+    assert "CP1252 fallback: Input/legacy.srt" in out
+    assert "recovered per cue" not in out
 
 
 def test_human_report_skips_line_when_input_dir_missing(capsys) -> None:
