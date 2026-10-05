@@ -3,7 +3,7 @@
 Notable user-facing changes to The Oracle. The version number itself lives in
 one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
-## [Unreleased]
+## [1.3.2] — 2026-10-05
 
 ### Added
 
@@ -47,6 +47,12 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   now preloads on the main thread before any worker starts. Relatedly, a
   missing cache stem is now a cache miss, not corruption — the Vulkan path
   no longer logs false "System error" warnings and deletes nothing.
+
+## [Unreleased]
+
+### Changed
+
+- (nothing yet)
 
 ## [1.3.1] — 2026-09-28
 
