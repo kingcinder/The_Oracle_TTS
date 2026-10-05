@@ -69,12 +69,18 @@ since; prune nothing silently.
 
 ## Step 2 — stamp the release
 
-1. `.venv/bin/python scripts/release.py --sync-changelog` — retitles
+1. Bump `src/the_oracle/__init__.py` `__version__` to `"1.3.2"` FIRST —
+   `--sync-changelog` stamps the `[Unreleased]` body into the section named
+   by the CURRENT version; run at the old version it files the notes under
+   a duplicate old-version heading (live-proven on this very cut, caught by
+   the hardened `--check`).
+2. `.venv/bin/python scripts/release.py --sync-changelog` — retitles
    `[Unreleased]` into `## [1.3.2] — <today>` and re-inserts an empty
    placeholder (idempotent).
-2. `.venv/bin/python scripts/release.py --sync-banners` — README/STATE
-   banners to V1.3.2.
-3. Bump `src/the_oracle/__init__.py` `__version__` to `"1.3.2"`.
+3. Edit the README/STATE "Current release" banner description text by
+   hand, then `.venv/bin/python scripts/release.py --sync-banners` — the
+   script rewrites only the version token and confirms the match (the
+   V1.3.1 release record documents exactly this shape).
 4. `.venv/bin/python scripts/release.py --check` — must hold; the cut runs
    on the hardened gate (duplicate `[Unreleased]`, misordered sections,
    empty shipped section; `scripts/release.py` + `tests/test_release.py`,
