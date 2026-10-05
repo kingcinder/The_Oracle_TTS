@@ -1218,7 +1218,7 @@ rewritten by the loop).
   files' modes for no behavioural gain. The acceptance script's wrapper matrix is
   `.sh`-only for the same reason it is Linux-gated.
 
-- **`pkg_resources` deprecation warning (2026-09-25)**: the suite emits 16 warnings,
+- **`pkg_resources` deprecation warning (2026-09-25)**: the suite emits 18 warnings
   including `pkg_resources.resource_filename` coming from a dependency (not Oracle code
   — repo-wide scan finds no `pkg_resources` import in `src/` or `scripts/`). Harmless
   today; worth one look when the pinned dependency that imports it is next touched, since
@@ -1330,6 +1330,17 @@ rewritten by the loop).
   see root-causes.md). Static re-review of the current render flow found
   all worker teardowns correct; a real repro under the catcher is still the
   designated next step.
+  **RESOLVED 2026-09-28 (amended 2026-10-05 after the records audit): the
+  repro happened and the crash is root-caused and fixed.** The scripted
+  render → preview → render with playback active reproduced it rc=139;
+  `crash_reports/native-crash.txt` named the fingerprint — first import of
+  `mutagen` inside the render worker thread racing the main thread through
+  shiboken6's import hook — and the fix (`ed6ef8b`: worker-call-graph
+  main-thread preloads + mutation-proven regression net
+  `test_gui_render_import_safety.py`) closed the lineage this evidence names:
+  post-fix kernel crashes = 0, the scripted repro passes green, and the
+  campaign's 11-process acceptance gate is green (full write-up:
+  `docs/superpowers/findings/2026-09-28-crash-evidence.md` §A).
 - **audio.cpp punctuation normalization is NOT patched**: its replacement
   table (`:`→`,`, `;`→`, `, dashes, quotes) exactly mirrors the installed
   Chatterbox Python reference `punc_norm`, so diverging would reduce
