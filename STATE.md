@@ -33,6 +33,19 @@ rewritten by the loop).
   `VK_ERROR_DEVICE_LOST` not reproduced in 4 Vulkan renders (intermittent
   RDNA1 hang; already surfaced as a clean dialog). Details:
   `docs/superpowers/findings/2026-09-28-crash-evidence.md`.
+  Extraction-campaign follow-on (2026-09-28): the writer-manifest policy has
+  one owner too (commit b5b9683) — `scripts/patch_surface_manifest.json`
+  gained a validated `writer_manifest` section (write functions, stem/preview
+  target-name classifiers, per-kind gated owner sets, blindness floors of 4
+  stem sites / 1 preview site), and `tests/test_stem_cache_write_path.py` now
+  reads its rule data through the manifest's loud-failure loader family
+  instead of hand-typed constants, with a vacuity guard pinning the loaded
+  policy's self-consistency (non-empty sets, disjoint target classifiers,
+  `pipeline.py` in both owner sets); `tests/test_app_gui_patch_surface.py`
+  is the loader-side reader whose `load_*` family validates every manifest
+  section. Slice-time suite 1518 passed / 1 failed (the 1 was the
+  then-untracked U4.2 sweep net on the parallel session side); re-verified
+  2026-10-05 against the settled tree, full suite 1529 passed / 0 failed.
 
 - **Subtitle-target naming and speaker-ref hint wording each have one owner (2026-09-18)**:
   `src/the_oracle/subtitle_targets.py` owns where a subtitle's companion files go (the
