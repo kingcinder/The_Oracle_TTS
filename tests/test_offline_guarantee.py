@@ -446,20 +446,40 @@ def test_unseeded_model_fails_fast_instead_of_reaching_out(
 
 
 def _fresh_crash_modules():
-    """Import crash/ clean (its modules are tiny; re-import is harmless)."""
-    import importlib
+    """Import crash/ clean (its modules are tiny; re-import is harmless).
+
+    The fresh import is SCOPED to this helper: the previous sys.modules
+    entries (and the parent package's ``crash`` attribute) are restored
+    afterwards. Without that, every module holding a collection-time
+    reference — any test file's ``from the_oracle.crash import handlers``,
+    or cli.py's lazy imports once bound — keeps referencing the discarded
+    objects while later lazy imports get the fresh ones: two handlers
+    modules, two _STATE dicts, one of them invisible (caught 2026-10-08 by
+    tests/test_render_subprocess_arming.py failing only in full-suite
+    order: the child armed the fresh copy while the test asserted the old
+    one). The §8 tests use the returned fresh objects directly, so their
+    clean-import property is unchanged.
+    """
     import sys
 
-    for name in [n for n in sys.modules if n.startswith("the_oracle.crash")]:
+    saved = {n: sys.modules[n] for n in list(sys.modules) if n.startswith("the_oracle.crash")}
+    for name in saved:
         del sys.modules[name]
-    import the_oracle.crash  # noqa: F401
-    import the_oracle.crash.handlers  # noqa: F401
+    try:
+        import the_oracle.crash  # noqa: F401
+        import the_oracle.crash.handlers  # noqa: F401
 
-    import the_oracle.crash.bundle as bundle
-    import the_oracle.crash.consent as consent
-    import the_oracle.crash.handlers as handlers
-    import the_oracle.crash.record as record
-    import the_oracle.crash.sanitize as sanitize
+        import the_oracle.crash.bundle as bundle
+        import the_oracle.crash.consent as consent
+        import the_oracle.crash.handlers as handlers
+        import the_oracle.crash.record as record
+        import the_oracle.crash.sanitize as sanitize
+    finally:
+        sys.modules.update(saved)
+        if "the_oracle.crash" in saved:
+            import the_oracle as parent
+
+            parent.crash = saved["the_oracle.crash"]
 
     return bundle, consent, handlers, record, sanitize
 

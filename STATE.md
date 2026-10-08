@@ -1196,6 +1196,16 @@ is next touched.
   relaunch-arms through real `cli.main`, one-owner pin with vacuity guard);
   mutation-proven (removing the launch arm call fails 2, removing the
   idempotence early-return fails 1), reverts byte-identical.
+  **Closed 2026-10-08: the last unarmed process class** —
+  `render_subprocess.main` (the GUI's spawned clean render interpreter,
+  `python -m the_oracle.render_subprocess`) now arms the same way beside its
+  job dispatch, so a native segfault inside the child itself — the exact
+  class the GUI delegates there to escape — lands in this checkout's
+  `crash_reports/` too; the parent's arm cannot see across the process
+  boundary. Same contract: idempotent, fail-closed without consent. Three
+  new tests (`test_render_subprocess_arming.py`: consented arm before a real
+  job run, consent-off creates nothing, one-owner order pin); mutation-proven
+  (arm removal fails 2, consent-gate removal fails 1).
 
 - **RESOLVED 2026-09-27** — `test_gui_vulkan_imports_nothing_from_app_gui`
   only saw absolute spellings (found 2026-09-27): that guard checked
