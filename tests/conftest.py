@@ -296,6 +296,76 @@ def pytest_sessionstart(session) -> None:
     _SKIPS.clear()
 
 
+# --- window lifetime ----------------------------------------------------------
+
+
+def destroy_leftover_main_windows(app=None) -> None:
+    """Stop every live MainWindow's pending startup timers and destroy it.
+
+    PySide6 holds connected callables — the lambdas ``_build_menu`` wires to
+    ``triggered`` and the bound methods cached on ``SignalInstance``
+    attributes — in C-level connection structures CPython's garbage collector
+    cannot trace. A MainWindow a test builds and simply drops is therefore
+    pinned alive forever: its closure cells and bound methods stay reachable
+    only through those invisible roots. Enough of them accumulate and any
+    later ``processEvents()`` replays every deferred ``_on_gui_shown`` at
+    once — a full application-wide stylesheet restyle per window — which
+    hangs the suite.
+
+    Explicit ``deleteLater()`` is the cut: destroying the C++ window
+    destroys its actions, signals and connections, releasing every callable
+    they hold so the Python wrapper's reference count can finally reach
+    zero. The pending startup timers are stopped first so the teardown never
+    fires ``_on_gui_shown`` (whose crash-flow / wizard side effects must not
+    run implicitly from a test ending).
+    """
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+
+    app = app or QApplication.instance()
+    if app is None:
+        return
+    from the_oracle.app_gui import MainWindow
+    from the_oracle.inference_wizard import InferenceSetupWizard
+
+    leftovers = [
+        w
+        for w in app.topLevelWidgets()
+        if isinstance(w, (MainWindow, InferenceSetupWizard))
+    ]
+    if not leftovers:
+        return
+    for window in leftovers:
+        for attr in (
+            "_gui_shown_timer",
+            "_crash_flow_timer",
+            "_wizard_launch_timer",
+        ):
+            timer = getattr(window, attr, None)
+            if timer is not None:
+                timer.stop()
+        window.close()
+        window.deleteLater()
+    # A bare processEvents() does not deliver DeferredDelete events posted
+    # while outside an event loop — the windows would survive it and stay
+    # pinned. The explicit typed flush is what actually destroys them.
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    app.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def _destroy_leftover_main_windows():
+    """Run :func:`destroy_leftover_main_windows` after every test.
+
+    Tests construct MainWindows freely and usually just drop them; without
+    this, each one survives for the rest of the session (see the helper's
+    docstring) and the first test that processes events replays all of their
+    deferred startup work at once.
+    """
+    yield
+    destroy_leftover_main_windows()
+
+
 def _record_skip(nodeid: str, longrepr: object) -> None:
     _SKIPS.append(skip_audit.SkipRecord(nodeid=nodeid, reason=skip_audit.skip_reason(longrepr)))
 
