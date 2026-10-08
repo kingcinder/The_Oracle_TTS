@@ -361,6 +361,42 @@ def test_check_journal_flags_malformed_entries_by_name() -> None:
     assert "abc1234" not in rendered
 
 
+def test_a_malformed_citation_is_attributed_to_every_line_carrying_it() -> None:
+    """The 71d8840 completeness precedent, applied to the journal validator:
+    a malformed citation cited on SEVERAL lines must be reported on EVERY
+    line carrying it, not deduped to the first occurrence — a one-line fix
+    would otherwise leave the trail broken elsewhere while the checker kept
+    pointing at a single spot. Pinned synthetically (non-adjacent lines, two
+    fictional stale hashes, exact ordered assertion, git-independent), with
+    vacuity guards so the scan cannot go blind: an empty input yields no
+    problems, and each reported problem must carry its own ``line N:``
+    attribution so callers can grep the offending lines."""
+    tool = _load_tool()
+    lines = [
+        "2026-10-08 | files (commit b5b9) | first carrier of the stale hash | green.",
+        "2026-10-08 | files (commit b5b9683) | clean line between the carriers | green.",
+        "2026-10-08 | files (commit b5b9) | second carrier, non-adjacent | green.",
+        "2026-10-08 | files (commit b5b9683) | clean again | green.",
+        "2026-10-08 | files (commit abc12) | a different stale hash | green.",
+    ]
+    problems = tool.check_journal_lines(lines, floors=False)
+    assert problems == [
+        "line 1: commit citation 'b5b9' is not 7-40 hex digits — a truncated "
+        "or garbled hash cannot be verified",
+        "line 3: commit citation 'b5b9' is not 7-40 hex digits — a truncated "
+        "or garbled hash cannot be verified",
+        "line 5: commit citation 'abc12' is not 7-40 hex digits — a truncated "
+        "or garbled hash cannot be verified",
+    ], problems
+    # Vacuity: the every-line property is what the exact list above pins — a
+    # first-match-only regression collapses the list to [line 1, line 5] and
+    # fails the assertion, not silently. And the attribution is greppable:
+    assert sum(problem.startswith("line ") for problem in problems) == len(problems)
+    # The clean carriers are never flagged:
+    assert not any("b5b9683" in problem for problem in problems)
+    assert tool.check_journal_lines([], floors=False) == []
+
+
 def test_check_journal_vacuity_floors_apply_only_in_check_mode() -> None:
     """The floors are a whole-file blindness guard: they must fail a journal
     with too few entries, and equally they must NOT fire on a small pre-write
