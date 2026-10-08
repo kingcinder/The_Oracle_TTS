@@ -596,6 +596,96 @@ def test_check_input_json_warnings_flagged_not_fixable(tmp_path: Path, capsys) -
 
 
 # ---------------------------------------------------------------------------
+# subtitle-encoding classification in the JSON documents (CLI/doctor agreement)
+# ---------------------------------------------------------------------------
+
+
+def _subtitle_fixtures() -> dict[str, tuple[bytes, str]]:
+    """The doctor's four per-file classes, as (raw bytes, expected class).
+
+    Same fixtures the doctor mirror-pins use (tests/test_doctor_input_subtitles.py)
+    so both surfaces are exercised on identical bytes.
+    """
+    utf8_cue = "1\n00:00:01,000 --> 00:00:02,000\nWinston: café.\n".encode("utf-8")
+    legacy_cue = "2\n00:00:02,000 --> 00:00:03,000\nJulia: voilà.\n".encode("cp1252")
+    return {
+        "utf8.srt": (
+            "1\n00:00:01,000 --> 00:00:02,000\nWinston: café.\n".encode("utf-8"),
+            "utf8",
+        ),
+        "mixed.srt": (utf8_cue + b"\n\n" + legacy_cue, "mixed"),
+        "legacy.vtt": (
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nvoilà.\n".encode("cp1252"),
+            "fallback",
+        ),
+        "broken.vtt": (b"WEBVTT\n\n\x81\n", "blocked"),
+    }
+
+
+def test_check_input_json_reports_doctor_subtitle_classification(
+    tmp_path: Path, capsys
+) -> None:
+    """check-input --json must carry the same mixed-encoding classification
+    the doctor's Input/ scan computes, so the CLI and the doctor agree about
+    a subtitle file before a render."""
+    import json
+
+    for name, (data, expected) in _subtitle_fixtures().items():
+        target = tmp_path / name
+        target.write_bytes(data)
+        handle_check_input(_check_args(str(target), "--json"))
+        doc = json.loads(capsys.readouterr().out)
+        assert doc["subtitle_encoding"] == expected, name
+
+
+def test_check_input_json_render_path_carries_subtitle_classification(
+    tmp_path: Path, capsys
+) -> None:
+    """The render path's --check-input-json shares the document builder, so a
+    render's pre-flight report classifies identically to check-input --json."""
+    import json
+
+    from the_oracle.cli import _check_input_formatting
+
+    data, expected = _subtitle_fixtures()["mixed.srt"]
+    target = tmp_path / "mixed.srt"
+    target.write_bytes(data)
+    _check_input_formatting(str(target), fix=False, json_output=True)
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["subtitle_encoding"] == expected
+
+
+def test_check_input_json_omits_subtitle_classification_for_plain_text(
+    tmp_path: Path, capsys
+) -> None:
+    """The classification is defined for subtitles only; a .txt dialogue keeps
+    the exact document shape pinned by test_check_input_json_clean_file_zero_counts."""
+    import json
+
+    target = tmp_path / "script.txt"
+    target.write_text("A: fine.\n", encoding="utf-8")
+    handle_check_input(_check_args(str(target), "--json"))
+    doc = json.loads(capsys.readouterr().out)
+    assert "subtitle_encoding" not in doc
+
+
+def test_check_input_json_marks_unreadable_subtitle_file(tmp_path: Path, capsys) -> None:
+    """A subtitle file the checker cannot read is reported as unreadable, not
+    silently dropped from the classification."""
+    import json
+
+    target = tmp_path / "gone.srt"
+    target.write_bytes(b"1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+    target.chmod(0o000)
+    try:
+        handle_check_input(_check_args(str(target), "--json"))
+        doc = json.loads(capsys.readouterr().out)
+    finally:
+        target.chmod(0o644)
+    assert doc["subtitle_encoding"] == "unreadable"
+
+
+# ---------------------------------------------------------------------------
 # --speaker-ref suggestions for a script's cast
 # ---------------------------------------------------------------------------
 

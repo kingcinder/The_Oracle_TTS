@@ -403,9 +403,24 @@ def _input_json_document(
 
     ``speaker_refs``/``rejected_labels`` are always present so consumers can
     rely on a stable schema; ``fixed_count``/``backup`` appear only when a
-    fix was applied.
+    fix was applied. ``subtitle_encoding`` appears only for ``.srt``/``.vtt``
+    inputs that could be classified: the doctor's mixed-encoding verdict for
+    the same bytes (utf8/fallback/mixed/blocked, or unreadable), so the CLI
+    and the doctor agree about a subtitle file before a render.
     """
     document: dict = {"file": input_path}
+    path = Path(input_path)
+    if path.suffix.lower() in (".srt", ".vtt") and path.is_file():
+        # The doctor's mixed-encoding classification, so check-input --json
+        # and the doctor agree about a subtitle file before a render (the
+        # render path's --check-input-json shares this builder). An existing
+        # file that cannot be read is reported as unreadable, never dropped.
+        from the_oracle.srt_ingest import classify_subtitle_bytes
+
+        try:
+            document["subtitle_encoding"] = classify_subtitle_bytes(path.read_bytes())
+        except OSError:
+            document["subtitle_encoding"] = "unreadable"
     if error is not None:
         document["error"] = error
         document["fixable_count"] = 0

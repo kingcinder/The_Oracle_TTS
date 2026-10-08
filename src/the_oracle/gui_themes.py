@@ -89,7 +89,7 @@ THEMES: dict[str, ThemeTokens] = {
         panel_alt="#EDF1F6",
         text="#16222F",
         text_muted="#4A5A6A",
-        text_disabled="#8496A6",
+        text_disabled="#5E7182",
         accent="#19466D",
         accent_text="#FFFFFF",
         secondary="#0E6B66",
@@ -115,7 +115,7 @@ THEMES: dict[str, ThemeTokens] = {
         panel_alt="#1D2936",
         text="#E8EEF4",
         text_muted="#A9BACB",
-        text_disabled="#6E8296",
+        text_disabled="#75899D",
         accent="#6FB3E0",
         accent_text="#0B1620",
         secondary="#7BC8A4",
@@ -167,8 +167,8 @@ THEMES: dict[str, ThemeTokens] = {
         panel_alt="#EFE3C8",
         text="#2B2118",
         text_muted="#63513C",
-        text_disabled="#97836A",
-        accent="#C6402E",
+        text_disabled="#7C6A56",
+        accent="#B93826",
         accent_text="#FFF6E8",
         secondary="#146B63",
         success="#2E6B34",
@@ -193,7 +193,7 @@ THEMES: dict[str, ThemeTokens] = {
         panel_alt="#2F3540",
         text="#E4E7EC",
         text_muted="#A6B0BD",
-        text_disabled="#6F7A88",
+        text_disabled="#86919F",
         accent="#F0B429",
         accent_text="#241C04",
         secondary="#55C87A",
@@ -219,7 +219,7 @@ THEMES: dict[str, ThemeTokens] = {
         panel_alt="#0F3A56",
         text="#DCEBF5",
         text_muted="#9DBECF",
-        text_disabled="#6B8DA1",
+        text_disabled="#7A9CB0",
         accent="#43C6E0",
         accent_text="#062430",
         secondary="#F2846B",
@@ -236,33 +236,48 @@ THEMES: dict[str, ThemeTokens] = {
 }
 
 
-def _certify(tokens: ThemeTokens) -> None:
-    """Machine-check legibility: raise if any required text pair fails WCAG.
+# Every (foreground, background, minimum-ratio) text pair that
+# build_stylesheet() actually paints. Body-size pairs pass AA (4.5:1);
+# large/disabled pairs pass the large-text bar (3.0:1). This list is the
+# single inventory _certify checks, and tests/test_gui_theme_certification
+# pins it against the builder's real emissions — a new unchecked pair fails
+# the suite instead of silently shipping an illegible theme.
+USED_PAIRS: list[tuple[str, str, float]] = [
+    ("text", "panel", 4.5),
+    ("text", "bg", 4.5),
+    ("text", "panel_alt", 4.5),  # inputs, tooltips, progress bars, buttons
+    ("text_muted", "panel", 4.5),
+    ("text_muted", "panel_alt", 4.5),  # table headers, wizard notes
+    ("text_muted", "bg", 4.5),  # status bar, read-only fields
+    ("text_disabled", "panel", 3.0),
+    ("text_disabled", "panel_alt", 3.0),
+    ("text_disabled", "bg", 3.0),
+    ("text_disabled", "border", 3.0),  # disabled accent buttons
+    ("accent_text", "accent", 3.0),
+    ("selection_text", "selection_bg", 3.0),
+    ("success", "panel", 4.5),
+    ("warning", "panel", 4.5),
+    ("warning", "bg", 4.5),
+    ("danger", "panel", 4.5),
+    ("secondary", "panel", 4.5),
+    ("secondary", "bg", 4.5),  # QGroupBox::title sits on a bg-colored patch
+    ("accent", "panel", 4.5),
+    ("accent", "panel_alt", 4.5),  # button hover text
+]
 
-    Body-size pairs must pass AA (4.5:1). The disabled pair and the
-    on-accent pair (used for big/bold button text) pass the large-text bar
-    (3.0:1). Failure is an import-time error: an illegible theme must never
-    ship.
+
+def _certify(tokens: ThemeTokens) -> None:
+    """Machine-check legibility: raise if any emitted text pair fails WCAG.
+
+    Checks every pair in USED_PAIRS — the full set of text/surface
+    combinations build_stylesheet() paints. Failure is an import-time error:
+    an illegible theme must never ship.
     """
-    aa = 4.5
-    large = 3.0
-    pairs = {
-        ("text", "panel", aa): contrast_ratio(tokens.text, tokens.panel),
-        ("text", "bg", aa): contrast_ratio(tokens.text, tokens.bg),
-        ("text_muted", "panel", aa): contrast_ratio(tokens.text_muted, tokens.panel),
-        ("text_disabled", "panel", large): contrast_ratio(tokens.text_disabled, tokens.panel),
-        ("accent_text", "accent", large): contrast_ratio(tokens.accent_text, tokens.accent),
-        ("selection_text", "selection_bg", large): contrast_ratio(tokens.selection_text, tokens.selection_bg),
-        ("success", "panel", aa): contrast_ratio(tokens.success, tokens.panel),
-        ("warning", "panel", aa): contrast_ratio(tokens.warning, tokens.panel),
-        ("danger", "panel", aa): contrast_ratio(tokens.danger, tokens.panel),
-        ("secondary", "panel", aa): contrast_ratio(tokens.secondary, tokens.panel),
-        ("accent", "panel", aa): contrast_ratio(tokens.accent, tokens.panel),
-    }
     failures = [
-        f"{pair[0]} on {pair[1]} = {ratio:.2f}:1 (minimum {pair[2]:.1f}:1)"
-        for pair, ratio in pairs.items()
-        if ratio < pair[2]
+        f"{fg} on {bg} = {contrast_ratio(getattr(tokens, fg), getattr(tokens, bg)):.2f}:1 "
+        f"(minimum {bar:.1f}:1)"
+        for fg, bg, bar in USED_PAIRS
+        if contrast_ratio(getattr(tokens, fg), getattr(tokens, bg)) < bar
     ]
     if failures:
         raise ValueError(f"Theme '{tokens.key}' fails contrast certification: " + "; ".join(failures))

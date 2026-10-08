@@ -45,9 +45,12 @@ def _dialog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_stages_cover_setup_before_speaking_guidance():
+    # The approved help stage (Ctrl+hover tooltip gate) is prepended;
+    # setup-before-speaking coverage is unchanged behind it.
     assert [stage.key for stage in STAGES] == [
-        "microphone", "script", "folder", "naming", "technique", "finish"
+        "help", "microphone", "script", "folder", "naming", "technique", "finish"
     ]
+    assert "Ctrl" in STAGES[0].explanation
     assert STAGES.index(next(stage for stage in STAGES if stage.key == "technique")) > STAGES.index(next(stage for stage in STAGES if stage.key == "naming"))
     assert "15-25 cm" in next(stage.explanation for stage in STAGES if stage.key == "technique")
     assert "plosives" in next(stage.explanation for stage in STAGES if stage.key == "technique")
@@ -83,11 +86,14 @@ def test_wizard_continue_applies_live_preferences_and_reaches_speaking_step(tmp_
         wizard.name_edit.setText("Cody_warm.wav")
         wizard.remember_input.setChecked(True)
         wizard.remember_output.setChecked(True)
+        # Step past the help stage (prepended; it applies no preferences).
+        assert wizard._stages[wizard._stage_index].key == "help"
+        wizard._continue()
         wizard._continue()
         assert applied
         assert dialog.outdir_combo.currentText() == str(voice / "takes")
         assert dialog.name_edit.text() == "Cody_warm.wav"
-        while wizard._stage_index < 4:
+        while wizard._stages[wizard._stage_index].key != "technique":
             wizard._continue()
         assert wizard._stages[wizard._stage_index].key == "technique"
         assert "microphone" in wizard.explanation.toPlainText().lower()
@@ -102,10 +108,62 @@ def test_guide_mode_replays_the_recording_instructions_without_setup(tmp_path, m
     wizard = RecordingStudioSetupWizard(dialog, mode="guide")
     try:
         assert wizard.mode == "guide"
-        assert [stage.key for stage in wizard._stages] == ["technique", "finish"]
+        # Guide keeps its original scope (technique + finish) with the help
+        # stage prepended.
+        assert [stage.key for stage in wizard._stages] == ["help", "technique", "finish"]
         assert wizard.setup_box.isVisible() is False
+        # Step past the help stage to the recording instructions proper.
+        wizard._continue()
         assert "microphone" in wizard.explanation.toPlainText().lower()
     finally:
+        wizard.close()
+        dialog.close()
+
+
+def test_highlight_tooltip_stays_on_screen_for_bottom_edge_target(
+    tmp_path, monkeypatch, qt_app
+) -> None:
+    """The highlight popup anchors 6 px below its target; near the screen
+    bottom it must not render offscreen or clipped."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtWidgets import QToolTip
+    from the_oracle.recording_wizard import RecordingStudioSetupWizard
+
+    dialog, _voice, _script = _dialog(tmp_path, monkeypatch)
+    wizard = RecordingStudioSetupWizard(dialog)
+    try:
+        screen = qt_app.primaryScreen().availableGeometry()
+        # play_button carries a tooltip (the anchor path only shows one when
+        # the target has text).
+        target = dialog.play_button
+        # Park the studio so the target's bottom sits 30 px above the screen
+        # edge: a tooltip shown below the anchor would hang off the bottom.
+        dialog.move(screen.left() + 4, screen.top() + 4)
+        qt_app.processEvents()
+        g = target.mapToGlobal(QPoint(0, 0))
+        desired_top = screen.bottom() - 30 - target.height()
+        dialog.move(dialog.x(), dialog.y() + (desired_top - g.y()))
+        qt_app.processEvents()
+        g = target.mapToGlobal(QPoint(0, 0))
+        assert g.y() + target.height() >= screen.bottom() - 35
+
+        wizard._set_highlight("play_button")
+        qt_app.processEvents()
+        tips = [
+            w
+            for w in qt_app.topLevelWidgets()
+            if (w.windowFlags() & Qt.WindowType.WindowType_Mask)
+            == Qt.WindowType.ToolTip
+            and w.isVisible()
+        ]
+        assert tips, "highlight tooltip did not show"
+        for tip in tips:
+            assert screen.contains(tip.geometry()), (
+                f"tooltip clipped offscreen: {tip.geometry().getRect()} "
+                f"vs screen {screen.getRect()}"
+            )
+    finally:
+        QToolTip.hideText()
         wizard.close()
         dialog.close()
 

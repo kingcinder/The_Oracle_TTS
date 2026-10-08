@@ -22,6 +22,7 @@ import subprocess
 from pathlib import Path
 
 TOOL_PATH = Path(__file__).resolve().parents[1] / "scripts" / "commit_slices.py"
+REPO_ROOT = TOOL_PATH.parent.parent
 
 
 def _load_tool():
@@ -197,6 +198,86 @@ def test_dry_run_of_a_stale_slice_file_also_refuses(tmp_path: Path) -> None:
     except ValueError as exc:
         raised = str(exc)
     assert raised is not None and "already clean" in raised
+
+
+def test_validate_refuses_an_all_clean_rerun_of_the_landed_attribution_fix(
+    tmp_path: Path,
+) -> None:
+    """Regression pin against the REAL landed fix, not a synthetic repo: a
+    slice file re-describing the cross-record attribution layer (landed as
+    fbeb0cb — helpers.attribute_to_every_record_line plus the record net's
+    cross-file pin) must be refused as all-clean, because its files are
+    committed. The synthetic pins above prove the guard's mechanics; this one
+    proves it fires for a real slice file someone would actually re-run — the
+    exact mistake this thread nearly made twice (re-landing shipped work).
+
+    Runs against a depth-1 clone of THIS repo's HEAD, never the live
+    worktree: HEAD always contains the fix, so the pin is immune to parallel
+    sessions' uncommitted churn, and it fails loudly if the fix is ever
+    reverted or its files renamed (the premise assertion names that case).
+    The contrast case gives the pin teeth: reopening the work (dirtying one
+    of the fix's paths) must flip the verdict — the refusal is the all-clean
+    property, not something incidental about a fresh clone.
+    """
+    tool = _load_tool()
+    fix_paths = ("tests/test_record_integrity.py", "tests/helpers.py")
+    landed = subprocess.run(
+        ["git", "clone", "--quiet", "--depth", "1", f"file://{REPO_ROOT}", str(tmp_path / "clone")],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert landed.returncode == 0
+    clone = tmp_path / "clone"
+
+    # Premise, asserted before the pin can mislead: HEAD really carries both
+    # of the fix's files. A revert or rename must fail HERE, with this
+    # message, not as a confusing different refusal below.
+    for path in fix_paths:
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", path],
+            cwd=str(clone),
+            capture_output=True,
+            text=True,
+        )
+        assert tracked.returncode == 0, (
+            f"{path} is no longer tracked at HEAD — the fbeb0cb fix this pin "
+            "guards was reverted or renamed; rewrite or retire this pin, "
+            "never silently"
+        )
+
+    slices = tool.parse_slice_file(
+        "# --- Already landed: cross-record attribution layer (fbeb0cb) ---\n"
+        "tests/test_record_integrity.py\n"
+        "tests/helpers.py\n"
+    )
+    raised = None
+    try:
+        tool.validate(slices, clone)
+    except ValueError as exc:
+        raised = str(exc)
+    else:
+        raise AssertionError(
+            "an all-clean re-run of the landed attribution fix must be refused"
+        )
+    assert raised is not None
+    assert "already clean" in raised and "commit nothing" in raised
+    # The refusal names the fix (the slice title) and BOTH of its paths, so
+    # the operator sees exactly which landed work the stale file re-describes.
+    assert "fbeb0cb" in raised
+    for path in fix_paths:
+        assert path in raised
+
+    # Contrast (the pin's teeth): reopen the work — dirty one of the fix's
+    # paths in the clone — and the same guard must proceed. A different title
+    # because validate refuses duplicate titles before path checks.
+    (clone / "tests" / "helpers.py").write_text("# reopened\n", encoding="utf-8")
+    reopened = tool.parse_slice_file(
+        "# --- Fix reopened mid-flight ---\n"
+        "tests/test_record_integrity.py\n"
+        "tests/helpers.py\n"
+    )
+    tool.validate(reopened, clone)  # must not raise
 
 
 def test_journal_entry_specs_parse_and_range_check() -> None:
