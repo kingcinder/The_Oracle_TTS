@@ -60,9 +60,20 @@ is next touched.
   commit_slices with slice-time gates: 1541 passed / 0 failed at the
   2026-10-05 records reconciliation (`cea2584`), then +4 faulthandler
   launch-arming tests (`4d59854`), +9 gui_cast owner-net tests
-  (`0533e97`), +1 journal-checker attribution pin (`f128e10`) —
-  **1555 passed / 0 failed at `d3d5355` (2026-10-08, re-verified on the
-  clean tree), the current suite of record.**
+  (`0533e97`), +1 journal-checker attribution pin (`f128e10`),
+  +3 render-subprocess arming tests (`725ddf0`), +9 doctor
+  stale-resolved-records tests (`ec5a7ba`), +2 records RESOLVED-entry
+  net tests (`212a613`) — and, landed on the parallel session's side,
+  the GUI-launch arming, crash_hunt acceptance gate, and entry-point
+  arming stream (`b1fb2d5`, `311e570`, `ec136c8`) with its 5 new pins
+  plus the in-flight GUI-legibility pass's test additions —
+  **1592 passed / 0 failed (2026-10-08, full suite on the settled tree,
+  the parallel session's journaled verification; the legibility pass
+  and the extraction-campaign's own uncommitted recording-owner net
+  were in the tree), the current suite of record.**
+  (The 1554 figure still visible in JUNO's 2026-10-07 entry was the
+  standing count at `0533e97` — correct as written there, and a
+  historical note only.)
 
 - **Subtitle-target naming and speaker-ref hint wording each have one owner (2026-09-18)**:
   `src/the_oracle/subtitle_targets.py` owns where a subtitle's companion files go (the
