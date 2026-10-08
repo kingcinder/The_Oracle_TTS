@@ -226,6 +226,15 @@ def maybe_run_startup_flow(
     itself never blocks.
     """
     root = consent_root
+    # Arm on EVERY launch when consent is already on, not only on consent
+    # transitions (STATE.md Noticed, 2026-09-28: the 08:06:51 GUI segfault
+    # ran unarmed because a plain relaunch reached the ``asked`` branch
+    # below without ever arming). Idempotent and fail-closed: consent-off
+    # installs get no capture machinery, a consent transition arm later in
+    # this function re-hits the armed early-return.
+    from the_oracle.crash import handlers
+
+    handlers.arm_native_capture(root)
     if bundle.list_records(root):
         return run_next_session_review(
             parent, root, dialog_cls=dialog_cls, message_box_cls=message_box_cls, open_path_fn=open_path_fn

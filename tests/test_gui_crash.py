@@ -319,6 +319,39 @@ def test_startup_flow_enable_arms_faulthandler(root: Path, parent) -> None:
     crash_handlers.disable_faulthandler_catch()
 
 
+def test_plain_relaunch_with_consent_on_arms_faulthandler(root: Path, parent) -> None:
+    """The already-asked-and-consented relaunch (no reports, no dialogs) must
+    still come up armed — the 08:06:51 GUI segfault left native-crash.txt at
+    0 bytes because this branch returned None without arming (STATE.md
+    Noticed, 2026-09-28). M: dropping the arm at the top of
+    maybe_run_startup_flow fails exactly this test."""
+    consent.write_consent(root, True)  # consented AND asked; no records on disk
+
+    def unexpected_dialog(parent_widget):  # a plain relaunch shows nothing
+        raise AssertionError("no dialog should be shown on a plain relaunch")
+
+    result = gui_crash.maybe_run_startup_flow(
+        parent, consent_root=root, dialog_cls=unexpected_dialog, message_box_cls=_FakeMessageBox
+    )
+    assert result is None
+    assert crash_handlers._STATE.get("native_dump_handle") is not None
+    crash_handlers.disable_faulthandler_catch()
+
+
+def test_launch_gui_arms_before_mainwindow_is_built() -> None:
+    """Source pin (same convention as tests/test_render_subprocess_arming.py):
+    launch_gui is a public entry reachable without cli.main, so it must arm
+    the net itself — before MainWindow() is constructed, not after (the
+    window-build phase is native-crash territory; see the 08:06:51 segfault)."""
+    from the_oracle import app_gui
+
+    source = Path(app_gui.__file__).read_text(encoding="utf-8")
+    assert "crash_handlers.arm_native_capture()" in source
+    assert source.index("crash_handlers.arm_native_capture()") < source.index(
+        "window = MainWindow()"
+    )
+
+
 # --- the Qt message handler --------------------------------------------------------
 
 
