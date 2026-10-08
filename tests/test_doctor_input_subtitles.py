@@ -328,6 +328,50 @@ def _minimal_report_for_next_steps(input_subtitles: dict) -> dict:
     }
 
 
+def test_next_steps_name_every_blocked_unreadable_and_foreign_occurrence() -> None:
+    """The 71d8840 completeness precedent, applied to the doctor's next-steps:
+    MULTIPLE blocked files, an unreadable file, and MULTIPLE foreign preview
+    files must each get their own named step — the loops in _build_next_steps
+    are per-entry by contract. A first-match-only regression (report one
+    subtitle file and one preview file, drop the rest) would leave the user
+    with a silently truncated remediation list while the doctor still said
+    WARN. Pinned synthetically with exact per-token membership; the quiet-case
+    test above vacuity-guards the scan (it proves the builder reads these
+    exact report keys)."""
+    doctor = _load_doctor()
+    report = _minimal_report_for_next_steps(
+        {
+            "blocked": [
+                {"path": "Input/first.vtt", "error": "blocked error one"},
+                {"path": "Input/second.vtt", "error": "blocked error two"},
+            ],
+            "unreadable": [{"path": "Input/gone.srt", "error": "permission denied"}],
+        }
+    )
+    report["preview_writers"] = {
+        "foreign": [{"path": "previews/x1.flac"}, {"path": "previews/x2.flac"}],
+    }
+
+    steps = doctor._build_next_steps(report, ci_mode=True)
+
+    for token, error_hint in (
+        ("Input/first.vtt", "blocked error one"),
+        ("Input/second.vtt", "blocked error two"),
+        ("Input/gone.srt", "permission denied"),
+        ("previews/x1.flac", None),
+        ("previews/x2.flac", None),
+    ):
+        named = [step for step in steps if token in step]
+        assert named, f"{token} must be named in next steps — every occurrence, not the first"
+        if error_hint:
+            assert error_hint in named[0], f"{token}'s own error must travel with it"
+    # Per-occurrence steps, not one combined line that could dedupe:
+    assert sum("Input/first.vtt" in step for step in steps) == 1
+    assert sum("Input/second.vtt" in step for step in steps) == 1
+    assert sum("previews/x1.flac" in step for step in steps) == 1
+    assert sum("previews/x2.flac" in step for step in steps) == 1
+
+
 def test_next_steps_flags_blocked_subtitle_file() -> None:
     doctor = _load_doctor()
     report = _minimal_report_for_next_steps(
