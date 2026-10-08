@@ -1125,6 +1125,46 @@ cited when the entry is next touched.
 
 ## Next
 
+- **2026-10-08: the tenth extraction slice is picked and armed — the
+  ingest-tools handler cluster — pre-flight gates green; the move itself is
+  held until the parallel GUI-legibility session's app_gui.py hunks land.**
+  Picked from the current 156-method MainWindow (4099 lines) by the
+  campaign's own criteria, measured live rather than assumed: the cluster is
+  `_run_ingest_transformer_check` (81 lines), `_restore_most_recent_format_backup`
+  (69), `_batch_fix_input_folder` (64), `_show_fix_preview_dialog` (40),
+  `_convert_subtitle_input` (39), `_show_batch_fix_preview_dialog`,
+  `_speaker_ref_hint_lines`, and the trusted-file/backup delegators
+  (`_input_file_is_trusted` / `_remember_trusted_input_file` /
+  `_remember_format_backup`) — ~350 lines total, at app_gui L1297–1335 and
+  L3145–3468. It won on patch-coupling: 2 test files reference it
+  (test_ingest_transformer_gui.py, test_subtitle_conversion_has_one_owner.py)
+  against 4+ for every other candidate (project lifecycle, Vulkan window
+  handlers, settings appliers). Its policy layer already has owners —
+  gui_ingest (slice 1) owns the popups/diffs and already receives
+  `dialog_cls=`/`message_box_cls=` at call time; gui_settings (slice 2) owns
+  trusted-file approvals and backup records — so the window methods are pure
+  orchestration, the lowest-risk remaining cluster. The harm-class inventory
+  for the move design (measured, not guessed): 17 bare `QMessageBox.*`
+  resolutions, 1 bare `QFileDialog.getExistingDirectory`, plus the two
+  sanctioned call-time seam sites; test_ingest_transformer_gui.py patches
+  `app_gui.QMessageBox`/`app_gui.QDialog` and patches `QFileDialog` 7 times,
+  so moved bodies resolving those names as bare globals would be the exact
+  Vulkan-slice silent-no-op harm — the move must follow the
+  VulkanPreflightThread `preflight_report=` seam precedent (window wiring
+  passes the bare names from app_gui globals at call time) or keep thin
+  MainWindow wrappers over a Qt-free core, and the patch-surface manifest's
+  MOVED_OWNERS gains the new owner. Pre-flight gates ran green on the current
+  tree (62 passed / 0 failed, exit 0): test_app_gui_patch_surface.py,
+  test_payload_policy_ownership.py, test_gui_import_direction.py, plus the
+  cluster's own baseline (test_ingest_transformer_gui.py,
+  test_subtitle_conversion_has_one_owner.py). Conflict map kept honest: the
+  cluster's line regions do NOT overlap the legibility session's active
+  zones (build ~L344–475, ctrl-help ~L716–1041, persistence ~L2500–2560),
+  but both sessions' hunks would share app_gui.py, and that session's plan
+  explicitly holds staging on mixed-hunk files — so the slice starts here
+  and the move executes after their app_gui.py hunks land or on explicit
+  coordination.
+
 - **2026-09-29: the omega gate is open — tree clean at `fc7d78c`, full suite
   1529 passed / 0 failed.** The parallel actor's U44 unit landed as-authored
   (`486a59e`, owner-instructed) and the two red nets were settled per the
