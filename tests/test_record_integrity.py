@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: emptied of citations, or the discovery rule broken — the net fails
 #: until the shrink is acknowledged here. Removal is a floor edit, not an
 #: absorption.
+sys.path.insert(0, str(REPO_ROOT))
+from tests import helpers  # noqa: E402
+
 RECORD_SET_FLOOR = frozenset(
     {
         "STATE.md",
@@ -143,18 +147,15 @@ def _resolves(token: str) -> bool:
 def _broken_citation_lines(lines: list[str], tokens: set[str]) -> list[str]:
     """Attribute each broken token to EVERY record line carrying it.
 
-    A first-match-only report would name one line and hide the rest — the
-    record must be fixed everywhere a stale hash is cited, so the return
-    is one ``<line>: <token>`` entry per line, in token-major order.
+    The every-line attribution itself is the shared idiom in
+    ``tests.helpers.attribute_to_every_line`` (extracted 2026-10-08 for
+    reuse by future nets — the journal checker and the doctor's next-steps
+    pins are its other exemplars); this wrapper supplies only the record
+    net's own brokenness test: git cannot resolve the token.
     """
-    attributions: list[str] = []
-    for token in sorted(tokens):
-        if _resolves(token):
-            continue
-        attributions.extend(
-            f"{i + 1}: {token}" for i, row in enumerate(lines) if token in row
-        )
-    return attributions
+    return helpers.attribute_to_every_line(
+        lines, tokens, is_offender=lambda token: not _resolves(token)
+    )
 
 
 def _history_unavailable_reason() -> str | None:
