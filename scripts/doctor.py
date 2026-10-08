@@ -671,6 +671,106 @@ def _release_metadata_status(repo_root: Path) -> dict[str, Any]:
     return report
 
 
+_RESOLVED_MARKER_RE = re.compile(r"resolved", re.IGNORECASE)
+_COMMIT_CITE_RE = re.compile(r"\(commits? (?P<body>[^)]*)\)|`(?P<ticked>[0-9a-fA-F]{7,40})`")
+_HEX_TOKEN_RE = re.compile(r"[0-9a-f]{7,40}")
+
+
+def _resolved_records_status(repo_root: Path) -> dict[str, Any]:
+    """Surface stale-resolved records: entries marked RESOLVED whose cited
+    commit is not an ancestor of HEAD.
+
+    A RESOLVED marker claims that specific landed work closed the entry; when
+    the cited commit still resolves in git but sits outside HEAD's history
+    (rewritten history, a rebased-away branch), the record reads green while
+    the evidence HEAD shows is gone — exactly the drift the records-hygiene
+    doctrine's "its holding commit is cited" rule exists to catch.
+
+    Division of labor with the record-integrity net (suite-side): the net
+    fails on UNRESOLVABLE citations, so this runtime check reports those
+    informationally only (a shallow clone cannot verify either) and treats
+    the resolvable-but-not-ancestor case as its finding. Ancestry probes are
+    read-only (git rev-parse / merge-base); verdicts are cached per token so
+    a token cited in several records is verified once and attributed
+    everywhere (the every-occurrence idiom).
+
+    Scan scope: root ``*.md``/``*.log`` records plus ``docs/**.md``, split on
+    blank lines into paragraphs; a paragraph containing "RESOLVED"
+    (case-insensitive) is a resolved entry, and its citations are the
+    ``(commit ...)`` bodies and backticked 7-40 hex tokens inside it.
+    Deliberately NOT part of ``overall_ready``: records hygiene is not
+    install health (same precedent as release_metadata/licensing) — it
+    surfaces via the human report and next steps.
+    """
+    if not (repo_root / ".git").exists():
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "no .git here — commit ancestry cannot be verified",
+            "scanned": 0,
+            "stale": [],
+            "unverifiable": [],
+        }
+
+    def _git(*args: str) -> int:
+        result = _run_command(["git", "-C", str(repo_root), *args], timeout=30)
+        return int(result.get("returncode", 1))
+
+    verdicts: dict[str, str] = {}
+
+    def _verdict(token: str) -> str:
+        if token not in verdicts:
+            if _git("rev-parse", "--verify", "--quiet", f"{token}^{{commit}}") == 0:
+                verdicts[token] = "stale" if _git("merge-base", "--is-ancestor", token, "HEAD") != 0 else "ancestor"
+            else:
+                verdicts[token] = "unverifiable"
+        return verdicts[token]
+
+    stale: list[dict[str, str]] = []
+    unverifiable: list[dict[str, str]] = []
+    scanned = 0
+    files = sorted(repo_root.glob("*.md")) + sorted(repo_root.glob("*.log"))
+    docs = repo_root / "docs"
+    if docs.is_dir():
+        files.extend(sorted(docs.rglob("*.md")))
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = path.relative_to(repo_root).as_posix()
+        offset = 0
+        for paragraph in text.split("\n\n"):
+            lineno = text.count("\n", 0, offset) + 1
+            offset += len(paragraph) + 2
+            if not _RESOLVED_MARKER_RE.search(paragraph):
+                continue
+            scanned += 1
+            tokens: set[str] = set()
+            for match in _COMMIT_CITE_RE.finditer(paragraph):
+                body = match.group("body") or match.group("ticked") or ""
+                tokens.update(t.lower() for t in _HEX_TOKEN_RE.findall(body))
+            for token in sorted(tokens):
+                verdict = _verdict(token)
+                entry = {"file": rel, "line": str(lineno), "token": token}
+                if verdict == "stale":
+                    stale.append(entry)
+                elif verdict == "unverifiable":
+                    unverifiable.append(entry)
+    return {
+        "ok": not stale,
+        "skipped": False,
+        "scanned": scanned,
+        "stale": stale,
+        "unverifiable": unverifiable,
+        "detail": (
+            f"{scanned} RESOLVED entry(ies) checked"
+            + (f"; {len(stale)} stale" if stale else "")
+            + (f"; {len(unverifiable)} unverifiable here" if unverifiable else "")
+        ),
+    }
+
+
 def _python_status() -> dict[str, Any]:
     version_tuple = sys.version_info[:3]
     ok = SUPPORTED_PYTHON_MIN <= version_tuple < SUPPORTED_PYTHON_MAX
@@ -1376,6 +1476,14 @@ def _build_next_steps(report: dict[str, Any], *, ci_mode: bool) -> list[str]:
     if release_meta.get("error") and not release_meta.get("problems"):
         steps.append(f"Release metadata: {release_meta['error']}")
 
+    resolved_state = report.get("resolved_records") or {"ok": True, "stale": []}
+    for entry in resolved_state.get("stale") or []:
+        steps.append(
+            f"Stale-resolved record: {entry['file']}:{entry['line']} cites {entry['token']}, "
+            "which is not an ancestor of HEAD (rewritten history or a discarded branch) — "
+            "re-verify the resolution and update the record."
+        )
+
     if report["voice_sources"]["primary_source"] != "seashells":
         steps.append("Add curated local reference clips to ./Seashells so the GUI stops defaulting to smoke/build fallback voices.")
 
@@ -1430,6 +1538,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "release_metadata": _release_metadata_status(repo_root),
         "licensing": _licensing_status(repo_root),
         "crash_reports": _crash_reports_status(repo_root),
+        "resolved_records": _resolved_records_status(repo_root),
     }
     required_checks = [
         report["python"]["ok"],
@@ -1641,6 +1750,23 @@ def _print_human_report(report: dict[str, Any]) -> None:
                 print(f"      {problem}")
         else:
             print(f"WARN Release metadata: {release_meta.get('error', 'probe failed')}")
+
+    resolved_state = report.get("resolved_records")
+    if resolved_state is not None and not resolved_state.get("skipped"):
+        if resolved_state["ok"]:
+            print(f"PASS Resolved-record ancestry: {resolved_state.get('detail', '')}")
+        else:
+            print(f"FAIL Resolved-record ancestry: {resolved_state.get('detail', '')}")
+        for entry in resolved_state.get("stale") or []:
+            print(
+                f"      {entry['file']}:{entry['line']}: cites {entry['token']} — "
+                "resolves in git but is NOT an ancestor of HEAD"
+            )
+        for entry in resolved_state.get("unverifiable") or []:
+            print(
+                f"      {entry['file']}:{entry['line']}: {entry['token']} cannot be "
+                "verified here (the suite-side record net owns strictness)"
+            )
 
     subtitles = report.get("input_subtitles")
     if subtitles is None:
