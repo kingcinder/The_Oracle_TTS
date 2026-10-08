@@ -56,6 +56,13 @@ is next touched.
   section. Slice-time suite 1518 passed / 1 failed (the 1 was the
   then-untracked U4.2 sweep net on the parallel session side); re-verified
   2026-10-05 against the settled tree, full suite 1529 passed / 0 failed.
+  Suite-of-record progression since, every increment landed via
+  commit_slices with slice-time gates: 1541 passed / 0 failed at the
+  2026-10-05 records reconciliation (`cea2584`), then +4 faulthandler
+  launch-arming tests (`4d59854`), +9 gui_cast owner-net tests
+  (`0533e97`), +1 journal-checker attribution pin (`f128e10`) —
+  **1555 passed / 0 failed at `d3d5355` (2026-10-08, re-verified on the
+  clean tree), the current suite of record.**
 
 - **Subtitle-target naming and speaker-ref hint wording each have one owner (2026-09-18)**:
   `src/the_oracle/subtitle_targets.py` owns where a subtitle's companion files go (the
