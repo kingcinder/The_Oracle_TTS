@@ -77,6 +77,83 @@ def _now_since_arg() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+# --- capture-readiness gate (faulthandler launch-arming regression) ---
+
+# One fresh child through the real console entry. cli.main resolves
+# handlers.arm_native_capture as a module attribute at call time, so the spy
+# below sees the launch path's own arming call — this probes the wiring, not
+# a re-implementation of it. privacy-status is the no-op dispatch that still
+# passes through main()'s pre-dispatch install+arm.
+_PROBE_CODE = """\
+import contextlib
+import io
+import json
+
+from the_oracle import crash
+from the_oracle.crash import handlers
+from the_oracle.offline import repo_root
+
+consent = crash.read_consent(repo_root())
+
+spy = {"armed_via_launch": None}
+_original_arm = handlers.arm_native_capture
+
+
+def _arming_spy(root_arg=None):
+    ok = _original_arm(root_arg)
+    spy["armed_via_launch"] = ok
+    return ok
+
+
+handlers.arm_native_capture = _arming_spy
+
+from the_oracle import cli
+
+sink = io.StringIO()
+rc = None
+try:
+    with contextlib.redirect_stdout(sink):
+        rc = cli.main(["privacy-status"])
+except SystemExit as exc:
+    rc = exc.code
+
+armed = handlers._STATE.get("native_dump_handle") is not None
+handlers.disable_faulthandler_catch()
+print(json.dumps({"consent": consent, "armed_via_launch": spy["armed_via_launch"], "armed": armed, "dispatch_rc": rc}))
+"""
+
+
+def _capture_readiness(root: Path) -> dict:
+    """Whether a launched child of this repo comes up with the faulthandler
+    net armed under the current consent state (STATE.md, 2026-09-28: the
+    08:06:51 GUI segfault ran with consent on and the net unarmed, so the
+    crash left no dump).
+
+    Fail-closed by contract: an unreadable probe (crash, non-zero exit,
+    unparseable output) reports ``probe_error`` — the judge treats that as a
+    gate FAILURE, not a skip. A readiness check that can silently not-run is
+    the regression it exists to catch."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _PROBE_CODE],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {"probe_error": f"probe child failed to run: {exc}"}
+    if proc.returncode != 0:
+        return {"probe_error": f"probe child exit {proc.returncode}: {proc.stderr[-500:]}"}
+    try:
+        lines = [line for line in proc.stdout.splitlines() if line.strip()]
+        payload = json.loads(lines[-1])
+        consent, armed = bool(payload["consent"]), bool(payload["armed"])
+    except (ValueError, KeyError, IndexError) as exc:
+        return {"probe_error": f"unreadable probe output ({exc}): stdout tail {proc.stdout[-300:]!r}"}
+    return {"consent": consent, "armed": armed}
+
+
 def _run_acceptance(outdir: Path) -> int:
     """The plan's hard gate: 5x pytorch, 3x vulkan (or explicit skip), 3x GUI,
     zero non-zero exits and zero new crash records."""
@@ -116,6 +193,7 @@ def _run_acceptance(outdir: Path) -> int:
 
     summary["new_crash_records"] = len(harvest_crash_records(root, records_before))
     summary["kernel_crashes"] = _kernel_crash_count(window_start)
+    summary["capture_readiness"] = _capture_readiness(root)
     verdict, reasons = _acceptance_summary(summary)
     summary["verdict_pass"] = verdict
     summary["reasons"] = reasons
@@ -192,7 +270,20 @@ def _acceptance_summary(summary: dict) -> tuple[bool, list[str]]:
             reasons.append("kernel_crashes: scan unavailable (journalctl missing/denied) — degraded, not counted")
         elif kernel:
             reasons.append(f"kernel_crashes: {kernel} native crash line(s) in the run window")
-    failures = [r for r in reasons if "vulkan_unavailable" not in r and "scan unavailable" not in r]
+    readiness = summary.get("capture_readiness")
+    if readiness is not None:
+        # Judged only when present: legacy summaries stay parseable, and the
+        # live gate always sets the key (probe failures set probe_error).
+        if "probe_error" in readiness:
+            reasons.append(f"capture_readiness: {readiness['probe_error']}")
+        elif readiness.get("consent") and not readiness.get("armed"):
+            reasons.append(
+                "capture_readiness: consent is on but the faulthandler net is "
+                "unarmed — a native crash would leave no dump (08:06:51 regression shape)"
+            )
+        elif not readiness.get("consent"):
+            reasons.append("capture_readiness: consent off — readiness not applicable (visible, not fatal)")
+    failures = [r for r in reasons if "vulkan_unavailable" not in r and "scan unavailable" not in r and "not applicable" not in r]
     return (not failures), reasons
 
 

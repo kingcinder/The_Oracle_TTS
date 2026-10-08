@@ -219,6 +219,92 @@ def test_backend_default_is_pytorch():
     assert "--inference-backend" not in cmd or "pytorch" in cmd
 
 
+# --- capture-readiness gate (faulthandler launch-arming regression) ---
+
+
+def _clean_summary(**extra) -> dict:
+    summary = {
+        "render_pytorch": {"runs": 5, "non_zero": 0},
+        "render_vulkan": {"runs": 3, "non_zero": 0},
+        "gui": {"runs": 3, "non_zero": 0},
+        "new_crash_records": 0,
+    }
+    summary.update(extra)
+    return summary
+
+
+def test_acceptance_fails_when_consent_on_but_net_unarmed():
+    """The 08:06:51 regression shape: consent on, launch path unarmed. The
+    gate must name it and fail — never pass silently again."""
+    verdict, reasons = crash_hunt._acceptance_summary(
+        _clean_summary(capture_readiness={"consent": True, "armed": False})
+    )
+    assert verdict is False
+    assert any("capture_readiness" in r and "unarmed" in r for r in reasons)
+
+
+def test_acceptance_passes_when_consent_on_and_net_armed():
+    verdict, reasons = crash_hunt._acceptance_summary(
+        _clean_summary(capture_readiness={"consent": True, "armed": True})
+    )
+    assert verdict is True
+    assert reasons == []
+
+
+def test_acceptance_consent_off_is_visible_but_passes():
+    """Consent-off installs are honestly unarmed by contract — visible, not fatal."""
+    verdict, reasons = crash_hunt._acceptance_summary(
+        _clean_summary(capture_readiness={"consent": False, "armed": False})
+    )
+    assert verdict is True
+    assert any("capture_readiness" in r for r in reasons)
+
+
+def test_acceptance_probe_error_fails_closed():
+    """A readiness check that cannot run must fail the gate, not skip: a
+    silently-skipped check is the regression it exists to catch."""
+    verdict, reasons = crash_hunt._acceptance_summary(
+        _clean_summary(capture_readiness={"probe_error": "probe child exit 1: boom"})
+    )
+    assert verdict is False
+    assert any("capture_readiness" in r for r in reasons)
+
+
+def test_capture_readiness_probe_child_reports_launch_arming():
+    """Live probe child through the real cli.main: the launch path must arm
+    exactly when consent is on (fail-closed contract), so the regression
+    shape (consent on, armed False) is detected end-to-end, not just in
+    synthetic summaries."""
+    from the_oracle import crash
+    from the_oracle.offline import repo_root
+
+    readiness = crash_hunt._capture_readiness(repo_root())
+    assert "probe_error" not in readiness, readiness
+    assert readiness["armed"] == readiness["consent"], readiness
+
+
+def test_acceptance_mode_consults_capture_readiness(tmp_path: Path, monkeypatch):
+    """--mode acceptance must actually run the readiness probe and let its
+    verdict through — a wiring drop would green-light the gate while the
+    check silently never executes."""
+    class _FakeProc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(crash_hunt, "_vulkan_available", lambda: False)
+    monkeypatch.setattr(crash_hunt, "_run_gui_once", lambda timing_dir, timeout_s=120.0: "ok")
+    monkeypatch.setattr(
+        crash_hunt, "_capture_readiness", lambda root: {"consent": True, "armed": False}
+    )
+    monkeypatch.setattr(crash_hunt.subprocess, "run", lambda *a, **k: _FakeProc())
+    rc = crash_hunt.main(["--mode", "acceptance", "--outdir", str(tmp_path)])
+    assert rc == 1, "the unarmed-net regression must fail the gate"
+    payload = json.loads((tmp_path / "acceptance.json").read_text())
+    assert payload["capture_readiness"] == {"consent": True, "armed": False}
+    assert any("unarmed" in reason for reason in payload["reasons"])
+
+
 def test_gui_mode_flag_drives_gui_loop(tmp_path: Path, monkeypatch):
     """--mode gui must run the GUI cycle, not the render loop."""
     calls = []
