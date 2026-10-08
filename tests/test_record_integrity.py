@@ -86,6 +86,40 @@ def _cited_hashes(text: str) -> list[str]:
     return hashes
 
 
+#: A RESOLVED entry is a status marker, not prose: the word RESOLVED
+#: anchored to a date ("RESOLVED 2026-09-28"). Lowercase "resolved", the
+#: doctrine's own "RESOLVED block" phrasing, and "decisions resolved" do
+#: not open an entry (probed 2026-10-08: the case-insensitive form
+#: false-positives on ~15 prose paragraphs across the live records).
+_RESOLVED_ENTRY_RE = re.compile(r"\bRESOLVED\s+\d{4}-\d{2}-\d{2}\b")
+
+#: Where an entry begins in a prose record: a heading, a top-level bullet,
+#: or an ordered item. An entry spans from its start to the next start —
+#: STATE entries routinely run several paragraphs with the marker in one
+#: and the citation in another, so a paragraph-local window false-positives
+#: exactly there (all four live STATE hits were spans). Log records are
+#: line-oriented: one line is one entry, windowed with the following line.
+_ENTRY_START_RE = re.compile(r"^(?:#{1,6} |[-*] |\d+\. )", re.MULTILINE)
+
+
+def _resolved_entries(text: str, log_style: bool) -> list[tuple[int, str]]:
+    """(first-line-number, entry-text) for every RESOLVED entry in a record."""
+    if log_style:
+        lines = text.splitlines()
+        return [
+            (i + 1, line + "\n" + (lines[i + 1] if i + 1 < len(lines) else ""))
+            for i, line in enumerate(lines)
+            if _RESOLVED_ENTRY_RE.search(line)
+        ]
+    starts = [m.start() for m in _ENTRY_START_RE.finditer(text)]
+    bounds = list(zip(starts, starts[1:] + [len(text)]))
+    return [
+        (text.count("\n", 0, a) + 1, text[a:b])
+        for a, b in bounds
+        if _RESOLVED_ENTRY_RE.search(text[a:b])
+    ]
+
+
 def _tracked_record_files(repo: Path = REPO_ROOT) -> tuple[str, ...]:
     """Discover the record set: core records + every tracked cited record.
 
@@ -245,6 +279,39 @@ def test_every_commit_hash_cited_in_the_records_resolves() -> None:
     )
 
 
+def test_every_resolved_entry_cites_a_resolvable_commit() -> None:
+    """A ``RESOLVED <date>`` entry claims specific landed work closed it; the
+    records-hygiene doctrine requires that claim to carry its holding commit.
+    An uncited RESOLVED entry reads green while pointing nowhere — the exact
+    shape that made the 2026-10-05 records audit necessary. Each entry is
+    scanned as a unit (prose records: bullet/heading span; log records: one
+    numbered line plus its continuation) and must cite at least one hash
+    that still resolves in git; unresolvable citations are the other net's
+    finding above, not this one's. The runtime doctor's stale-ancestry check
+    (scripts/doctor.py) is the complementary sweep: it verifies the citations
+    this test requires against HEAD's history."""
+    reason = _history_unavailable_reason()
+    if reason:
+        pytest.skip("record-integrity net: " + reason)
+
+    record_files = _tracked_record_files()
+    uncited: list[str] = []
+    for name in record_files:
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        for lineno, entry in _resolved_entries(text, log_style=name.endswith(".log")):
+            tokens = {t.lower() for t in _cited_hashes(entry)}
+            if not any(_resolves(t) for t in tokens):
+                uncited.append(f"{name}:{lineno}")
+
+    assert uncited == [], (
+        "these RESOLVED entries cite no resolvable commit — a resolved claim "
+        "must name its holding commit per the records-hygiene doctrine. "
+        "Amend each entry with its resolving hash (or, if the entry is not a "
+        "status marker, reword it out of the RESOLVED <date> shape):\n  "
+        + "\n  ".join(uncited)
+    )
+
+
 def test_a_broken_citation_is_attributed_to_every_line_carrying_it() -> None:
     """Synthetic pin: one stale hash cited on two lines is reported twice.
 
@@ -339,6 +406,67 @@ def test_the_resolution_probe_can_pass_and_can_fail() -> None:
     assert _resolves(head), "the probe cannot even resolve HEAD"
     assert not _resolves("0000000deadbeef"), (
         "the probe claims a nonexistent hash resolves; it cannot fail"
+    )
+
+
+# --- resolved-entry citation pin (synthetic, git-independent) ----------------------
+
+
+def test_every_resolved_entry_form_by_form() -> None:
+    """Form-by-form proofs for the entry splitter and its guardrails.
+
+    The live records only exercise a few entry shapes, so a new shape (or a
+    prose rewording into the marker form) could be missed or misread with
+    every pass green. Prose uses of "resolved" and the doctrine's own
+    "RESOLVED block" phrasing must NOT open an entry; a backticked citation
+    inside the entry counts; the marker itself is not a citation."""
+    prose_text = (
+        "# The Oracle state\n\n"
+        "an entry gets its RESOLVED block (with the repro facts) — doctrine prose,\n"
+        "no date anchor, never opens an entry\n\n"
+        "- **RESOLVED 2026-09-28** — real entry citing `(commit 5d26f1a)`\n\n"
+        "- **entry with citation two paragraphs later**\n\n"
+        "  RESOLVED 2026-09-27 (commit 4bcaf6d) closed it\n\n"
+        "- **decisions resolved to a plan** — lowercase never opens an entry\n"
+    )
+    entries = _resolved_entries(prose_text, log_style=False)
+    assert [lineno for lineno, _ in entries] == [6, 8], entries
+    assert len(entries) == 2
+
+    log_text = (
+        "2026-10-07 | files (commit 44c7a54) | amended an entry | green.\n"
+        "2026-09-28 | other files | RESOLVED 2026-09-28 verdict recorded | green.\n"
+        "2026-09-27 | next files (commit 0badc0de) | RESOLVED 2026-09-27, cited on the next line | green.\n"
+        "(commit 5d26f1a) the continuation line\n"
+        "2026-09-20 | no marker | just prose about RESOLVED blocks | green.\n"
+    )
+    log_entries = _resolved_entries(log_text, log_style=True)
+    assert [lineno for lineno, _ in log_entries] == [2, 3], log_entries
+    assert "0badc0de" in log_entries[1][1]  # window spans the continuation line
+
+
+def test_the_resolved_entry_rule_fails_on_an_uncited_marker() -> None:
+    """The rule can fail: a date-anchored RESOLVED entry whose window carries
+    no hash-shaped token at all is an offender; the same entry with a
+    resolving citation in its window is not, and prose uses of "resolved"
+    (lowercase, or the doctrine's RESOLVED-block phrasing) are never
+    offenders. Runs through the same composition the live test uses."""
+    def offending(text: str, log_style: bool) -> bool:
+        for _lineno, entry in _resolved_entries(text, log_style=log_style):
+            tokens = {t.lower() for t in _cited_hashes(entry)}
+            if not tokens:
+                return True
+        return False
+
+    assert offending("- **RESOLVED 2026-09-28**: fixed it.\n", log_style=False)
+    assert not offending(
+        "- **RESOLVED 2026-09-28**: fixed it (commit 0badc0de).\n", log_style=False
+    )
+    assert not offending(
+        "an entry gets its RESOLVED block (with the repro facts)\n", log_style=False
+    )
+    assert not offending(
+        "2026-09-28 | files | decisions resolved to wait | green.\n", log_style=True
     )
 
 
