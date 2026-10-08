@@ -93,9 +93,12 @@ field) — the channel where every historical crash lived but exit codes and
 Not reproduced in 4 Vulkan renders (1 evidence + 3 acceptance). Hardware/
 driver-level hang on the RX 5700 XT; GUI contains it as a clean Render Failed
 dialog (session survives). Watch item: next occurrence lands in
-`crash_reports/` with capture armed — **caveat found 2026-09-28: the
-faulthandler net currently arms only on consent *transitions*, so a normal
-GUI relaunch with consent already on runs unarmed (section D).**
+`crash_reports/` with capture armed — **caveat found 2026-09-28, RESOLVED
+2026-10-08 (holding commits 4d59854, 725ddf0): arming no longer depends on
+consent transitions** — the net arms
+on every GUI launch when consent is already on (`arm_native_capture` at the
+top of `gui_crash.maybe_run_startup_flow` and in `app_gui.launch_gui` before
+`MainWindow()`; see section D).
 
 ### D. Post-campaign events (2026-09-28 morning) — two new findings
 
@@ -110,9 +113,38 @@ GUI relaunch with consent already on runs unarmed (section D).**
   `enable_faulthandler_catch` is invoked only on consent transitions
   (first-run accept in `gui_crash.py`, Help-menu re-enable in `app_gui.py`,
   `privacy-opt-in` in `cli.py`) — never on a plain GUI launch with consent
-  already on. The section-C watch item's "capture armed" promise is therefore
-  currently false for GUI relaunches; logged in STATE's sweep list, not fixed
-  here (the owning files carry the other session's WIP).
+  already on. The section-C watch item's "capture armed" promise was
+  therefore false for GUI relaunches. **Resolved 2026-10-08:** arming now
+  happens on every GUI launch — `handlers.arm_native_capture` (idempotent,
+  fail-closed) is called at the top of `gui_crash.maybe_run_startup_flow`
+  (the already-consented relaunch branch that previously returned unarmed)
+  and in `app_gui.launch_gui` before `MainWindow()` is built, completing the
+  launch-arming series (`4d59854` CLI dispatch, `725ddf0` render subprocess).
+  Pinned by `tests/test_gui_crash.py::test_plain_relaunch_with_consent_on_arms_faulthandler`
+  (relaunch → armed net, no dialog) and a source pin ordering the
+  `launch_gui` arm before window construction; full suite 1562 passed / 0
+  failed with the fix in the tree. The segfault's root cause itself remains
+  unknown (the process ran a dirty worktree; section-C watch applies).
+  **Investigation of record (2026-10-08, post-WIP-commit):** the crashed
+  process's dirty `app_gui.py`/`gui_chrome.py`/`gui_vulkan.py` state landed
+  only at `2ba2392` (08:56, 50 min AFTER the crash, via the policy-extraction
+  slice), after further evolution — the exact bytes that segfaulted never
+  verbatim-shipped, and the Sep 28 kernel log is gone to journal rotation
+  (boots now reach only Oct 3), so the `ip 0` trap line survives only as the
+  quotation in this section. Reproduction on the COMMITTED tree offscreen
+  with the net armed: Phase A 10/10 passive 90s launches with the remembered
+  Vulkan backend restored, clean; Phase B a full analyze→preview→isolated-
+  synthesis→QMediaPlayer playback cycle (+60.5s click, playback +130.5s),
+  clean exit, EndOfMedia deferred-stop verified; Phase C 40 rapid
+  stop/start playback cycles (120 status transitions), clean. Kernel log
+  over the whole repro window: 0 trap lines; `native-crash.txt` still 0
+  bytes. Verdict: NOT reproducible on the committed tree under these three
+  angles; every known in-process native-crash family this GUI owns was
+  already fixed or subprocess-isolated (§A `ed6ef8b`, render/preview
+  `run_in_subprocess=True`). Classified closed-as-unreproducible with the
+  surviving watch: the next kernel trap on an armed build auto-captures its
+  Python-side stack in `native-crash.txt`. Repro drivers:
+  `build/crash_hunt/repro_0806*.py` (disposable, not committed).
 - **The SIGABRT family (section B) resolves as instrumentation, not crashes**:
   every externally-sent SIGABRT on this machine that day traces to a
   `timeout -s ABRT` wrapper used to capture stacks of hung processes.

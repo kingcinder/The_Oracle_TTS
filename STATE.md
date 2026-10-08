@@ -1175,11 +1175,28 @@ is next touched.
   `crash_reports/native-crash.txt` at 0 bytes. Caveat kept honest: that process
   ran the worktree *including* the other session's uncommitted WIP
   (`app_gui.py`, `gui_chrome.py`, `gui_vulkan.py` dirty), so the segfault itself
-  is not evidence against the committed campaign. Fix shape: arm alongside the
-  existing handler install on every GUI start (idempotent; fails closed to
-  unarmed when consent is off). Not fixed in this session — the owning files
-  carry the other session's WIP. Full write-up:
-  `docs/superpowers/findings/2026-09-28-crash-evidence.md` §D.
+  is not evidence against the committed campaign. **Resolved 2026-10-08:**
+  `handlers.arm_native_capture` (idempotent, fail-closed) is now armed on
+  every GUI launch — called at the top of `gui_crash.maybe_run_startup_flow`
+  (covers every `MainWindow` startup, including the already-consented relaunch
+  branch that previously returned unarmed) and at the top of `app_gui.launch_gui`
+  before `MainWindow()` is built (covers the window-build phase and direct
+  entries that skip `cli.main`). Two tests pin it: a plain relaunch with
+  consent on leaves the net armed, and a source pin orders the `launch_gui`
+  arm before construction. Changes are in the worktree, uncommitted. The
+  regression is additionally gated end-to-end: `scripts/crash_hunt.py`'s
+  acceptance mode now runs a capture-readiness probe (a fresh child through
+  the real `cli.main`) and FAILS the gate when consent is on but the net is
+  unarmed — a probe that cannot run also fails the gate, fail-closed. The
+  segfault itself is now **closed as unreproducible** (2026-10-08): its exact
+  dirty bytes landed only at `2ba2392` (08:56, 50 min post-crash, further
+  evolved — never verbatim-shipped), the Sep 28 kernel log is gone to journal
+  rotation, and the committed tree survived all three repro angles with the
+  net armed (10/10 passive Vulkan-restore launches, a full
+  analyze→preview→playback cycle, 40 rapid playback stop/start cycles; 0
+  kernel traps, `native-crash.txt` still 0 bytes). Watch stands: the next
+  armed kernel trap auto-captures its stack. Details:
+  crash-evidence §D, investigation-of-record paragraph.
   **RESOLVED 2026-10-07** — armed exactly as the fix shape prescribed:
   `cli.main` (the single console entry point — every command and the GUI
   route through it) calls `arm_native_capture()` beside `install()`, so every
@@ -1212,7 +1229,7 @@ is next touched.
   `alias.name == "app_gui"` / `node.module == "app_gui"` bare, so it would
   pass green over `from the_oracle import app_gui`, `from . import app_gui`,
   and every `gui_*` sibling import in `gui_vulkan`. Closed by the Vulkan
-  thread-cluster extraction slice: the test now reuses the
+  thread-cluster extraction slice (holding commit 5d26f1a): the test now reuses the
   `tests/test_gui_import_direction.py` scanner (`_scan_imports` with a
   gui_vulkan-specific predicate — gui_utils stays legal, app_gui does not),
   with full spelling coverage and per-form proofs; the lazy function-level
@@ -1240,7 +1257,7 @@ is next touched.
   STATE.md:801), while CPU/system DRAM is the guaranteed fallback. Both may be
   true (different resources), but they are not yet reconciled in one place and
   sale copy must not overclaim. RESOLVED 2026-09-28 by U4.5's evidence pass
-  (plan box carries the full digest): the 3 GB figure is an overclaim on the
+  (4bcaf6d; plan box carries the full digest): the 3 GB figure is an overclaim on the
   VRAM side (the enforced floor is 4 GiB, render-time enforced too) and an
   unenforced assertion on the DRAM side (nothing in the code measures DRAM;
   CPU is unconditionally available).  Decision presented to the owner: drop
@@ -1291,7 +1308,7 @@ is next touched.
   never removed it — ~140 `oracle_lt_cache_*` directories accumulated in
   `/tmp` across sessions. All four cache sites now use pytest's auto-cleaned
   `tmp_path`, the accumulated dirs were swept, and a before/after run probe
-  showed zero new leaks (JUNO_FIXES.log 2026-09-20).
+  showed zero new leaks (JUNO_FIXES.log 2026-09-20; holding commit fd302d7).
 
 - Serpent-circle inventory scan updated (2026-09-08, in
   `~/.agents/skills/serpent-circle/`): the bloat scan and language
