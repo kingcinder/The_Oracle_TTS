@@ -96,6 +96,47 @@ def normalise_speaker_label(label: str) -> str:
     return upper
 
 
+# --- every-occurrence attribution idiom (the 71d8840 completeness rule) -----
+
+
+def attribute_to_every_line(
+    lines: Sequence[str],
+    offenders: Iterable[str],
+    *,
+    is_offender: Any = None,
+) -> list[str]:
+    """One ``<line number>: <token>`` attribution per occurrence — the idiom
+    every reporting net here must share: a first-match-only report names one
+    line and hides the rest, and the thing being reported is broken on ALL
+    the lines that carry it, not just the first.
+
+    ``is_offender`` is the net's own brokenness test (the record-integrity
+    net passes git resolution: a token is an offender when git cannot
+    resolve it); with ``None``, every token is an offender (pure synthetic
+    pinning). Output is token-major (sorted) then line order, so the exact
+    list a synthetic pin asserts is stable.
+
+    The idiom's second half is TEST-side, and this helper alone does not
+    provide it: every net that uses this attribution MUST also pin the
+    property synthetically — a multi-occurrence case with a non-adjacent
+    repeat and an exact ordered assertion — plus a vacuity guard proving the
+    scan reads real input. Exemplars to copy: the record net's two-line pin
+    (tests/test_record_integrity.py,
+    test_a_broken_citation_is_attributed_to_every_line_carrying_it), the
+    journal checker's multi-line pin (tests/test_commit_slices.py), and the
+    doctor's per-entry next-steps pin (tests/test_doctor_input_subtitles.py).
+    """
+    broken = is_offender if is_offender is not None else (lambda token: True)
+    attributions: list[str] = []
+    for token in sorted(offenders):
+        if not broken(token):
+            continue
+        attributions.extend(
+            f"{i + 1}: {token}" for i, row in enumerate(lines) if token in row
+        )
+    return attributions
+
+
 #: Directories that hold no repository content: VCS metadata, the virtualenv,
 #: interpreter caches, and the agent harness's own state. Everything else in the
 #: tree is included, git-ignored or not -- the checks that regressed wrote into
