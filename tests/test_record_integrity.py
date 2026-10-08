@@ -207,9 +207,11 @@ def test_every_commit_hash_cited_in_the_records_resolves() -> None:
     )
 
     per_file: dict[str, list[str]] = {}
+    record_lines: dict[str, list[str]] = {}
     for name in record_files:
         text = (REPO_ROOT / name).read_text(encoding="utf-8")
         per_file[name] = _cited_hashes(text)
+        record_lines[name] = text.splitlines()
 
     # Vacuity: the extractor must demonstrably see the trail in both records.
     # If these trip, the scan went blind — fix the extractor (or deliberate
@@ -224,13 +226,15 @@ def test_every_commit_hash_cited_in_the_records_resolves() -> None:
         "this assertion."
     )
 
-    broken: list[str] = []
-    for name in record_files:
-        text = (REPO_ROOT / name).read_text(encoding="utf-8")
-        for attribution in _broken_citation_lines(
-            text.splitlines(), set(per_file[name])
-        ):
-            broken.append(f"{name}:{attribution}")
+    # Cross-file attribution: one stale hash cited in several records is
+    # broken in ALL of them — the report is every record:line pair, not a
+    # per-record first match (the helper's vacuity floors above already
+    # guarantee the scan sees both live records).
+    broken = helpers.attribute_to_every_record_line(
+        record_lines,
+        set().union(*per_file.values()) if per_file else set(),
+        is_offender=lambda token: not _resolves(token),
+    )
 
     assert broken == [], (
         "these commit hashes are cited in the records but do not resolve in "
@@ -263,6 +267,34 @@ def test_a_broken_citation_is_attributed_to_every_line_carrying_it() -> None:
         "1: deadbeef",
         "3: deadbeef",
     ], attributions
+
+
+def test_a_stale_hash_cited_in_multiple_records_is_attributed_in_each() -> None:
+    """Cross-file pin: one stale hash cited in TWO records is reported at
+    EVERY record:line pair — a per-record first-match regression would let
+    the same stale hash survive in the other record while the net kept
+    pointing at one file. Synthetic and git-independent (is_offender is the
+    fiction; the probe itself is pinned form-by-form in
+    test_the_resolution_probe_can_pass_and_can_fail). The clean record and
+    the resolving token are vacuity: they prove the scan reads every record
+    and never invents attributions."""
+    record_lines = {
+        "STATE.md": ["x (commit deadbeef) y", "clean (commit clean1)"],
+        "JUNO_FIXES.log": ["again (commit deadbeef) z"],
+        "docs/other.md": ["only clean (commit clean1)"],
+    }
+    attributions = helpers.attribute_to_every_record_line(
+        record_lines,
+        {"deadbeef", "clean1"},
+        is_offender=lambda token: token != "clean1",
+    )
+    assert attributions == [
+        "STATE.md:1: deadbeef",
+        "JUNO_FIXES.log:1: deadbeef",
+    ], attributions
+    # Vacuity: an empty record set attributes nothing — the layer cannot go
+    # from blind to inventing.
+    assert helpers.attribute_to_every_record_line({}, {"deadbeef"}) == []
 
 
 def test_the_hash_extractor_reads_every_citation_shape_form_by_form() -> None:
