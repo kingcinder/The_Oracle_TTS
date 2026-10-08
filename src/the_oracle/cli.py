@@ -1417,6 +1417,10 @@ def main(argv: list[str] | None = None) -> int:
     from the_oracle.crash import handlers as crash_handlers
 
     crash_handlers.install()
+    # Native-crash capture arms on EVERY launch, not only at consent
+    # transitions (STATE.md Noticed 2026-09-28: a consented relaunch ran
+    # unarmed). Idempotent; fails closed to unarmed when consent is off.
+    crash_handlers.arm_native_capture()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "gui":

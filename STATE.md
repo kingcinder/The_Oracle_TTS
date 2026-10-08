@@ -6,6 +6,16 @@ This file is the repo's self-designated completeness record. It is the
 authoritative context for the Omega meta-skill loop (searched, never
 rewritten by the loop).
 
+**Records-hygiene doctrine (2026-10-05):** a commit that closes work must
+amend the STATE entries that work closes in the same commit — a Deferred
+entry gets its RESOLVED block (with the repro/fingerprint/fix facts), a
+Noticed entry is marked resolved-verbatim or rewritten only as far as
+verification proves. Leaving a closed entry for a later reconciliation
+pass is how the 2026-10-05 records audit arose, and is treated as a
+broken record, not a pending chore. An entry that re-verification proves
+still true stays untouched; its holding commit is cited when the entry
+is next touched.
+
 ## Done
 
 - **Crash-eradication & performance campaign (2026-09-28, branch
@@ -1163,6 +1173,22 @@ rewritten by the loop).
   unarmed when consent is off). Not fixed in this session — the owning files
   carry the other session's WIP. Full write-up:
   `docs/superpowers/findings/2026-09-28-crash-evidence.md` §D.
+  **RESOLVED 2026-10-07** — armed exactly as the fix shape prescribed:
+  `cli.main` (the single console entry point — every command and the GUI
+  route through it) calls `arm_native_capture()` beside `install()`, so every
+  launch path comes up armed, not only consent transitions. Idempotence lives
+  in the one owner (`enable_faulthandler_catch` early-returns on an existing
+  dump handle — no second open, no leak when a launch arm and a
+  consent-transition arm land in one session); consent-off launches get False
+  and no capture machinery (enable-time contract unchanged; a later opt-in
+  still arms). The fix also corrected a latent `install()` hazard the new
+  in-suite launches exposed: remember-once semantics held `root_override`/
+  `log_file_override` via `setdefault`, so a no-root install poisoned a later
+  explicitly-targeted install in the same process — explicit roots now always
+  win. Four new tests (fail-closed arming, idempotence, consented
+  relaunch-arms through real `cli.main`, one-owner pin with vacuity guard);
+  mutation-proven (removing the launch arm call fails 2, removing the
+  idempotence early-return fails 1), reverts byte-identical.
 
 - **RESOLVED 2026-09-27** — `test_gui_vulkan_imports_nothing_from_app_gui`
   only saw absolute spellings (found 2026-09-27): that guard checked

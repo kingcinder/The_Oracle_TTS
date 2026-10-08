@@ -143,6 +143,29 @@ def test_faulthandler_arms_only_with_consent(wired: Path) -> None:
     handlers.disable_faulthandler_catch()
 
 
+def test_arm_native_capture_fails_closed_without_consent(wired: Path) -> None:
+    """Launch-path arming (M: removing the consent gate in
+    enable_faulthandler_catch fails this): a consent-off launch gets False
+    and no capture machinery — not even the crash_reports/ directory."""
+    assert handlers.arm_native_capture() is False
+    assert handlers._STATE.get("native_dump_handle") is None
+    assert not (wired / "crash_reports").exists()
+
+
+def test_arm_native_capture_arms_and_is_idempotent(wired: Path) -> None:
+    """M: dropping the armed early-return (or the arm_native_capture call in
+    cli.main) fails one of the two arming pins; re-arming must be a no-op on
+    the same handle, not a second open."""
+    consent.write_consent(wired, True)
+    assert handlers.arm_native_capture() is True
+    first = handlers._STATE.get("native_dump_handle")
+    assert first is not None
+    assert handlers.arm_native_capture() is True  # re-arm: same handle, no second open
+    assert handlers._STATE.get("native_dump_handle") is first
+    handlers.disable_faulthandler_catch()
+    assert handlers._STATE.get("native_dump_handle") is None
+
+
 def test_record_schema_shape(wired: Path) -> None:
     consent.write_consent(wired, True)
     try:

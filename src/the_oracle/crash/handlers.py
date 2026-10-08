@@ -112,8 +112,13 @@ def install(root: str | Path | None = None, *, log_file: Path | None = None) -> 
     remembered once; re-invocation does not stack)."""
     _STATE.setdefault("previous_sys_hook", sys.excepthook)
     _STATE.setdefault("previous_threading_hook", threading.excepthook)
-    _STATE.setdefault("root_override", root)
-    _STATE.setdefault("log_file_override", log_file)
+    # Remember-once belongs to the previous hooks, not the overrides: an
+    # explicitly-passed root/log_file always wins (a launch-path install with
+    # no root must not poison a later targeting install in the same process).
+    if root is not None:
+        _STATE["root_override"] = root
+    if log_file is not None:
+        _STATE["log_file_override"] = log_file
     sys.excepthook = _sys_excepthook
     threading.excepthook = _threading_excepthook
 
@@ -152,7 +157,14 @@ def enable_faulthandler_catch(root: str | Path) -> bool:
     install gets no capture machinery, not silent capture. The dump file
     lives inside crash_reports/ so ``clear_records``-style purging and the
     doctor's cap reporting cover it; opt-out disarms via
-    ``disable_faulthandler_catch``."""
+    ``disable_faulthandler_catch``.
+
+    Idempotent: an already-armed session returns True and keeps its existing
+    dump handle — launch-path arming (``arm_native_capture``) and the
+    consent-transition sites may both fire in one session without opening a
+    second handle or leaking the first."""
+    if _STATE.get("native_dump_handle") is not None:
+        return True
     if not consent.read_consent(root):
         return False
     try:
@@ -165,6 +177,21 @@ def enable_faulthandler_catch(root: str | Path) -> bool:
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def arm_native_capture(root: str | Path | None = None) -> bool:
+    """Arm native-crash capture on a launch path — idempotent, fail-closed.
+
+    The consent-transition sites arm only when consent *changes*; a session
+    that starts with consent already on ran unarmed (STATE.md Noticed,
+    2026-09-28: the 08:06:51 GUI segfault left native-crash.txt at 0 bytes).
+    Launch paths call this alongside ``install`` so every start comes up
+    armed. With ``root`` omitted the handlers' own root resolution applies
+    (the install-time override, else the repo root). Consent-off installs
+    get False and no capture machinery — the enable-time consent contract
+    holds; a later opt-in still arms via its transition site.
+    """
+    return enable_faulthandler_catch(_root() if root is None else Path(root))
 
 
 def disable_faulthandler_catch() -> None:

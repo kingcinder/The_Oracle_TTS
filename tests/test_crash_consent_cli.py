@@ -77,6 +77,31 @@ def test_opt_out_purge_deletes_every_report(sandbox: Path, capsys) -> None:
     assert "Deleted 2" in capsys.readouterr().out
 
 
+def test_every_launch_arms_native_capture(sandbox: Path, capsys) -> None:
+    """Launch-path arming (STATE.md Noticed 2026-09-28): a session that starts
+    with consent ALREADY ON must come up armed — the consent-transition-only
+    call sites never fired for a plain relaunch, and the 08:06:51 GUI segfault
+    left native-crash.txt at 0 bytes. cli.main is the single chokepoint (the
+    only console script; `gui` routes through it)."""
+    crash.write_consent(sandbox, True)
+    assert cli.main(["privacy-status"]) == 0
+    assert crash_handlers._STATE.get("native_dump_handle") is not None
+    crash_handlers.disable_faulthandler_catch()
+    capsys.readouterr()
+
+
+def test_launch_arming_is_pinned_in_cli_main() -> None:
+    """One-owner pin with vacuity guard: the arm call must sit in cli.main
+    alongside the handler install (after it — the opt-out handler runs later
+    and must still win). A scan that sees neither string proves nothing."""
+    source = Path(cli.__file__).read_text(encoding="utf-8")
+    assert "crash_handlers.arm_native_capture()" in source
+    assert "crash_handlers.install()" in source  # vacuity: the scan sees real code
+    assert source.index("crash_handlers.arm_native_capture()") > source.index(
+        "crash_handlers.install()"
+    )
+
+
 def test_status_reports_records_after_capture(sandbox: Path, capsys) -> None:
     crash.write_consent(sandbox, True)
     bundle.write_record(sandbox, {"exception": {"type": "ValueError", "message": "x"}, "log_tail": []})
