@@ -138,6 +138,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--preview", action="store_true", help="Run a single-utterance preview instead of a full render.")
     args = parser.parse_args(argv)
+    # Native-crash capture arms in THIS child too, not only in the launching
+    # parent (cli.main arms its own process): the GUI delegates renders here
+    # precisely to keep native model code out of the Qt process, so a native
+    # segfault during the child's pipeline init or render previously left no
+    # dump anywhere — the parent's faulthandler cannot see a child process.
+    # Same contract as the launch-path arm: idempotent (enable's early-return),
+    # fail-closed without consent (no handle, no directory), root resolved to
+    # this checkout so the dump lands in the same crash_reports/ the doctor
+    # caps and purges.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.arm_native_capture()
     if args.preview:
         return run_preview_job(args.job, args.result)
     return run_job(args.job, args.result)
