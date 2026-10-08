@@ -137,6 +137,32 @@ def attribute_to_every_line(
     return attributions
 
 
+def attribute_to_every_record_line(
+    record_lines: dict[str, Sequence[str]],
+    offenders: Iterable[str],
+    *,
+    is_offender: Any = None,
+) -> list[str]:
+    """The CROSS-FILE layer of the same idiom: one offender cited in several
+    records is broken in all of them, so the report is one
+    ``<record>:<line>: <token>`` entry per occurrence across ALL records —
+    never per-record first-match. File-major order (dict insertion order),
+    token-major then line order within each record, so a synthetic pin's
+    exact list is stable.
+
+    Same contract as :func:`attribute_to_every_line`, whose test-side rules
+    (synthetic multi-occurrence pin + vacuity guard per consuming net) apply
+    here too — the record-integrity net's cross-record pin is the exemplar.
+    """
+    entries: list[str] = []
+    for name, lines in record_lines.items():
+        entries.extend(
+            f"{name}:{attribution}"
+            for attribution in attribute_to_every_line(lines, offenders, is_offender=is_offender)
+        )
+    return entries
+
+
 #: Directories that hold no repository content: VCS metadata, the virtualenv,
 #: interpreter caches, and the agent harness's own state. Everything else in the
 #: tree is included, git-ignored or not -- the checks that regressed wrote into
