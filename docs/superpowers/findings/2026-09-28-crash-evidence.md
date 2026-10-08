@@ -12,6 +12,11 @@ Channels swept: kernel journal (master list — every native crash logs here),
 
 ### A. Qt native crashes — THE "many" (7 in kernel log, Sep 27–28)
 
+**Resolved-by `ed6ef8b`** — the commit that closed the live killer (worker-
+thread first-imports vs shiboken6's import hook, generation 2 below); the
+2026-09-08 lifetime fixes are generation 1, recorded in STATE's Deferred
+entry for this lineage.
+
 | When | Signature |
 |---|---|
 | Sep 09 16:41:59, 16:44:45, 16:55:17 | null-ip segfault ×2 + libQt6Widgets GPF |
@@ -44,6 +49,9 @@ field) — the channel where every historical crash lived but exit codes and
   committed campaign commits remain kernel-clean).
 
 ### B. Apport SIGABRT dumps (2 — RESOLVED 2026-09-28)
+
+**Resolved-by `6a50358`** — the commit that recorded this resolution
+(instrumentation, not crashes; the verdict is section D's SIGABRT bullet).
 
 - `doctor.py --ci`, Sep 28 01:38:53, SIGABRT while blocked in
   `poll(1800000ms)` = the `--model-timeout` model-init probe wait; frame
