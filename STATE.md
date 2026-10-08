@@ -1321,6 +1321,15 @@ is next touched.
 
 ## Deferred (intentional)
 
+- **The 2026-10-08 native-crash audit closed every script-entry capture
+class**: the doctor's probe children and the three real-MainWindow script
+entries now arm the faulthandler catch like every launch path does
+(scripts/crash_hunt.py GUI-leg children, windows_install_smoke,
+vulkan_ci_smoke, fresh_clone_acceptance were already covered through
+cli.main; runpy-in-process smoke/baseline scripts need no second handle —
+same process, same file). Mutation contract: tests/test_entry_point_arming.py
+fails per-site on any arm removal or reorder.
+
 - **Recording Studio takes and the user's teleprompter script kept —
   dispositioned KEEP, gitignored (2026-09-28)**: four Recording Studio takes
   (`Seashells/Seashell_No_2.wav`, two `Seashells/*fransisco*.wav` takes and

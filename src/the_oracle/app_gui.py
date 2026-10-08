@@ -3977,6 +3977,14 @@ class MainWindow(QMainWindow):
 
 def launch_gui() -> None:
     launch_t0 = perf_counter()
+    # Arm the native-crash net before any Qt work: launch_gui is a public
+    # entry point reachable without cli.main's install/arm, and the
+    # window-build phase itself is native-crash territory (the 08:06:51
+    # segfault died 52s into a launch with no armed net — STATE.md Noticed,
+    # 2026-09-28). Idempotent; fails closed to unarmed when consent is off.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.arm_native_capture()
     app = QApplication.instance() or QApplication([])
     launch_marks: list[tuple[str, float]] = [("qt_app_created", perf_counter() - launch_t0)]
     window = MainWindow()

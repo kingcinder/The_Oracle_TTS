@@ -145,6 +145,27 @@ top of `gui_crash.maybe_run_startup_flow` and in `app_gui.launch_gui` before
   surviving watch: the next kernel trap on an armed build auto-captures its
   Python-side stack in `native-crash.txt`. Repro drivers:
   `build/crash_hunt/repro_0806*.py` (disposable, not committed).
+  **Attribution tightening (2026-10-08, second pass — git-object
+  archaeology):** the reflog bounds the crashed worktree far tighter than
+  "dirty": the other session committed `b5b9683`/`9c3eeb2` 49–58 s after the
+  crash and `c3bd892` (LivePanel tally, in `app_gui.py`/`gui_chrome.py`) 6 min
+  after — so the crashed process imported files the other actor was editing
+  at that very moment, and the reconstructable in-flight diff
+  (`0445a72..2ba2392`) is now characterizable: pure QLabel text plumbing, a
+  cumulative counter, and policy-body moves behind constructor injection —
+  zero signal `connect`/`emit` changes, zero object-lifetime changes, zero
+  native-dispatch surface, i.e. nothing in the recoverable portion plausibly
+  produces an `ip 0` instruction-fetch fault. No dangling Sep-28 git objects
+  exist (fsck: only Sep 08–21 residue), and the rotated apport logs carry no
+  Sep-28 entries, so the unreconstructable residue is exactly: unsaved editor
+  states between the crash and the 08:56 landing. Final attribution: the
+  recoverable in-flight diff is EXONERATED by inspection; the residual
+  suspects are (a) the unrecoverable unsaved states, or (b) the same
+  Qt/RDNA1 native class as §A/§C — with 0 kernel traps since the 05:52 fix
+  across every committed-tree launch (thousands, incl. the repro campaign)
+  pointing at the dirty-mid-edit state as the differentiator. No further
+  evidence source exists on this machine; the watch (armed net) is the
+  closure path for any recurrence.
 - **The SIGABRT family (section B) resolves as instrumentation, not crashes**:
   every externally-sent SIGABRT on this machine that day traces to a
   `timeout -s ABRT` wrapper used to capture stacks of hung processes.
