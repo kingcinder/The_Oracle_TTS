@@ -15,7 +15,12 @@ pass).
 
 from __future__ import annotations
 
+import ast
+import inspect
+import io
 import os
+import tokenize
+from pathlib import Path
 
 import pytest
 
@@ -57,6 +62,229 @@ def _restore_oracle_env():
                 os.environ[key] = saved[key]
         else:
             os.environ.pop(key, None)
+
+
+# --- standalone Qt app-fixture guard ----------------------------------------
+
+#: Plain-text markers for constructing a QWidget (only QWidgets abort without
+#: a QApplication) or one of the project's known window builders. QObject
+#: types (QAction, QButtonGroup, QTableWidgetItem, ...) never abort, so they
+#: deliberately do not appear here. QApplication( itself is the app and is
+#: fine.
+_QT_WIDGET_BUILD_MARKERS: tuple[str, ...] = (
+    "QWidget(",
+    "QMainWindow(",
+    "QDialog(",
+    "QLabel(",
+    "QPushButton(",
+    "QToolButton(",
+    "QComboBox(",
+    "QCheckBox(",
+    "QRadioButton(",
+    "QSlider(",
+    "QSpinBox(",
+    "QDoubleSpinBox(",
+    "QLineEdit(",
+    "QTextEdit(",
+    "QPlainTextEdit(",
+    "QTextBrowser(",
+    "QTableWidget(",
+    "QTreeWidget(",
+    "QListWidget(",
+    "QTabWidget(",
+    "QGroupBox(",
+    "QMenuBar(",
+    "QMenu(",
+    "QToolBar(",
+    "QStatusBar(",
+    "QSplitter(",
+    "QScrollArea(",
+    "QDockWidget(",
+    "QFrame(",
+    "QProgressBar(",
+    "QStackedWidget(",
+    "QHeaderView(",
+    # Project builders: every tour wizard's class name ends in "Wizard", and
+    # the shared test helper builds the real MainWindow.
+    "Wizard(",
+    "MainWindow(",
+    "_build_window(",
+)
+
+#: Token categories whose text is string/comment content, not code: a test
+#: may legitimately QUOTE a widget constructor when asserting on source text.
+_STRINGY_TOKENS = {
+    getattr(tokenize, name)
+    for name in ("STRING", "COMMENT", "FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END")
+    if hasattr(tokenize, name)
+}
+
+#: Fixtures that guarantee a QApplication exists before the test body runs.
+_QT_APP_FIXTURES = frozenset({"qt_app"})
+
+#: Transitive scan bounds: helpers-of-helpers up to this depth, and at most
+#: this many called names followed per function (sorted for determinism).
+_MAX_HELPER_DEPTH = 2
+_MAX_HELPER_CALLS = 15
+
+_TESTS_DIR = Path(__file__).resolve().parent
+
+
+def _called_function_names(tree: ast.AST) -> set[str]:
+    """Names of functions/methods called anywhere in ``tree``.
+
+    Bare calls (``helper()``) and attribute calls (``mod.helper()`` /
+    ``obj.method()``) both contribute a candidate name; resolution later
+    decides which of those actually point at a tests/-tree helper.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name):
+                names.add(fn.id)
+            elif isinstance(fn, ast.Attribute):
+                names.add(fn.attr)
+    return names
+
+
+def _tests_tree_function(obj: object) -> bool:
+    """True when obj is a plain function defined under tests/ — a test
+    helper or fixture. Production code is deliberately excluded: widgets
+    built inside src/ are the code under test, not a hidden test build."""
+    if not inspect.isfunction(obj):
+        return False
+    try:
+        path = inspect.getsourcefile(obj)
+    except TypeError:
+        return False
+    if not path:
+        return False
+    resolved = Path(path).resolve()
+    return resolved.parent == _TESTS_DIR or _TESTS_DIR in resolved.parents
+
+
+def widget_builds_reachable_from(func, extra_names=()) -> tuple[str, str] | None:
+    """``(marker, origin-qualname)`` when ``func`` itself — or a tests/-tree
+    helper it calls, or a fixture it requests via ``extra_names`` —
+    constructs a Qt widget; else None.
+
+    Breadth/depth bounded (depth 2, capped branch) so a pathological module
+    cannot make collection quadratic. Never raises: an uninferable helper is
+    skipped, so the worst case is a miss, never a false trip.
+    """
+    namespace = getattr(func, "__globals__", None) or {}
+    frontier: list[tuple[str, object]] = [(getattr(func, "__qualname__", "<test>"), func)]
+    for name in extra_names:
+        if name in _QT_APP_FIXTURES:
+            continue
+        obj = namespace.get(name)
+        if obj is not None:
+            frontier.append((name, obj))
+    seen: set[object] = set()
+    depth = 0
+    while frontier and depth <= _MAX_HELPER_DEPTH:
+        following: list[tuple[str, object]] = []
+        for name, fn in frontier:
+            key = (getattr(fn, "__module__", None), getattr(fn, "__qualname__", None))
+            if key in seen:
+                continue
+            seen.add(key)
+            if not inspect.isfunction(fn):
+                continue
+            try:
+                source = inspect.getsource(fn)
+            except (OSError, TypeError):
+                continue
+            marker = widget_builds_in_source(source)
+            if marker is not None:
+                return marker, name
+            if depth == _MAX_HELPER_DEPTH:
+                continue
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                continue
+            fn_globals = getattr(fn, "__globals__", None) or namespace
+            for callee in sorted(_called_function_names(tree))[:_MAX_HELPER_CALLS]:
+                if callee in _QT_APP_FIXTURES:
+                    continue
+                obj = fn_globals.get(callee)
+                if obj is not None and _tests_tree_function(obj):
+                    following.append((callee, obj))
+        frontier = following
+        depth += 1
+    return None
+
+
+def widget_builds_in_source(source: str) -> str | None:
+    """Return the first widget-builder marker present in ``source``, else None.
+
+    String literals and comments are stripped via tokenize first: tests that
+    scan GUI code and assert on quoted constructors must not trip the guard.
+    A fast raw-substring pre-filter keeps the cost negligible for the (vast
+    majority of) tests that mention no Qt names at all.
+    """
+    if not any(marker in source for marker in _QT_WIDGET_BUILD_MARKERS):
+        return None
+    try:
+        code = "".join(
+            tok.string
+            for tok in tokenize.generate_tokens(io.StringIO(source).readline)
+            if tok.type not in _STRINGY_TOKENS
+        )
+    except (tokenize.TokenError, IndentationError):
+        code = source
+    for marker in _QT_WIDGET_BUILD_MARKERS:
+        if marker in code:
+            return marker
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _qt_standalone_app_guard(request):
+    """Fail loudly when a test builds Qt widgets but requests no app fixture.
+
+    PySide6 aborts the whole process (SIGABRT) on the first widget
+    constructed without a QApplication, so such a test never "fails" — it
+    passes whenever an earlier file in the same session happened to create
+    the app, and dumps core when run standalone. File order becomes a silent
+    dependency (real case: ``test_help_stage_is_first...`` aborted rc=134
+    standalone, passed in grouped runs). The guard follows the test's own
+    calls and fixture requests into tests/-tree helpers before it runs and,
+    unless it requests ``qt_app``, fails it with an actionable message
+    naming the builder — deterministic in grouped AND standalone runs.
+    """
+    if not isinstance(request.node, pytest.Function):
+        yield
+        return
+    if _QT_APP_FIXTURES & set(request.fixturenames):
+        yield
+        return
+    # The node itself is not a Python function; ``obj`` is the real (possibly
+    # decorated) callable whose source defines the test body.
+    target = getattr(request.node, "obj", None)
+    if target is None:
+        yield
+        return
+    hit = widget_builds_reachable_from(
+        target, [name for name in request.fixturenames if name not in _QT_APP_FIXTURES]
+    )
+    if hit is not None:
+        marker, origin = hit
+        via = (
+            "the test body"
+            if origin == getattr(target, "__qualname__", None)
+            else f"helper/fixture `{origin}`"
+        )
+        pytest.fail(
+            f"{request.node.name} constructs Qt widgets via {via} ({marker} ...) "
+            "but requests no QApplication fixture: standalone this aborts the "
+            "process (SIGABRT) and it only passes when another test file "
+            "created the app first. Add the `qt_app` fixture to this test.",
+            pytrace=False,
+        )
+    yield
 
 
 # --- skip audit -----------------------------------------------------------------
