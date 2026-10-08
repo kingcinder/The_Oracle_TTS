@@ -85,9 +85,12 @@ from the_oracle.gui_utils import (
     normalize_cast_keys,
 )
 # The Recording Studio cluster (2026-09-28 slice) lives in gui_recording;
-# the identical objects are re-exported here so MainWindow constructs them
-# from app_gui globals and app_gui-level class patches stay live.
-from the_oracle.gui_recording import RecordStudioWorker, RecordingStudioDialog
+# the dialog is re-exported so MainWindow constructs it from app_gui globals
+# and app_gui-level class patches stay live. RecordStudioWorker is
+# deliberately NOT re-exported: the dialog builds its worker from
+# gui_recording's globals, so an app_gui-level patch of it would be a silent
+# no-op (the _CastRow precedent; pinned in tests/test_gui_recording_owner.py).
+from the_oracle.gui_recording import RecordingStudioDialog
 from the_oracle.device_support import CUDADeviceInfo, cuda_devices, cuda_reason
 from the_oracle.gui_themes import DEFAULT_THEME, THEMES, apply_theme
 from the_oracle.gui_tooltips import install_ctrl_hover_help
@@ -264,7 +267,18 @@ class MainWindow(QMainWindow):
         self._apply_gui_settings_payload(self._default_gui_settings_payload())
         self._mark_startup("mainwindow_init_end")
         self._write_startup_timeline()
-        QTimer.singleShot(0, self._on_gui_shown)
+        # Arm the deferred startup callbacks from single-shot children of the
+        # window, not the context-less QTimer.singleShot helper: that helper
+        # holds a strong reference to the bound method, so a window destroyed
+        # before its timer fired stayed pinned alive (every MainWindow built
+        # by a test that never runs an event loop leaked, and a later
+        # processEvents() replayed all of their _on_gui_shown calls at once —
+        # a full stylesheet restyle per window, hanging the suite). A child
+        # timer dies with the window and cancels the pending call.
+        self._gui_shown_timer = QTimer(self)
+        self._gui_shown_timer.setSingleShot(True)
+        self._gui_shown_timer.timeout.connect(self._on_gui_shown)
+        self._gui_shown_timer.start()
 
     def _mark_startup(self, label: str) -> None:
         self._startup_marks.append((label, perf_counter() - self._startup_t0))
@@ -294,7 +308,10 @@ class MainWindow(QMainWindow):
         from the_oracle.gui_crash import install_qt_message_handler, maybe_run_startup_flow
 
         install_qt_message_handler()
-        QTimer.singleShot(0, self._maybe_run_crash_startup_flow)
+        self._crash_flow_timer = QTimer(self)
+        self._crash_flow_timer.setSingleShot(True)
+        self._crash_flow_timer.timeout.connect(self._maybe_run_crash_startup_flow)
+        self._crash_flow_timer.start()
         # Restore the saved workspace layout (theme, splitters, section
         # sliders/collapses, window size) before enabling persistence, so the
         # restore itself never writes over the stored values.
@@ -310,7 +327,10 @@ class MainWindow(QMainWindow):
         # Use a short queued delay so the first frame, theme, and tooltips are
         # fully realized before the non-modal tutorial highlights a control.
         if not self._app_settings.get("inference_wizard_completed", False) and not self._app_settings.get("inference_wizard_dismissed", False):
-            QTimer.singleShot(250, self._start_inference_wizard)
+            self._wizard_launch_timer = QTimer(self)
+            self._wizard_launch_timer.setSingleShot(True)
+            self._wizard_launch_timer.timeout.connect(self._start_inference_wizard)
+            self._wizard_launch_timer.start()
 
     def _log_action_timing(self, label: str, wall: float | None = None, extra: dict | None = None) -> None:
         try:
@@ -358,7 +378,8 @@ class MainWindow(QMainWindow):
         self.output_name_label = QLabel("Output Filename")
         controls.addWidget(self.output_name_label, 2, 0)
         controls.addWidget(self.output_name, 2, 1, 1, 2)
-        layout.addLayout(controls)
+        # The controls grid joins the Script & Cast section further down
+        # (phase-3 section chrome), not the bare left-column layout.
         # Default input on a fresh install (or when the remembered input file
         # no longer exists): the user's pain-point test file. A remembered
         # input from a previous session wins over this default (see
@@ -388,16 +409,24 @@ class MainWindow(QMainWindow):
         self.extra_speaker_layout = QVBoxLayout(self.extra_speaker_container)
         self.extra_speaker_layout.setContentsMargins(0, 0, 0, 0)
         self.extra_speaker_scroll.setWidget(self.extra_speaker_container)
-        self.extra_speaker_scroll.hide()
+        # Wrapped in section chrome: the column never shows inline (the cast
+        # dialog owns characters beyond A/B), so the whole section stays
+        # hidden exactly as the bare scroll area did.
+        self.extra_voices_section = QHSectionGroup("Extra Voices", collapsible=True, resizable=True)
+        extra_voices_layout = QVBoxLayout(self.extra_voices_section)
+        extra_voices_layout.setContentsMargins(0, 0, 0, 0)
+        extra_voices_layout.addWidget(self.extra_speaker_scroll)
+        self.extra_voices_section.hide()
 
         self._sections_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._sections_splitter.setHandleWidth(6)
         self._sections_splitter.setChildrenCollapsible(False)
-        for widget in (shared_settings, self.speaker_a, self.speaker_b, self.extra_speaker_scroll):
+        for widget in (shared_settings, self.speaker_a, self.speaker_b, self.extra_voices_section):
             self._sections_splitter.addWidget(widget)
         self._register_section("shared", shared_settings, self._sections_splitter, 0)
         self._register_section("speaker_a", self.speaker_a, self._sections_splitter, 1)
         self._register_section("speaker_b", self.speaker_b, self._sections_splitter, 2)
+        self._register_section("extra_voices", self.extra_voices_section, self._sections_splitter, 3)
         self._sections_splitter.setSizes([460, 360, 360, 160])
         # Cast summary bar: the full cast lives here (count + names); the
         # dialog owns add/remove/configure, the main window mirrors it.
@@ -415,9 +444,9 @@ class MainWindow(QMainWindow):
         )
         self.manage_cast_button.clicked.connect(self.open_cast_manager)
         cast_bar.addWidget(self.manage_cast_button)
-        layout.addLayout(cast_bar)
         self._refresh_cast_bar()
-        layout.addWidget(self._sections_splitter)
+        # cast_bar and the sections splitter are assembled into the Script &
+        # Cast section / paths splitter further down.
 
         actions = QHBoxLayout()
         actions.setSpacing(12)
@@ -430,7 +459,9 @@ class MainWindow(QMainWindow):
         self._style_action_button(self.render_button, accent=True)
         actions.addWidget(self.analyze_button)
         actions.addWidget(self.render_button)
-        layout.addLayout(actions)
+        # The Analyze/Render row stays bare (out of any section): collapsing
+        # it would hide the primary actions. It is assembled into the rest
+        # container below.
 
         self.table = QTableWidget(0, 9)
         # Floor for the review table: splitters can shrink it, but never to
@@ -457,7 +488,12 @@ class MainWindow(QMainWindow):
         self._lower_splitter = QSplitter(Qt.Orientation.Vertical)
         self._lower_splitter.setHandleWidth(6)
         self._lower_splitter.setChildrenCollapsible(False)
-        self._lower_splitter.addWidget(self.table)
+        review_section = QHSectionGroup("Review", collapsible=True, resizable=True)
+        review_layout = QVBoxLayout(review_section)
+        review_layout.setContentsMargins(0, 0, 0, 0)
+        review_layout.addWidget(self.table)
+        self._lower_splitter.addWidget(review_section)
+        self._register_section("table", review_section, self._lower_splitter, 0)
         status_section = QHSectionGroup("Status / Errors", collapsible=True, resizable=True)
         status_layout = QVBoxLayout(status_section)
         status_layout.setContentsMargins(0, 0, 0, 0)
@@ -472,7 +508,29 @@ class MainWindow(QMainWindow):
         # Ctrl+hover registration target for the status area.
         self.status_label = status_section
         self._lower_splitter.setSizes([540, 180])
-        layout.addWidget(self._lower_splitter, stretch=1)
+
+        # Paths strip + everything below it: a vertical splitter so the
+        # Script & Cast section gets its own size slider (sliders only work
+        # inside a splitter), sharing height with the settings/table stack —
+        # mirroring how Status/Errors shares _lower_splitter with the table.
+        self.paths_section = QHSectionGroup("Script & Cast", collapsible=True, resizable=True)
+        paths_layout = QVBoxLayout(self.paths_section)
+        paths_layout.setContentsMargins(0, 0, 0, 0)
+        paths_layout.addLayout(controls)
+        paths_layout.addLayout(cast_bar)
+        self._paths_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._paths_splitter.setHandleWidth(6)
+        self._paths_splitter.setChildrenCollapsible(False)
+        self._paths_splitter.addWidget(self.paths_section)
+        rest = QWidget()
+        rest_layout = QVBoxLayout(rest)
+        rest_layout.setContentsMargins(0, 0, 0, 0)
+        rest_layout.addWidget(self._sections_splitter)
+        rest_layout.addLayout(actions)
+        rest_layout.addWidget(self._lower_splitter, stretch=1)
+        self._paths_splitter.addWidget(rest)
+        layout.addWidget(self._paths_splitter)
+        self._register_section("paths", self.paths_section, self._paths_splitter, 0)
 
         # Live progress column: its own section so it can be resized (slider
         # or handle) and collapsed like every other section. The section
@@ -486,7 +544,12 @@ class MainWindow(QMainWindow):
         self._register_section("live", live_section, self._main_splitter, 1)
         self._main_splitter.setSizes([1040, 280])
         hbox.addWidget(self._main_splitter)
-        for splitter in (self._main_splitter, self._sections_splitter, self._lower_splitter):
+        for splitter in (
+            self._main_splitter,
+            self._sections_splitter,
+            self._lower_splitter,
+            self._paths_splitter,
+        ):
             splitter.splitterMoved.connect(lambda _pos, _index: self._persist_workspace_layout())
 
         self.setCentralWidget(root)
@@ -959,6 +1022,14 @@ class MainWindow(QMainWindow):
                 group.naturalness,
                 group.pause_spin,
             ])
+        # The bar itself (not just its actions): covers the menu-bar padding
+        # and Qt's internal overflow extension button, which has no text of
+        # its own and resolves its description through the parent walk.
+        ctrl_help.register(
+            self.menuBar(),
+            "Menu bar: project, settings, recording, theme, and help menus. "
+            "Hold Ctrl and hover a menu to read what each entry does.",
+        )
         menubar_actions = self.menuBar().actions()
         if len(menubar_actions) >= 1:
             ctrl_help.register_action(menubar_actions[0], "Project management: new, open, save, save-as.")
@@ -2517,6 +2588,7 @@ class MainWindow(QMainWindow):
                 "main": self._main_splitter.sizes(),
                 "sections": self._sections_splitter.sizes(),
                 "lower": self._lower_splitter.sizes(),
+                "paths": self._paths_splitter.sizes(),
             },
             "sections": sections,
             "window_geometry": [self.width(), self.height()],
@@ -2558,6 +2630,7 @@ class MainWindow(QMainWindow):
         restore_splitter(self._main_splitter, splitters.get("main"))
         restore_splitter(self._sections_splitter, splitters.get("sections"))
         restore_splitter(self._lower_splitter, splitters.get("lower"))
+        restore_splitter(self._paths_splitter, splitters.get("paths"))
         sections = self._app_settings.get("sections") or {}
         for key, (section, _splitter, _index) in self._section_registry.items():
             data = sections.get(key)
@@ -2614,7 +2687,7 @@ class MainWindow(QMainWindow):
         # Speakers beyond A/B are configured in the cast dialog; the main
         # window keeps their widgets alive (the render path reads them) but
         # does not show them inline.
-        self.extra_speaker_scroll.hide()
+        self.extra_voices_section.hide()
         groups = {"A": self.speaker_a, "B": self.speaker_b, **self.extra_speaker_groups}
         for key in cast:
             group = groups.get(key)
