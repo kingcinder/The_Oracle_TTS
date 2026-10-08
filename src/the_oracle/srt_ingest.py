@@ -116,6 +116,63 @@ def _decode_subtitle_bytes(raw: bytes) -> str:
                 decoded.append(part.decode("cp1252"))
     return "".join(decoded)
 
+
+def _mixed_encoding_under_per_cue_recovery(raw: bytes) -> bool:
+    """True when the per-cue recovery rescues at least one cue of ``raw``
+    whose guarded UTF-8 reading differs from its CP1252 reading — i.e. the
+    file mixes encodings and the recovery changes the outcome: the UTF-8 cue
+    arrives intact instead of as whole-file-CP1252 mojibake.
+
+    Mirror of ``scripts/doctor.py::_mixed_encoding_under_per_cue_recovery``
+    (the doctor never imports the_oracle, so its shapes are mirrored there
+    and pinned against this one by tests/test_doctor_input_subtitles.py).
+    Only meaningful for bytes that fail the whole-file UTF-8 decode and pass
+    the whole-file CP1252 decode (the caller guarantees both); within that
+    branch no cue can carry CP1252-hole bytes, so the strict probe below
+    cannot raise.
+    """
+    for index, part in enumerate(_CUE_SEPARATOR_RE.split(raw)):
+        if index % 2 == 1:
+            continue  # captured separator bytes: pure ASCII
+        try:
+            text = part.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            continue
+        if _utf8_guard(text) and text != part.decode("cp1252"):
+            return True
+    return False
+
+
+def classify_subtitle_bytes(raw: bytes) -> str:
+    """Classify raw subtitle bytes the way the doctor's Input/ scan does.
+
+    One owner for the per-file encoding verdict so every surface reports the
+    same class about the same file before a render (``check-input --json``
+    and the render path's ``--check-input-json`` consume this; the doctor's
+    mirrored scan is pinned to agree by tests/test_doctor_input_subtitles.py).
+
+    ``utf8`` decodes whole-file as UTF-8 (BOM tolerated); ``fallback`` is
+    cleanly legacy and converts via the whole-file CP1252 fallback;
+    ``mixed`` is a legacy file with at least one UTF-8 cue the per-cue
+    recovery decodes intact; ``blocked`` carries bytes CP1252 does not
+    define (that cue degrades to U+FFFD under the recovery). The verdict is
+    decided by the same decodes :func:`_decode_subtitle_bytes` performs, so
+    the classification cannot disagree with what conversion actually does.
+    """
+    try:
+        raw.decode("utf-8-sig")
+        return "utf8"
+    except UnicodeDecodeError:
+        pass
+    try:
+        raw.decode("cp1252")
+    except UnicodeDecodeError:
+        return "blocked"
+    if _mixed_encoding_under_per_cue_recovery(raw):
+        return "mixed"
+    return "fallback"
+
+
 # A cue clock line: "00:00:01,000 --> 00:00:04,000" (SubRip, comma or dot
 # millis) or "01:02.500 --> 01:05.000" (WebVTT: optional hours, dot millis,
 # optional cue settings after the end time).
