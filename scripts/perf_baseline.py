@@ -84,6 +84,15 @@ def profile_render(profile_path: Path, report_path: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Entry-point arm (2026-10-08 audit standard): the profiler runs the full
+    # deterministic render in-process (runpy), so this process exercises the
+    # whole native synthesis stack. Consent-aware, idempotent (the runpy'd
+    # smoke_render.main re-arm is a no-op), fail-closed — same contract as
+    # cli.main and launch_gui.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.install()
+    crash_handlers.arm_native_capture()
     parser = argparse.ArgumentParser(description="Profile the deterministic smoke render.")
     parser.add_argument("--profile", default=str(DEFAULT_PROFILE))
     parser.add_argument("--report", default=str(DEFAULT_REPORT))
