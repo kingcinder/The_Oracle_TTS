@@ -136,6 +136,13 @@ def scripted(program: tuple[str, ...]) -> type:
 
 
 def main() -> int:
+    # Launch-path arming (the entry-point audit, 2026-10-08): this harness
+    # runs the REAL gui_crash/gui_license dialogs (Qt-native widget code)
+    # without ever passing through cli.main's install+arm. Idempotent;
+    # fails closed without consent.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.arm_native_capture()
     (QApplication.instance() or QApplication([]))
     parent = QWidget()
     sandbox = Path(tempfile.mkdtemp(prefix="u44-sandbox-"))
