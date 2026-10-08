@@ -1846,6 +1846,19 @@ def _print_human_report(report: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Arm the native-crash net before any heavy work: this process loads the
+    # Chatterbox model, spawns probe children, and imports QtMultimedia —
+    # every historically-proven crash class. Consent-aware and idempotent
+    # (handlers._root() resolves the repo root, matching where install-time
+    # crash records already live), and fail-closed without consent, exactly
+    # like cli.main and launch_gui (the 2026-10-08 entry-point audit's
+    # standard). The install() beside it matters for the read-only contract:
+    # the faulthandler dump then lives beside the doctor's own declared
+    # smoke output only when consent is on — nothing is created when off.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.install()
+    crash_handlers.arm_native_capture()
     # The doctor constructs the Chatterbox model and prefetches the turbo
     # checkpoint, so on an offline install those probes must resolve from the
     # seeded cache. Applied before run() so every subprocess probe inherits it

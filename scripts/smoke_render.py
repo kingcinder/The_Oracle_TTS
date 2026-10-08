@@ -18,6 +18,13 @@ def main(argv: list[str] | None = None) -> int:
     whether an exception was raised: 0 only when every render's output file
     exists and is non-empty.
     """
+    # Entry-point arm (2026-10-08 audit standard): this process drives the
+    # deterministic engines and the FLAC export path natively. Consent-aware,
+    # idempotent, fail-closed — same contract as cli.main and launch_gui.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.install()
+    crash_handlers.arm_native_capture()
     parser = argparse.ArgumentParser(description="Run deterministic smoke renders for txt and md dialogue inputs.")
     parser.add_argument("--output-root", type=Path, default=Path("build/smoke_render"))
     parser.add_argument("--json", action="store_true", dest="as_json")

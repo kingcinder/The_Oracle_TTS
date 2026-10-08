@@ -201,6 +201,14 @@ def run_real_engine_smoke(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Entry-point arm first (2026-10-08 audit standard): this process runs the
+    # REAL native synthesis stack — the historically heaviest crash surface in
+    # the repo. Consent-aware, idempotent, fail-closed — same contract as
+    # cli.main and launch_gui.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.install()
+    crash_handlers.arm_native_capture()
     # This module imports the engine — and so huggingface_hub — at import time,
     # which means the offline constant has already been captured by the time we
     # get here; apply_offline_environment corrects both the env and the constant.

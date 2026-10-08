@@ -263,6 +263,13 @@ def run_deterministic_smoke_render(output_root: str | Path, source_format: str =
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Entry-point arm (2026-10-08 audit standard): `python -m the_oracle.smoke`
+    # drives the deterministic engines natively. Consent-aware, idempotent,
+    # fail-closed — same contract as cli.main and launch_gui.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.install()
+    crash_handlers.arm_native_capture()
     parser = argparse.ArgumentParser(description="Run a deterministic end-to-end smoke render.")
     parser.add_argument("--output-root", type=Path, default=Path("build/smoke_render"))
     parser.add_argument("--format", choices=["txt", "md"], default="txt", dest="source_format")
