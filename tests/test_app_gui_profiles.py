@@ -259,6 +259,14 @@ def _build_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # paths) so tests never read or write the developer's real config.
     isolate_user_config(monkeypatch, tmp_path / "config")
     window = app_gui.MainWindow()
+    # The startup crash flow (consent ask / next-session review) is modal and
+    # machine-state-dependent — it reads the real crash root, where reports
+    # may exist — so any test that shows the window would block in
+    # dialog.exec(). It is driven directly with fakes by test_gui_crash.py.
+    # Plain instance attribute (not monkeypatch): monkeypatch would hold a
+    # strong ref to the window until test teardown, which defeats the
+    # window-lifetime tests' in-test assertions.
+    window._maybe_run_crash_startup_flow = lambda: None
     return window, paths
 
 

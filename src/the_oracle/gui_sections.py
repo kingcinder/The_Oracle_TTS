@@ -13,7 +13,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QGroupBox, QSlider, QToolButton, QWidget
 
 COLLAPSE_TOOLTIP = (
@@ -45,6 +46,7 @@ class QHSectionGroup(QGroupBox):
         resizable: bool = True,
     ) -> None:
         super().__init__(title, parent)
+        self._full_title = title
         self._splitter = None
         self._splitter_index = -1
         self._collapsed = False
@@ -184,6 +186,44 @@ class QHSectionGroup(QGroupBox):
         self._toggle.move(toggle_x, 2)
         if self._size_slider is not None:
             self._size_slider.move(max(4, toggle_x - self._size_slider.width() - 8), 3)
+        self._elide_title()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt casing)
+        super().changeEvent(event)
+        # A style/theme change can alter the title's font metrics without a
+        # resize; re-elide so the title still clears the chrome.
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange):
+            self._elide_title()
+
+    def _elide_title(self) -> None:
+        """Elide the title so it never paints underneath the header chrome.
+
+        The stylesheet paints the title at the top-left while the toggle and
+        size slider are pinned to the right edge; at narrow pane widths a
+        long title (wide display fonts especially) would run under those
+        controls. The original title is kept and re-elided on every resize
+        and style change, so widening the section restores the full text.
+        """
+        if self.width() <= 0:
+            return
+        chrome_x = (
+            self._size_slider.geometry().left()
+            if self._size_slider is not None and self._size_slider.geometry().left() > 0
+            else self._toggle.geometry().left()
+        )
+        # 24 px for the stylesheet's title offset, 6 px clearance gap.
+        available = chrome_x - 30
+        if available <= 0:
+            return
+        fm = QFontMetrics(self.font())
+        # Calibration: the painted title tracks the widget font's advance
+        # (the stylesheet's ::title letter-spacing does not reach the paint).
+        if fm.horizontalAdvance(self._full_title) <= available:
+            elided = self._full_title
+        else:
+            elided = fm.elidedText(self._full_title, Qt.ElideRight, available)
+        if self.title() != elided:
+            self.setTitle(elided)
 
 
 def collapsible_section(

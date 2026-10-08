@@ -45,6 +45,16 @@ class RecordingGuideStage:
 
 STAGES: tuple[RecordingGuideStage, ...] = (
     RecordingGuideStage(
+        "help",
+        "0. Getting help: hold Ctrl and hover",
+        "Tooltips are gated: nothing pops up when you simply hover. Hold the "
+        "left Ctrl key and hover any control, label, or menu item to see a "
+        "description of what it does and how to use it. Release Ctrl to "
+        "dismiss. This works on every screen of the app, not just here in the "
+        "tour.",
+        None,
+    ),
+    RecordingGuideStage(
         "microphone",
         "1. Choose a microphone and sample rate",
         "The microphone is the source of the Seashell reference clip. The wizard lists the input devices that PortAudio can actually open and puts the system default first. Choose the microphone you will keep using: changing microphones later changes the room tone, distance, and color that the voice model learns. The sample-rate list is probed against that exact device. If no input device is found, recording is unavailable until a microphone and capture backend are installed; you can replay this guide from Settings after connecting one.",
@@ -82,6 +92,10 @@ STAGES: tuple[RecordingGuideStage, ...] = (
     ),
 )
 
+#: The four configuration stages the guide mode skips; keyed filtering keeps
+#: "guide = help + original STAGES[4:]" correct if STAGES is ever reordered.
+_SETUP_KEYS = frozenset({"microphone", "script", "folder", "naming"})
+
 
 class RecordingStudioSetupWizard(QDialog):
     """Non-modal first-open setup wizard for :class:`RecordingStudioDialog`."""
@@ -102,7 +116,9 @@ class RecordingStudioSetupWizard(QDialog):
         self._stage_index = 0
         self._finished_once = False
         self._highlighted: QWidget | None = None
-        self._stages = list(STAGES) if self.mode == "full" else list(STAGES[4:])
+        self._stages = list(STAGES) if self.mode == "full" else [
+            s for s in STAGES if s.key == "help" or s.key not in _SETUP_KEYS
+        ]
         self.setWindowTitle("The Oracle - Recording Studio Setup & Guide")
         self.setWindowFlag(Qt.WindowType.Tool, True)
         self.setModal(False)

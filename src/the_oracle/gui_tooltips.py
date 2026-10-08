@@ -13,8 +13,11 @@ Implementation notes
   focus), a lightweight poller watches the widget under the cursor and drives
   ``QToolTip`` directly, so the description appears immediately instead of
   after Qt's native tooltip delay.
-- While Ctrl-help is active, the native ``ToolTip`` event is swallowed so Qt's
-  delayed tooltip cannot fight the description we are showing.
+- While Ctrl-help is active, the native ``ToolTip`` event is always
+  swallowed: Qt's delayed tooltip can never fire on plain hover, so the
+  Ctrl+hover description is the only tooltip in the app. Tour step
+  explanations are exempt because the wizards call ``QToolTip.showText``
+  directly (not hover-driven).
 - Menu items are ``QAction``\\ s rather than widgets; hovering a menu resolves
   the action under the pointer via ``actionAt``.
 - Registering a widget keeps a strong reference to it (widgets already live
@@ -129,9 +132,11 @@ class CtrlHoverHelp(QObject):
             if self._modifiers_have_ctrl():
                 self._ctrl_down = True
                 self._timer.start()
-        elif etype == QEvent.Type.ToolTip and self._ctrl_down:
-            # While Ctrl-help is active, swallow Qt's delayed native tooltip
-            # so it cannot fight the description we are showing.
+        elif etype == QEvent.Type.ToolTip:
+            # Strict gate: native tooltips never appear on plain hover —
+            # widgets, menus, sliders, headers. The only tooltip render path
+            # is the poller's _show() below. Tour explanations bypass this
+            # because the wizards call QToolTip.showText directly.
             return True
         return False
 

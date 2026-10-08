@@ -274,8 +274,21 @@ def test_native_tooltip_swallowed_while_ctrl_down(qt_app):
     help._ctrl_down = True
     assert help.eventFilter(qt_app, tip_event) is True
 
+    # Approved strict gate: the ToolTip event is swallowed even when Ctrl is
+    # up — plain hover must never produce a native tooltip anywhere.
     help._ctrl_down = False
-    assert help.eventFilter(qt_app, tip_event) is False
+    assert help.eventFilter(qt_app, tip_event) is True
+
+
+def test_native_tooltip_swallowed_without_ctrl(qt_app):
+    """Strict gate: plain hover must never produce a native tooltip."""
+    from PySide6.QtWidgets import QWidget
+
+    help_obj = install_ctrl_hover_help(qt_app)
+    widget = QWidget()
+    widget.setToolTip("should not appear on plain hover")
+    event = QEvent(QEvent.Type.ToolTip)
+    assert help_obj.eventFilter(widget, event) is True
 
 
 def test_main_window_registers_ctrl_help(qt_app, monkeypatch, tmp_path):

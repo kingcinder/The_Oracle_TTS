@@ -144,6 +144,51 @@ def test_non_subtitle_files_are_ignored(tmp_path: Path) -> None:
     assert status["ok"] is True
 
 
+def test_cli_classifier_agrees_with_the_doctor_on_every_class(tmp_path: Path) -> None:
+    """check-input --json (and the render path's --check-input-json) classify
+    subtitle bytes through ``the_oracle.srt_ingest.classify_subtitle_bytes``;
+    the doctor classifies through its mirrored scan. The two surfaces are
+    only useful together if they cannot disagree about the same file before a
+    render — so the same bytes must get the same verdict on every class.
+    (This is the agreement direction the other pins here don't cover: they
+    pin the doctor's shapes against the real chain's, not the doctor's
+    per-file verdicts against the classifier the CLI actually calls.)"""
+    from the_oracle.srt_ingest import classify_subtitle_bytes
+
+    doctor = _load_doctor()
+    input_dir = tmp_path / "Input"
+    input_dir.mkdir()
+    utf8_cue = "1\n00:00:01,000 --> 00:00:02,000\nWinston: café.\n".encode("utf-8")
+    legacy_cue = "2\n00:00:02,000 --> 00:00:03,000\nJulia: voilà.\n".encode("cp1252")
+    files = {
+        "utf8.srt": (
+            "1\n00:00:01,000 --> 00:00:02,000\nWinston: café.\n".encode("utf-8"),
+            "utf8",
+        ),
+        "mixed.srt": (utf8_cue + b"\n\n" + legacy_cue, "mixed"),
+        "legacy.vtt": (
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nvoilà.\n".encode("cp1252"),
+            "fallback",
+        ),
+        "blocked.vtt": (b"WEBVTT\n\n\x81\n", "blocked"),
+    }
+    for name, (data, _) in files.items():
+        (input_dir / name).write_bytes(data)
+
+    status = doctor._input_subtitles_status(tmp_path)
+
+    def doctor_bucket(name: str) -> str:
+        rel = f"Input/{name}"
+        for bucket in ("fallback", "mixed", "blocked"):
+            if any(entry["path"] == rel for entry in status[bucket]):
+                return bucket
+        return "utf8"
+
+    for name, (_, expected) in files.items():
+        assert classify_subtitle_bytes((input_dir / name).read_bytes()) == expected
+        assert doctor_bucket(name) == expected, name
+
+
 # --- human report ------------------------------------------------------------
 
 

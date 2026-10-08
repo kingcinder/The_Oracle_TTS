@@ -43,6 +43,16 @@ class TutorialStage:
 
 STAGES: tuple[TutorialStage, ...] = (
     TutorialStage(
+        "help",
+        "0. Getting help: hold Ctrl and hover",
+        "Tooltips are gated: nothing pops up when you simply hover. Hold the "
+        "left Ctrl key and hover any control, label, or menu item to see a "
+        "description of what it does and how to use it. Release Ctrl to "
+        "dismiss. This works on every screen of the app, not just here in the "
+        "tour.",
+        None,
+    ),
+    TutorialStage(
         "discovery",
         "1. Discover your inference hardware",
         "The Oracle checks the devices visible to this installation before it asks you to choose. CPU / system DRAM is always available. A CUDA choice is offered only when PyTorch can see an NVIDIA card and that card meets the Chatterbox memory floor. Cards that are detected but unsuitable remain visible with the reason, so an old or 1 GiB NVIDIA card is not mistaken for an AI-capable option. Vulkan is a separate audio.cpp path and may require its runtime/model setup.",
@@ -236,9 +246,11 @@ class InferenceSetupWizard(QDialog):
     @staticmethod
     def _select_stages(mode: str) -> list[TutorialStage]:
         if mode == "discovery":
-            return [STAGES[0]]
+            return [next(s for s in STAGES if s.key == "discovery")]
         if mode == "main":
-            return list(STAGES[1:])
+            # Every configuration stage plus the help stage; the hardware
+            # discovery stage belongs to "discovery" mode only.
+            return [s for s in STAGES if s.key != "discovery"]
         return list(STAGES)
 
     def _hardware_text(self) -> str:
@@ -362,7 +374,7 @@ class InferenceSetupWizard(QDialog):
         self.show()
         self.raise_()
         self.activateWindow()
-        QTimer.singleShot(0, lambda: self._move_near_target(self._stages[self._stage_index].target_name))
+        QTimer.singleShot(0, self, lambda: self._move_near_target(self._stages[self._stage_index].target_name))
 
 
 def _format_hardware_summary(devices: list[CUDADeviceInfo]) -> str:
