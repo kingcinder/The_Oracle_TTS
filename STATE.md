@@ -6,15 +6,18 @@ This file is the repo's self-designated completeness record. It is the
 authoritative context for the Omega meta-skill loop (searched, never
 rewritten by the loop).
 
-**Records-hygiene doctrine (2026-10-05):** a commit that closes work must
+**Records-hygiene doctrine (2026-10-05, amended 2026-10-08):** a commit that closes work must
 amend the STATE entries that work closes in the same commit — a Deferred
 entry gets its RESOLVED block (with the repro/fingerprint/fix facts), a
 Noticed entry is marked resolved-verbatim or rewritten only as far as
-verification proves. Leaving a closed entry for a later reconciliation
-pass is how the 2026-10-05 records audit arose, and is treated as a
-broken record, not a pending chore. An entry that re-verification proves
-still true stays untouched; its holding commit is cited when the entry
-is next touched.
+verification proves. Finding the entries is mechanical, not memory: when
+closing work, grep Noticed/Deferred for the work's own name and keywords,
+and amend every hit in the same commit — the entry the author forgot
+exists is exactly the one a later audit finds. Leaving a closed entry for
+a later reconciliation pass is how the 2026-10-05 records audit arose,
+and is treated as a broken record, not a pending chore. An entry that
+re-verification proves still true stays untouched; its holding commit is
+cited when the entry is next touched.
 
 ## Done
 
