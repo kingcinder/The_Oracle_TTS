@@ -86,6 +86,13 @@ def spin_value(spin: QSpinBox) -> int:
 
 
 def main() -> int:
+    # Launch-path arming (the entry-point audit, 2026-10-08): this process
+    # builds the REAL MainWindow offscreen — native-crash territory — and a
+    # script entry never passes through cli.main's install+arm. Idempotent;
+    # fails closed to unarmed when consent is off.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.arm_native_capture()
     app = QApplication.instance() or QApplication([])
     settings_file = app_settings_path()
     # Back the settings file up to disk (not just memory) before the

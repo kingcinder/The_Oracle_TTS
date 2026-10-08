@@ -27,6 +27,13 @@ INPUT = os.environ.get("DRIVE_INPUT", os.path.join(REPO_ROOT, "Input", "What is,
 
 
 def main() -> int:
+    # Launch-path arming (the entry-point audit, 2026-10-08): this driver
+    # builds the REAL MainWindow and touches QMediaPlayer in-process — the
+    # exact crash classes in crash-evidence §A — without ever passing through
+    # cli.main's install+arm. Idempotent; fails closed without consent.
+    from the_oracle.crash import handlers as crash_handlers
+
+    crash_handlers.arm_native_capture()
     from PySide6.QtWidgets import QApplication
 
     from the_oracle.app_gui import MainWindow

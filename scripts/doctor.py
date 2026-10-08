@@ -148,8 +148,27 @@ def _run_python_probe(
     timeout: float,
     extra_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    # Probe children run the heaviest native code the doctor touches (Qt
+    # Multimedia construction, torch model init) — the exact crash classes
+    # in crash-evidence §A/§D — and no parent-side net can see across the
+    # process boundary. So every probe child arms its OWN net the way
+    # cli.main arms every launch: idempotent, fail-closed without consent,
+    # never raising (a failed arm must not change the probe's verdict).
+    # The boot wrapper exec()s the probe code as its own compilation unit
+    # because probe snippets may open with ``from __future__ import`` —
+    # a legal-first-statement rule that forbids simply concatenating a
+    # preamble ahead of them.
+    boot = (
+        "try:\n"
+        "    from the_oracle.crash import handlers as _crash_handlers\n"
+        "    _crash_handlers.install()\n"
+        "    _crash_handlers.arm_native_capture()\n"
+        "except Exception:\n"
+        "    pass\n"
+        f"exec(compile({code!r}, '<doctor-probe>', 'exec'), {{'__name__': '__main__'}})\n"
+    )
     result = _run_command(
-        [sys.executable, "-c", code],
+        [sys.executable, "-c", boot],
         cwd=repo_root,
         env=_probe_environment(repo_root, extra_env),
         timeout=timeout,
