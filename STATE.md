@@ -1122,6 +1122,33 @@ cited when the entry is next touched.
   untouched. Typos in *content* are render-time text repair's domain, not the format
   gate's — if anyone asks why check-input says "no issues" on a file named
   "_with_typos", that is the tested contract, not a bug.
+- **2026-10-09: adversarial pass over 8e932bd (child-QTimer startup,
+  teardown sweep, section chrome) found and fixed three substantiated
+  defects, each pinned.** (1) The wizard-launch child QTimer started with
+  Qt's default 0 ms interval, silently dropping the 250 ms first-frame
+  delay its own startup comment documents (`_wizard_launch_timer.start(250)`
+  now carries it; `test_wizard_launch_timer_keeps_its_250ms_delay` pins it).
+  (2) The autouse teardown sweep ran AFTER `monkeypatch.undo()`, so
+  `closeEvent`'s final `_persist_workspace_layout()` wrote test payloads —
+  pytest tmp paths and all — into the developer's real
+  `~/.config/the_oracle/app_settings.json` (reproduced: one passing GUI test
+  overwrote it; the file had been found corrupted in full-suite runs). The
+  sweep fixture now takes `monkeypatch` explicitly so it finalizes while the
+  XDG isolation is still active; pinned by
+  `test_teardown_fixture_finalizes_before_config_isolation_is_undone`, and a
+  stack-traced full run confirmed zero writes to the real path. The polluted
+  file was reset to normalized defaults (theme preserved). (3) The sweep
+  `deleteLater()`ed a window even when `closeEvent` had REFUSED the close
+  (a GUI-owned thread still running) — destroying a live QThread aborts the
+  process (reproduced: SIGABRT, exit 134, "QThread: Destroyed while thread
+  is still running"). The sweep now honours the refusal and reclaims the
+  window on a later pass; pinned by
+  `test_teardown_never_destroys_a_window_whose_close_is_refused`.
+  Section-chrome round-trips (new paths splitter, Review/Extra-Voices
+  sections, pre-change schema, corrupt payloads) probed clean through the
+  real startup path — no fix needed there. Validation: focused GUI nets
+  227/227; full suite 1664 passed, exit 0, real config byte-identical
+  across the run.
 
 ## Next
 
@@ -1403,6 +1430,18 @@ cited when the entry is next touched.
   lets the omega loop terminate **CONVERGED** instead of NO-PROGRESS on a
   fresh campaign; the change lives in the skill (outside this repo), so
   it is documented here rather than committed here.
+
+- **2026-10-09 (adversarial pass over 8e932bd, noticed not actioned): the
+  last context-less deferred callback on MainWindow.**
+  `open_recording_studio` still arms
+  `QTimer.singleShot(150, self._start_recording_wizard)` — the exact
+  strong-reference pattern that commit converted for the three startup
+  timers. Harm today is bounded: it pins the window wrapper for 150 ms and
+  `_start_recording_wizard` early-returns when the studio set is empty
+  (MainWindow.closeEvent closes and discards every studio first), so the
+  observed replay is benign. If it is ever touched, give the call the
+  context overload `QTimer.singleShot(150, self, ...)` or a child timer,
+  like the startup three.
 
 ## Deferred (intentional)
 

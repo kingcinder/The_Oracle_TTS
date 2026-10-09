@@ -328,7 +328,10 @@ class MainWindow(QMainWindow):
             self._wizard_launch_timer = QTimer(self)
             self._wizard_launch_timer.setSingleShot(True)
             self._wizard_launch_timer.timeout.connect(self._start_inference_wizard)
-            self._wizard_launch_timer.start()
+            # Explicit 250 ms: QTimer's default interval is 0, which would
+            # launch the tutorial on the next event-loop pass — before the
+            # first frame is painted (the delay the comment above exists for).
+            self._wizard_launch_timer.start(250)
 
     def _log_action_timing(self, label: str, wall: float | None = None, extra: dict | None = None) -> None:
         try:
