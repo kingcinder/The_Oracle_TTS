@@ -344,8 +344,16 @@ def destroy_leftover_main_windows(app=None) -> None:
             timer = getattr(window, attr, None)
             if timer is not None:
                 timer.stop()
-        window.close()
-        window.deleteLater()
+        # close() can be REFUSED: MainWindow.closeEvent keeps the window open
+        # when a GUI-owned thread cannot stop inside its bounded wait, and its
+        # docstring calls destroying such a thread "a hard Qt abort". The
+        # sweep must honour that refusal — deleteLater() here would destroy
+        # the window anyway and abort the process (reproduced: SIGABRT from
+        # "QThread: Destroyed while thread is still running"). A refused
+        # window stays behind with its startup timers stopped (inert) and a
+        # later sweep retries once its thread finishes.
+        if window.close():
+            window.deleteLater()
     # A bare processEvents() does not deliver DeferredDelete events posted
     # while outside an event loop — the windows would survive it and stay
     # pinned. The explicit typed flush is what actually destroys them.
@@ -354,13 +362,21 @@ def destroy_leftover_main_windows(app=None) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _destroy_leftover_main_windows():
+def _destroy_leftover_main_windows(monkeypatch: pytest.MonkeyPatch):
     """Run :func:`destroy_leftover_main_windows` after every test.
 
     Tests construct MainWindows freely and usually just drop them; without
     this, each one survives for the rest of the session (see the helper's
     docstring) and the first test that processes events replays all of their
     deferred startup work at once.
+
+    The explicit ``monkeypatch`` parameter is load-bearing, not decorative:
+    it makes this fixture finalize BEFORE the test's own monkeypatch use is
+    undone, so a window closed here persists through the still-active
+    ``XDG_CONFIG_HOME`` isolation. Without it the sweep ran after
+    ``monkeypatch.undo()`` and ``closeEvent``'s final
+    ``_persist_workspace_layout()`` wrote the test's payload — tmp paths and
+    all — into the developer's real app settings file.
     """
     yield
     destroy_leftover_main_windows()
