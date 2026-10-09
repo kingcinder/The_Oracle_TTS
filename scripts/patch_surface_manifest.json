@@ -17,22 +17,42 @@
       ]
     },
     "the_oracle.models.settings": {
-      "names": ["RenderSettings", "SpeakerSettings"]
+      "names": [
+        "RenderSettings",
+        "SpeakerSettings"
+      ]
     },
     "the_oracle.gui_vulkan": {
-      "names": ["_device_row_text", "_parse_oracle_model_path"]
+      "names": [
+        "_device_row_text",
+        "_parse_oracle_model_path"
+      ]
     },
     "the_oracle.gui_render": {
-      "names": ["_render_child_environment"],
+      "names": [
+        "_render_child_environment"
+      ],
       "note": "Only the no-op-after-move name. The three class names must NOT be listed: MainWindow (still in app_gui) constructs RenderWorker, PreviewWorker and RenderProgressDialog from app_gui globals, so app_gui-level class patches remain live and legitimate."
     },
     "the_oracle.gui_recording": {
-      "names": ["RecordStudioWorker"],
+      "names": [
+        "RecordStudioWorker"
+      ],
       "note": "Only the worker: MainWindow constructs it only via RecordingStudioDialog's body, which resolves the name from gui_recording's globals, so an app_gui-level patch is a silent no-op. RecordingStudioDialog must NOT be listed: MainWindow constructs it directly from app_gui globals, so app_gui-level class patches remain live and legitimate - the RenderWorker precedent. The dialog's QMediaPlayer/QAudioOutput fakes patch the_oracle.gui_recording by module object, never app_gui."
     },
     "the_oracle.gui_cast": {
-      "names": ["_CastRow"],
+      "names": [
+        "_CastRow"
+      ],
       "note": "Only the row widget: CastManagementDialog - which MainWindow constructs from app_gui globals, the RecordingStudioDialog precedent - builds its rows from gui_cast's globals, so an app_gui-level patch of _CastRow is a silent no-op. SpeakerGroup, CastManagementDialog, _speaker_settings_from_group and _apply_speaker_settings_to_group must NOT be listed: MainWindow reads/constructs them from app_gui globals too (split readership - the patch-surface net's PARTIAL_OWNED records the partial patch coverage)."
+    },
+    "the_oracle.gui_ingest_tools": {
+      "names": [
+        "run_ingest_transformer_check",
+        "batch_fix_input_folder",
+        "restore_most_recent_format_backup"
+      ],
+      "note": "extraction slice 10 (2026-10-08): the ingest-tools handler flow bodies moved verbatim from MainWindow methods (which remain as thin delegates with the exact test-driven signatures); every patch-coupled Qt name crosses as an INJECTION parameter resolved from app_gui globals at call time (message_box_cls, file_dialog_cls) so app_gui-level wholesale rebinds keep intercepting the moved code"
     }
   },
   "payload_policy": {
@@ -48,7 +68,13 @@
       "export_srt_check",
       "monologue_check"
     ],
-    "read_accessors": ["text", "currentText", "value", "isChecked", "currentData"],
+    "read_accessors": [
+      "text",
+      "currentText",
+      "value",
+      "isChecked",
+      "currentData"
+    ],
     "sanctioned_readers": [
       "_widget_snapshot",
       "_render_settings",
@@ -87,7 +113,10 @@
       "WidgetSnapshot",
       "PayloadDefaults"
     ],
-    "policy_owners": {"the_oracle.gui_settings": "definition", "the_oracle.app_gui": "delegates"},
+    "policy_owners": {
+      "the_oracle.gui_settings": "definition",
+      "the_oracle.app_gui": "delegates"
+    },
     "schema_keys": [
       "model_variant",
       "correction_mode",
@@ -107,22 +136,44 @@
       "audio_cpp_timeout",
       "audio_cpp_max_batch"
     ],
-    "schema_exempt_modules": ["the_oracle.gui_settings", "the_oracle.app_gui"]
+    "schema_exempt_modules": [
+      "the_oracle.gui_settings",
+      "the_oracle.app_gui"
+    ]
   },
   "writer_manifest": {
     "description": "Policy data for tests/test_stem_cache_write_path.py's writer manifest: which write functions count as cache writes, which call/target shapes classify a write as stem- or preview-shaped, which source files are the gated owners of each kind, and the blindness floors under which the scan has demonstrably not gone blind. Stem writes must pass the engine-output gate (sanitize_engine_audio); preview writes are owned by OraclePipeline.render_preview (pause-only via _write_pause_only_stem, spoken via the gated engine path).",
-    "write_functions": ["save_wav", "atomic_write"],
-    "stem_target_names": ["stem_path"],
-    "preview_target_names": ["preview_path"],
-    "stem_writers": ["pipeline.py", "real_engine_smoke.py"],
-    "preview_writers": ["pipeline.py"],
+    "write_functions": [
+      "save_wav",
+      "atomic_write"
+    ],
+    "stem_target_names": [
+      "stem_path"
+    ],
+    "preview_target_names": [
+      "preview_path"
+    ],
+    "stem_writers": [
+      "pipeline.py",
+      "real_engine_smoke.py"
+    ],
+    "preview_writers": [
+      "pipeline.py"
+    ],
     "min_stem_sites": 4,
     "min_preview_sites": 1
   },
   "patch_couple_policy": {
     "description": "Policy data for the patch-couple seam net (tests/test_app_gui_patch_surface.py): a name the suite rebinds at the app_gui module level is patch-coupled, and a moved gui_* module whose body resolves it as a bare global turns every app_gui-level rebind of it into a silent no-op. The net derives the coupled set from the test suite itself (self-updating census), scans every gui_* module's bare Name loads, and requires the raw bare set to equal the sanctioned exemptions EXACTLY: a new bare use fails until the call boundary injects the name (the 2ba2392 find_audiocpp_binary pattern) or the split is sanctioned here with a reason; a stale exemption fails until pruned.",
-    "census_noise_names": ["name"],
-    "census_anchor_names": ["QMessageBox", "OraclePipeline", "find_audiocpp_binary", "QMediaPlayer"],
+    "census_noise_names": [
+      "name"
+    ],
+    "census_anchor_names": [
+      "QMessageBox",
+      "OraclePipeline",
+      "find_audiocpp_binary",
+      "QMediaPlayer"
+    ],
     "min_census_names": 15,
     "min_modules_scanned": 13,
     "min_bare_pairs": 8,
@@ -139,13 +190,13 @@
         "QAudioOutput": "documented repointed split (e053ef5): window-fixture level stays app_gui"
       },
       "gui_cast.py": {
-  "QDialog": "documented split (slice 9): CastManagementDialog subclasses QDialog resolving from gui_cast globals; the app_gui-level QDialog fakes (ingest preview/batch tests) target app_gui-resident dialogs, which still resolve from app_gui globals",
-  "QMessageBox": "documented split (slice 9): the cast-full popup resolves from gui_cast globals; the ingest tests' app_gui-level QMessageBox fakes target app_gui-resident popups",
-  "blend_voice_choices": "documented split (slice 9): the cast dialog's picker refresh resolves the voice catalogs from gui_cast globals; app_gui-level rebinds cover app_gui's remaining picker call sites",
-  "default_voice_choices": "documented split (slice 9): same as blend_voice_choices — both modules have call sites and each resolves its own binding",
-  "load_recent_reference_paths": "documented split (slice 9): recents feed both modules' pickers; app_gui-level rebinds cover app_gui's sites while the cast dialog reads gui_cast's binding"
- },
- "gui_settings.py": {
+        "QDialog": "documented split (slice 9): CastManagementDialog subclasses QDialog resolving from gui_cast globals; the app_gui-level QDialog fakes (ingest preview/batch tests) target app_gui-resident dialogs, which still resolve from app_gui globals",
+        "QMessageBox": "documented split (slice 9): the cast-full popup resolves from gui_cast globals; the ingest tests' app_gui-level QMessageBox fakes target app_gui-resident popups",
+        "blend_voice_choices": "documented split (slice 9): the cast dialog's picker refresh resolves the voice catalogs from gui_cast globals; app_gui-level rebinds cover app_gui's remaining picker call sites",
+        "default_voice_choices": "documented split (slice 9): same as blend_voice_choices — both modules have call sites and each resolves its own binding",
+        "load_recent_reference_paths": "documented split (slice 9): recents feed both modules' pickers; app_gui-level rebinds cover app_gui's sites while the cast dialog reads gui_cast's binding"
+      },
+      "gui_settings.py": {
         "load_recent_reference_paths": "documented split: app_gui imports the loader and its two call sites resolve from app_gui globals (app_gui-level rebinds stay live); gui_settings' internal recursion inside the recents-add helper resolves from its own module by design"
       }
     }

@@ -1125,6 +1125,37 @@ cited when the entry is next touched.
 
 ## Next
 
+- **2026-10-08: the tenth extraction slice is EXECUTED — the ingest-tools
+  handler cluster moved to the new `gui_ingest_tools` owner, seam-proven by
+  mutation.** The move followed the plan recorded below exactly: the three
+  flow bodies (`_run_ingest_transformer_check`, `_batch_fix_input_folder`,
+  `_restore_most_recent_format_backup` — the remaining delegators
+  `_show_fix_preview_dialog`/`_show_batch_fix_preview_dialog` and the
+  trusted-file/backup wrappers stay on MainWindow, which remains the owner
+  of app-settings state) moved verbatim into
+  `src/the_oracle/gui_ingest_tools.py` as free functions taking the window;
+  every patch-coupled Qt name crosses the boundary as an INJECTION parameter
+  resolved from app_gui globals at call time (`message_box_cls=`,
+  `file_dialog_cls=` — the VulkanPreflightThread precedent; the module
+  imports no Qt class at all, which keeps the patch-couple net's bare-set
+  rule satisfied with no new exemption). `QFileDialog` was measured before
+  shaping the seam: the suite's 7 `QFileDialog` patches bind through
+  `app_gui.QFileDialog` (the shared Qt class object, not a module global),
+  so they survive any import spelling — but it crosses as a parameter
+  anyway, for symmetry with `message_box_cls=`. `_convert_subtitle_input`
+  and `_speaker_ref_hint_lines` deliberately stayed (both are source-pinned
+  by `tests/test_subtitle_conversion_has_one_owner.py` and
+  `tests/test_naming_and_wording_have_one_owner.py` respectively). The
+  MOVED_OWNERS record gains `the_oracle.gui_ingest_tools` (3 names). The
+  seam is mutation-proven: with the seam intact, an app_gui-level
+  `QMessageBox` rebind reaches the moved body's `critical()` (probe exit 0);
+  with a bare-global resolution mutated in, the identical rebind is bypassed
+  and the probe fails (exit 1) — the exact Vulkan-slice harm made concrete —
+  then reverted byte-identically. Verified: cluster net 34/34
+  (test_ingest_transformer_gui), one-owner/naming nets 27/27, patch-surface
+  12/12 over the amended manifest, payload-policy + import-direction 11/11,
+  neighbor GUI nets 126/126; app_gui.py 4099 → 3910 lines.
+
 - **2026-10-08: the tenth extraction slice is picked and armed — the
   ingest-tools handler cluster — pre-flight gates green; the move itself is
   held until the parallel GUI-legibility session's app_gui.py hunks land.**
