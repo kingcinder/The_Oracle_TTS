@@ -61,14 +61,12 @@ from the_oracle.gui_settings import (
     clear_trusted_input_files,
     current_gui_settings_payload,
     default_gui_settings_payload,
-    drop_next_format_backup,
     input_file_is_trusted,
     list_templates,
     load_app_settings,
     load_gui_settings,
     load_recent_reference_paths,
     load_template,
-    next_format_backup,
     remember_format_backup,
     remember_recent_reference_path,
     remember_trusted_input_file,
@@ -3143,68 +3141,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Project Failed", str(exc))
 
     def _batch_fix_input_folder(self) -> None:
-        """Scan a folder for misformatted input scripts and fix them in bulk.
+        """Delegate to the gui_ingest_tools flow body (extraction slice 10)."""
+        from the_oracle.gui_ingest_tools import batch_fix_input_folder
 
-        One folder picker, one combined preview of every file's exact
-        rewrite, then a single Apply that writes every accepted file (each
-        original backed up) and reports per-file results in the status panel.
-        """
-        from the_oracle.gui_ingest import run_batch_fix_preview
-        from the_oracle.ingest_transformer import analyze_folder, apply_folder_fixes, preview_folder_fixes
-
-        folder = QFileDialog.getExistingDirectory(self, "Choose Folder of Input Scripts", "")
-        if not folder:
-            return
-        try:
-            analyses = analyze_folder(folder)
-        except (OSError, ValueError, UnicodeDecodeError):
-            QMessageBox.critical(self, "Scan Failed", f"The folder could not be read:\n{folder}")
-            return
-        if not analyses:
-            QMessageBox.information(
-                self,
-                "Input Formatting",
-                f"No formatting problems found in:\n{folder}\n\nEvery file is already in a format the engine attributes correctly.",
-            )
-            return
-
-        warnings_only = [a for a in analyses if not a.fixable_issues]
-        try:
-            fixes, _warnings = preview_folder_fixes(folder)
-        except ValueError:
-            # Nothing fixable: only warnings. Report them, offer no fix.
-            lines = [f"Found {len(warnings_only)} file(s) with unfixable formatting warnings:"]
-            for analysis in warnings_only[:10]:
-                for issue in analysis.warning_issues[:3]:
-                    lines.append(f"  \u2022 {Path(analysis.path).name}, line {issue.line_number}: {issue.description}")
-            QMessageBox.warning(self, "Input Formatting", "\n".join(lines))
-            return
-
-        accepted = self._show_batch_fix_preview_dialog(folder, fixes, warnings_only)
-        if not accepted:
-            self.error_panel.append("Batch fix cancelled: no files were changed.")
-            return
-        try:
-            written = apply_folder_fixes(accepted)
-        except OSError as exc:
-            QMessageBox.critical(self, "Batch Fix Failed", f"The files could not be corrected:\n{exc}")
-            return
-        total = sum(count for _path, count, _backup in written)
-        self.error_panel.append(
-            f"Batch fix: corrected {total} formatting problem(s) across "
-            f"{len(written)} file(s) in {folder}."
-        )
-        for path, count, backup_path in written:
-            self.error_panel.append(
-                f"  \u2022 {Path(path).name}: {count} fix(es)"
-                + (f" (backup: {backup_path})" if backup_path else "")
-            )
-        QMessageBox.information(
-            self,
-            "Batch Fix Complete",
-            f"Corrected {total} formatting problem(s) across {len(written)} file(s).\n\n"
-            "Backups of every original were saved next to the files.",
-        )
+        # INJECTION seam: the bare QMessageBox/QFileDialog names resolve from
+        # THIS module's globals at call time, so app_gui-level rebinds keep
+        # intercepting the moved body exactly as before the move.
+        batch_fix_input_folder(self, message_box_cls=QMessageBox, file_dialog_cls=QFileDialog)
 
     def _color_rule_labels_in_view(self, view, rules: list[str]) -> None:
         """Delegate to the single owner in gui_ingest."""
@@ -3224,85 +3167,13 @@ class MainWindow(QMainWindow):
         return run_batch_fix_preview(self, folder, fixes, warnings_only, dialog_cls=QDialog)
 
     def _run_ingest_transformer_check(self) -> bool:
-        """Check the input file's formatting with the ingestion transformer.
+        """Delegate to the gui_ingest_tools flow body (extraction slice 10)."""
+        from the_oracle.gui_ingest_tools import run_ingest_transformer_check
 
-        When fixable or unfixable format issues are found, show a warning
-        popup explaining them; the popup offers a one-click in-place fix
-        (with a timestamped backup) when the issues are fixable.
-
-        Returns True when analysis should proceed (no issues, user fixed the
-        file, or user chose to continue anyway); False when the user wants to
-        stop and fix the file themselves.
-        """
-        from the_oracle.gui_ingest import format_warning_choice
-        from the_oracle.ingest_transformer import analyze_input_file, fix_input_file, preview_fixed_text
-
-        input_file = self.input_path.text().strip()
-        if not input_file or not Path(input_file).is_file():
-            return True
-        try:
-            analysis = analyze_input_file(input_file)
-        except (OSError, ValueError, UnicodeDecodeError):
-            # An unreadable file will fail on its own in prepare_plan with a
-            # clear error; the transformer must never block analysis.
-            return True
-        if not analysis.has_issues:
-            return True
-        if self._input_file_is_trusted(input_file):
-            # The user pre-approved fixes for this file: apply them silently
-            # (backup kept) and continue, no popup.
-            try:
-                _text, fix_count, backup_path = fix_input_file(input_file)
-            except (OSError, ValueError):
-                return True  # fall back to the normal flow if the fix fails
-            self._remember_format_backup(input_file, backup_path)
-            self.error_panel.append(
-                f"Input formatting: auto-corrected {fix_count} problem(s) in "
-                f"{Path(input_file).name} (trusted file; backup kept)."
-            )
-            return True
-
-        choice = format_warning_choice(
-            self,
-            fixable_issues=analysis.fixable_issues,
-            warning_issues=analysis.warning_issues,
-            hint_lines=self._speaker_ref_hint_lines(input_file),
-            message_box_cls=QMessageBox,
-        )
-        if choice == "cancel":
-            return False
-        if choice != "fix":
-            return True  # clean of fixables, Ignore, or any non-fix button
-        try:
-            original_text, fixed_text, fix_count, _issues, line_fixes = preview_fixed_text(input_file)
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Fix Failed", f"The file could not be corrected:\n{exc}")
-            return False
-        if not self._show_fix_preview_dialog(original_text, fixed_text, fix_count, line_fixes, input_file=input_file):
-            self.error_panel.append("Fix cancelled: the input file was left unchanged.")
-            return False
-        try:
-            _text, fix_count, backup_path = fix_input_file(input_file)
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Fix Failed", f"The file could not be corrected:\n{exc}")
-            return False
-        self._remember_format_backup(input_file, backup_path)
-        message = f"Corrected {fix_count} formatting problem(s) in {Path(input_file).name}."
-        if backup_path:
-            message += f"\n\nA backup of the original was saved to:\n{backup_path}"
-        hint_lines = self._speaker_ref_hint_lines(input_file)
-        if hint_lines:
-            message += "\n\n" + "\n".join(hint_lines)
-        QMessageBox.information(self, "File Corrected", message)
-        self.error_panel.append(
-            f"Input formatting: corrected {fix_count} problem(s) in "
-            f"{Path(input_file).name}"
-            + (f" (backup: {backup_path})" if backup_path else "")
-            + " \u2014 re-analyzing the corrected file now."
-        )
-        for hint in self._speaker_ref_hint_lines(input_file):
-            self.error_panel.append(f"  {hint}")
-        return True
+        # INJECTION seam: the bare QMessageBox name resolves from THIS
+        # module's globals at call time, so app_gui-level rebinds keep
+        # intercepting the moved body exactly as before the move.
+        return run_ingest_transformer_check(self, message_box_cls=QMessageBox)
 
     def _speaker_ref_hint_lines(self, input_file: str) -> list[str]:
         """--speaker-ref suggestions for a script's cast, for the popup list.
@@ -3358,73 +3229,13 @@ class MainWindow(QMainWindow):
                 pass
 
     def _restore_most_recent_format_backup(self) -> None:
-        """Settings action: undo the most recent input-file fix from its backup."""
-        record = next_format_backup(self._app_settings)
-        if record is None:
-            QMessageBox.information(
-                self,
-                "Restore Backup",
-                "No input-file backups are recorded yet. Backups are noted "
-                "whenever a formatting fix corrects a file in place.",
-            )
-            return
-        fixed_file = Path(record["file"])
-        backup_file = Path(record["backup"])
-        if not backup_file.is_file():
-            QMessageBox.critical(
-                self,
-                "Restore Backup",
-                f"The backup file no longer exists:\n{backup_file}",
-            )
-            drop_next_format_backup(self._app_settings)
-            if self._app_settings_ready:
-                try:
-                    save_app_settings(self._app_settings)
-                except OSError:
-                    pass
-            return
-        stamp = record.get("stamp") or "an earlier time"
-        answer = QMessageBox.question(
-            self,
-            "Restore Backup",
-            f"Restore {fixed_file.name} from its most recent backup?\n\n"
-            f"Backup: {backup_file}\nTaken: {stamp}\n\n"
-            "The corrected version will be overwritten by the original.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            text = backup_file.read_text(encoding="utf-8")
-            fixed_file.write_text(text, encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            QMessageBox.critical(
-                self,
-                "Restore Failed",
-                f"The backup could not be restored:\n{exc}",
-            )
-            return
-        drop_next_format_backup(self._app_settings)
-        if self._app_settings_ready:
-            try:
-                save_app_settings(self._app_settings)
-            except OSError:
-                pass
-        self.error_panel.append(
-            f"Restored {fixed_file.name} from its backup (fix of {stamp} undone)."
-        )
-        # Re-point the input field when the restored file is the remembered
-        # input (or nothing is loaded), so the next Analyze/render uses it.
-        current = self.input_path.text().strip()
-        if not current or Path(current).resolve() == fixed_file:
-            self.input_path.setText(str(fixed_file))
-        QMessageBox.information(
-            self,
-            "Backup Restored",
-            f"{fixed_file.name} was restored from its backup.\n\n"
-            "The corrected version was overwritten by the original.",
-        )
+        """Delegate to the gui_ingest_tools flow body (extraction slice 10)."""
+        from the_oracle.gui_ingest_tools import restore_most_recent_format_backup
+
+        # INJECTION seam: the bare QMessageBox name resolves from THIS
+        # module's globals at call time, so app_gui-level rebinds keep
+        # intercepting the moved body exactly as before the move.
+        restore_most_recent_format_backup(self, message_box_cls=QMessageBox)
 
     def _show_fix_preview_dialog(
         self,
