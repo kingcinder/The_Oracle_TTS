@@ -10,6 +10,10 @@ themes:
   * legibility is certified (the theme module's import-time WCAG check);
   * the section resize sliders actually move splitter space;
   * collapse toggles clip sections to their headers without losing widgets;
+  * EVERY registered section is swept — the three the 2026-10-08 legibility
+    pass gave chrome to (``paths``/``table``/``extra_voices``) included, so a
+    section missing from the list below is a section this sweep silently owns
+    nothing of;
   * the workspace round-trips: theme, splitters, section shares, collapses,
     window size, and the input file persist to the app settings file and come
     back intact on a fresh window.
@@ -136,7 +140,21 @@ def main() -> int:
     original_env_theme = os.environ.get("ORACLE_TEST_THEME")
     os.environ["ORACLE_TEST_THEME"] = "1"  # reserved for future per-test overrides
 
-    all_sections = ("shared", "speaker_a", "speaker_b", "status", "live")
+    # Every key in ``_section_registry`` — keep this tuple in step with
+    # app_gui's registrations. A key that lands in the registry without
+    # landing here is a section the sweep stops covering, which is exactly
+    # how paths/table/extra_voices came to be missing (they were registered
+    # by the 2026-10-08 legibility pass; the tuple predated them).
+    all_sections = (
+        "shared",
+        "speaker_a",
+        "speaker_b",
+        "extra_voices",
+        "paths",
+        "table",
+        "status",
+        "live",
+    )
 
     try:
         # Park the records store (repo root, the same root MainWindow's D8
@@ -198,6 +216,14 @@ def main() -> int:
             app.processEvents()
 
             # 3. Sections exist, are collapsible, and their sliders move space.
+            # Two passes, mirroring scripts/certify_section_chrome.py: every
+            # slider is driven from launch geometry FIRST, then every collapse
+            # runs. Interleaved, a collapse clips its pane to 30 px and the
+            # splitter keeps that size on expand, so a later section's slider
+            # check would measure leftover state instead of the launch layout
+            # — a pane already at its content floor cannot be moved by ANY
+            # slider value (reproduced on the Review pane there, floor-locked
+            # at [174, 104] by an earlier section's collapse).
             for section_key in all_sections:
                 entry = window._section_registry.get(section_key)
                 check(entry is not None, f"{key}: missing section {section_key}")
@@ -205,29 +231,61 @@ def main() -> int:
                     continue
                 section, splitter, index = entry
                 check(section.is_collapsed() is False, f"{key}: {section_key} unexpectedly collapsed at launch")
-                before = splitter.sizes()[index]
-                total_before = sum(splitter.sizes())
-                # Drive the slider like a user (unblock signals) so the
-                # redistribute path itself is what gets certified. Request a
-                # share the pane can actually reach: siblings keep at least
-                # 20% each and this pane's own minimum is a floor.
                 slider = section.findChild(QSlider)
                 check(slider is not None, f"{key}: {section_key} has no size slider")
-                if slider is not None:
-                    share = before / total_before if total_before else 0.5
-                    slider.blockSignals(False)
-                    slider.setValue(30 if share > 0.45 else 75)
-                app.processEvents()
-                after = splitter.sizes()[index]
-                check(
-                    after != before,
-                    f"{key}: {section_key} size slider did not move splitter space ({before} -> {after})",
-                )
+                # Extra Voices is hidden by design until a cast beyond A/B
+                # exists, and the redistributer deliberately skips hidden
+                # panes (pinned by
+                # test_hidden_extra_voices_pane_does_not_break_size_slider),
+                # so a hidden pane's slider is exempt from the drive. Its
+                # slider-while-shown behavior is certified by the sibling
+                # scripts/certify_section_chrome.py, which shows the pane.
+                if slider is not None and not section.isHidden():
+                    sizes_before = splitter.sizes()
+                    before = sizes_before[index]
+                    # Drive the slider like a user (unblock signals) so the
+                    # redistribute path itself is what gets certified, and
+                    # drive BOTH directions: a single request has a no-op
+                    # regime in each branch — 75 matches the launch geometry
+                    # when the pane already sits near there (the slider only
+                    # re-syncs from splitterMoved), and 30 clamps silently to
+                    # the pane's content floor (the Review table pins 140 px +
+                    # 34 px chrome = 174). A wired slider moves the splitter in
+                    # at least one direction; a dead one moves it in neither.
+                    for target in (30, 75):
+                        slider.blockSignals(False)
+                        slider.setValue(target)
+                        app.processEvents()
+                        if splitter.sizes()[index] != before:
+                            break
+                    after = splitter.sizes()[index]
+                    check(
+                        after != before,
+                        f"{key}: {section_key} size slider did not move splitter space "
+                        f"(started {before}; setValue 30 and 75 were both no-ops)",
+                    )
+                    # Put the launch geometry back so this section's drive
+                    # cannot squeeze the next section's check (and the
+                    # persistence check below measures the launch layout).
+                    splitter.setSizes(sizes_before)
+                    app.processEvents()
+
+            # Collapse clips each section to its header and restore brings it
+            # back — size-independent (a maxHeight clip), so it may run after
+            # every geometry/slider check is done. Restore is asserted because
+            # this pass runs before the persistence step, which must snapshot
+            # an uncollapsed launch layout.
+            for section_key in all_sections:
+                entry = window._section_registry.get(section_key)
+                if entry is None:
+                    continue
+                section, _splitter, _index = entry
                 section.set_collapsed(True)
                 app.processEvents()
                 check(section.maximumHeight() < 80, f"{key}: {section_key} did not clip when collapsed")
                 section.set_collapsed(False)
                 app.processEvents()
+                check(not section.is_collapsed(), f"{key}: {section_key} did not restore after collapse")
 
             # 4. Persistence round-trip: mutate layout + settings, reopen.
             window.speaker_a.cfg_weight.setValue(1.11)
