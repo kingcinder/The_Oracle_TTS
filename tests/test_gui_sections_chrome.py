@@ -5,8 +5,10 @@ persistence, per the approved design.
 """
 
 import os
+from pathlib import Path
 
 import pytest
+import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -194,3 +196,24 @@ def test_paths_collapse_and_splitter_survive_persist_round_trip(
         assert section3.is_collapsed() is True
     finally:
         window3.close()
+
+
+# --- CI: the six-theme sweep is a named step on every push --------------------
+
+
+def test_workflow_runs_the_section_chrome_sweep_on_both_oses() -> None:
+    """The unit pins above drive a faked window; the sweep certifies the
+    same chrome on the REAL MainWindow per theme. Gated only by operating
+    system, so it runs on every push and pull_request -- the `on:` block
+    needs no per-step opt-in."""
+    workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    steps = {step.get("name"): step for step in workflow["jobs"]["test"]["steps"]}
+    linux = steps["Section Chrome Six-Theme Sweep (Linux)"]
+    windows = steps["Section Chrome Six-Theme Sweep (Windows)"]
+    assert ".venv/bin/python" in linux["run"]
+    assert "scripts/certify_section_chrome.py" in linux["run"]
+    assert ".venv\\Scripts\\python.exe" in windows["run"]
+    assert "scripts/certify_section_chrome.py" in windows["run"]
+    assert linux["if"] == "runner.os == 'Linux'"
+    assert windows["if"] == "runner.os == 'Windows'"

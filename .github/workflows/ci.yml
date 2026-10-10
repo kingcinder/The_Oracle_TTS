@@ -134,6 +134,23 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\python.exe scripts/smoke_render.py
 
+      # The suite pins the section chrome (Script & Cast / Review / Extra
+      # Voices) through a faked window; this script certifies the same
+      # contract on the REAL MainWindow for every theme, so a theme
+      # stylesheet regression that only shows in rendered chrome fails here.
+      # It needs no model and no network, redirects the app settings to a
+      # throwaway config root, neutralizes the modal startup dialogs per
+      # window, and exits nonzero the moment a theme fails a check.
+      - name: Section Chrome Six-Theme Sweep (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./.venv/bin/python scripts/certify_section_chrome.py
+
+      - name: Section Chrome Six-Theme Sweep (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe scripts/certify_section_chrome.py
+
       # The doctor is the launch gate, so its verdict must not depend on how
       # many times it has been run. That regressed twice, each time because a
       # check graded state it had created on the earlier run, and neither was

@@ -1150,6 +1150,63 @@ cited when the entry is next touched.
   227/227; full suite 1664 passed, exit 0, real config byte-identical
   across the run.
 
+
+- **2026-10-10: the six-theme section-chrome probe is persisted as a tracked
+  CI gate — `scripts/certify_section_chrome.py`, two workflow steps, two
+  pins.** The legibility pass's offscreen verification lived in a one-off
+  /tmp probe; it now lands as a standalone certifier that builds the REAL
+  MainWindow for all six themes and checks the three chrome'd sections
+  (registry presence, chrome titles, non-degenerate geometry, size sliders
+  moving splitter space, collapse clip/restore, the hidden-by-design Extra
+  Voices behavior, the populated Review-table viewport, and the paths
+  splitter persistence round-trip). CI runs it as a named step on both
+  operating systems (pinned by
+  `test_workflow_runs_the_section_chrome_sweep_on_both_oses`), and the
+  entry arms the faulthandler net before its first Qt construction (pinned
+  by `test_certify_section_chrome_arms_before_mainwindow`; both pins
+  mutation-proven). Persisting it surfaced four real problems, each fixed
+  with its mechanism recorded: (1) the D8 startup crash flow is
+  machine-state modal — on a fresh checkout (no consent decision recorded)
+  it opens first-run consent and blocks any unattended sweep; the script
+  stubs `_maybe_run_crash_startup_flow` and `_start_inference_wizard` per
+  window before the first event pump (both timers connect inside
+  `_on_gui_shown`, so instance attributes set right after construction are
+  what they capture — the test_app_gui_profiles idiom). (2) A settings
+  backup/restore dance cannot survive a SIGSEGV (finally never runs; two
+  probe runs really did clobber the developer's real
+  `~/.config/the_oracle/app_settings.json` before the isolation landed —
+  restored from the oldest /tmp backup, only theme/geometry had differed):
+  the run now points XDG_CONFIG_HOME AND APPDATA at a temp dir before any
+  the_oracle import (the isolate_user_config contract — XDG alone still
+  touches %APPDATA% on Windows), so even a crash leaves nothing to
+  restore; real settings verified byte-identical across clean runs. (3)
+  The single-direction slider check had a no-op regime in each branch —
+  75% matches the geometry when a pane already sits at ~75% (the slider
+  only re-syncs from splitterMoved), 30% clamps silently to the Review
+  table's 140 px + 34 px chrome = 174 floor — so the check now drives
+  both directions and passes iff one moves (a dead slider moves neither).
+  (4) Interleaving slider checks with collapse checks measured leftover
+  state, not the launch layout: a collapse clips its pane to 30 px and the
+  splitter keeps that size on expand, and on a clean HEAD checkout that
+  left the Review splitter exactly floor-locked [174, 104] — no slider
+  value moves a splitter already at its combined minimums (caught only by
+  validating the artifact against a `git archive HEAD` clean tree, not
+  the working tree). Checks now run in two passes (all geometry/slider
+  checks from launch geometry, then the collapse checks), and windows are
+  torn down on the conftest discipline (stop the startup timers, honor
+  closeEvent's refusal, deleteLater + DeferredDelete flush) — before it
+  the probe segfaulted 2 of 3 runs (exit 139, faulthandler silent, the
+  gui_tooltips teardown class), after it 8/8 clean full sweeps across
+  both trees. Noticed, not actioned: the shared `_assert_armed_before`
+  textual pin matches the arm call left inside a comment (`pass  #
+  crash_handlers.arm_native_capture()` passes it) — pre-existing for all
+  arming pins, deleting the line is caught; hardening the shared helper
+  is a separate unit of work. Validation: the sweep itself 8/8 exit 0
+  after the fixes (6 working-tree, 2 clean-HEAD); arming/chrome/smoke/
+  record-integrity nets 43 passed; full suite 1670 passed / 0 failed /
+  0 skipped, exit 0 — that number includes the concurrent session's
+  in-flight recording-wizard-timer and apply_theme work (its own 4 tests,
+  left uncommitted for its owner).
 ## Next
 
 - **2026-10-08: the tenth extraction slice is EXECUTED — the ingest-tools
