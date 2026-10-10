@@ -535,6 +535,32 @@ def test_main_window_recording_studio_action_and_close_refresh(monkeypatch, tmp_
     assert refresh_calls, "voice pickers must refresh when the studio closes without a recording"
 
 
+def test_open_recording_studio_launches_the_guide_from_the_child_timer(
+    monkeypatch, tmp_path, qt_app
+):
+    """The converted child timer must still FIRE while the window is alive:
+    a fresh config's first studio open shows the recording guide ~150 ms
+    later (the launch the context-less singleShot used to schedule)."""
+    from PySide6.QtTest import QTest
+
+    from the_oracle.recording_wizard import RecordingStudioSetupWizard
+
+    window, _ = _build_main_window(monkeypatch, tmp_path)
+    # _on_gui_shown arms the crash startup flow, which is modal and reads
+    # machine state — faked exactly as tests/test_app_gui_profiles does, so
+    # the event-loop pass below can't block in dialog.exec().
+    window._maybe_run_crash_startup_flow = lambda: None
+
+    window.open_recording_studio()
+    QTest.qWait(400)  # past the 150 ms deadline, event loop live
+    wizards = [
+        w
+        for w in qt_app.topLevelWidgets()
+        if isinstance(w, RecordingStudioSetupWizard)
+    ]
+    assert wizards, "the recording guide did not launch from the child timer"
+
+
 def test_main_window_reports_saved_seashell_and_refreshes(monkeypatch, tmp_path, qt_app):
     window, paths = _build_main_window(monkeypatch, tmp_path)
     refresh_calls = []

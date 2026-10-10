@@ -183,6 +183,13 @@ class MainWindow(QMainWindow):
         self._app_settings_ready = False
         self._inference_wizard: InferenceSetupWizard | None = None
         self._recording_wizard: RecordingStudioSetupWizard | None = None
+        # Recording guide launch, armed by open_recording_studio: a
+        # single-shot child timer like the startup three, so the pending call
+        # lives and dies with this window instead of riding the context-less
+        # QTimer.singleShot helper.
+        self._recording_wizard_launch_timer = QTimer(self)
+        self._recording_wizard_launch_timer.setSingleShot(True)
+        self._recording_wizard_launch_timer.timeout.connect(self._start_recording_wizard)
         # Section layout registry: key -> (section, splitter, index). Filled
         # during _build_ui; drives persistence of splitter sizes, section
         # size sliders, and collapse states.
@@ -2321,7 +2328,11 @@ class MainWindow(QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
         if not self._app_settings.get("recording_wizard_completed", False) and not self._app_settings.get("recording_wizard_dismissed", False):
-            QTimer.singleShot(150, self._start_recording_wizard)
+            # 150 ms so the studio's first frame paints before the guide
+            # highlights a control. start() restarts: opening another studio
+            # while a launch is pending moves the deadline instead of
+            # doubling it.
+            self._recording_wizard_launch_timer.start(150)
 
     def _apply_recording_wizard_preferences(self, payload: dict) -> None:
         """Apply and persist the setup choices made in the recording guide."""
@@ -3796,7 +3807,10 @@ class MainWindow(QMainWindow):
         # handler with a zero-timer so the backend finishes delivering first.
         end_state = getattr(status, "EndOfMedia", None)
         if end_state is not None and status == end_state:
-            QTimer.singleShot(0, self._stop_preview_player)
+            # Context form: the pending stop dies with this window instead of
+            # riding the context-less overload's undocumented receiver
+            # semantics.
+            QTimer.singleShot(0, self, self._stop_preview_player)
 
     def _stop_preview_player(self) -> None:
         # GUI-thread contexts only (EndOfMedia deferral, window close) — the

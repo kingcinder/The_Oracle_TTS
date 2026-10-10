@@ -340,6 +340,7 @@ def destroy_leftover_main_windows(app=None) -> None:
             "_gui_shown_timer",
             "_crash_flow_timer",
             "_wizard_launch_timer",
+            "_recording_wizard_launch_timer",
         ):
             timer = getattr(window, attr, None)
             if timer is not None:
