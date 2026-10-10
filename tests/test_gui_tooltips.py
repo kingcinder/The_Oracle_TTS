@@ -291,6 +291,44 @@ def test_native_tooltip_swallowed_without_ctrl(qt_app):
     assert help_obj.eventFilter(widget, event) is True
 
 
+def test_event_filter_short_circuits_during_a_bulk_restyle(qt_app):
+    """Inside gui_themes' bulk-restyle scope the app-wide filter must do no
+    work at all; outside it, both contracts below stay active.
+
+    A genuine theme switch streams ~20k StyleChange/PaletteChange/FontChange
+    events through this filter inside one synchronous ``setStyleSheet`` call
+    — paying a Python round-trip for each cost ~137 ms (27%) of the switch
+    (interleaved A/B on a fully built MainWindow). None of the events Qt
+    generates inside that call match any branch here, so the short-circuit
+    is behavior-identical, and no user input can arrive until the call
+    returns to the event loop.
+    """
+    from the_oracle.gui_themes import bulk_restyle
+
+    help_obj = install_ctrl_hover_help(qt_app)
+    help_obj._ctrl_down = False
+    help_obj._timer.stop()
+    tip_event = QEvent(QEvent.Type.ToolTip)
+    press = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
+
+    with bulk_restyle():
+        # Not even the ToolTip swallow runs — the gate is the first line.
+        assert help_obj.eventFilter(qt_app, tip_event) is False
+        # And no side effects: the KeyPress branch never fires.
+        assert help_obj.eventFilter(qt_app, press) is False
+        assert help_obj._ctrl_down is False
+        assert not help_obj._timer.isActive()
+
+    # Outside the scope both contracts are back.
+    assert help_obj.eventFilter(qt_app, tip_event) is True
+    assert help_obj.eventFilter(qt_app, press) is False
+    assert help_obj._ctrl_down is True
+
+    # Leave the singleton clean for the tests that follow.
+    help_obj._ctrl_down = False
+    help_obj._timer.stop()
+
+
 def test_main_window_registers_ctrl_help(qt_app, monkeypatch, tmp_path):
     """The real window installs Ctrl+hover help and registers its controls."""
     from tests.test_app_gui_profiles import _build_window

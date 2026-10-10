@@ -13,6 +13,7 @@ look), so existing installs keep their familiar identity.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 DEFAULT_THEME = "oracle_light"
@@ -612,6 +613,41 @@ QStatusBar {{
 """
 
 
+# ---------------------------------------------------------------------------
+# Bulk-restyle scope
+# ---------------------------------------------------------------------------
+
+_bulk_restyle_depth = 0
+
+
+@contextmanager
+def bulk_restyle():
+    """Mark the enclosing block as one bulk stylesheet restyle.
+
+    ``QApplication.setStyleSheet`` synchronously re-polishes the entire
+    widget tree, delivering tens of thousands of StyleChange/PaletteChange/
+    FontChange events before it returns (~20k even on a mid-sized window).
+    App-wide QObject event filters — notably ``gui_tooltips``'s Ctrl-hover
+    filter — would re-enter Python for every one of those events, taxing the
+    restyle (~137 ms — 27% — of a ~0.5 s switch, interleaved A/B on a built
+    MainWindow) for events none of its branches act on. Filters consult :func:`in_bulk_restyle` and skip while the scope is
+    open; the counter is decremented in ``finally`` so a raising
+    ``setStyleSheet`` can never leave filters disabled.
+    """
+    global _bulk_restyle_depth
+    _bulk_restyle_depth += 1
+    try:
+        yield
+    finally:
+        _bulk_restyle_depth -= 1
+
+
+def in_bulk_restyle() -> bool:
+    """True while a :func:`bulk_restyle` scope is open on this thread's
+    call stack (scopes nest safely)."""
+    return _bulk_restyle_depth > 0
+
+
 def apply_theme(app, key: str) -> str:
     """Apply theme ``key`` to ``app`` and return the applied key (the caller
     stores it). Unknown keys fall back to the default theme.
@@ -623,10 +659,15 @@ def apply_theme(app, key: str) -> str:
     starving sub-second timers around it (reproduced: the recording guide's
     150 ms launch timer missing its deadline whenever a later window
     re-applied the default theme over an earlier window's).
+
+    A genuine switch keeps that cost (Qt's unpolish/repolish is inherent),
+    but runs inside :func:`bulk_restyle` so app-wide event filters skip the
+    event storm instead of paying a Python round-trip per event.
     """
     tokens = THEMES.get(key) or THEMES[DEFAULT_THEME]
     css = build_stylesheet(tokens)
     if app.styleSheet() == css:
         return tokens.key
-    app.setStyleSheet(css)
+    with bulk_restyle():
+        app.setStyleSheet(css)
     return tokens.key

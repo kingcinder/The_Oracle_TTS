@@ -22,6 +22,13 @@ Implementation notes
   the action under the pointer via ``actionAt``.
 - Registering a widget keeps a strong reference to it (widgets already live
   for the whole window lifetime, so this adds nothing to their lifecycle).
+- The filter's first check skips everything while ``gui_themes``'s
+  ``bulk_restyle`` scope is open: a stylesheet switch delivers ~20k+
+  StyleChange/PaletteChange/FontChange events synchronously, and paying a
+  Python round-trip for each one taxed the restyle without changing a single
+  outcome (no branch in this filter acts on any event Qt generates inside
+  ``setStyleSheet``, and no user input can be processed until that call
+  returns to the event loop).
 """
 
 from __future__ import annotations
@@ -31,6 +38,8 @@ from collections.abc import Callable
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QApplication, QFormLayout, QMenu, QMenuBar, QToolTip, QWidget
+
+from the_oracle.gui_themes import in_bulk_restyle
 
 _POLL_MS = 90
 _TOOLTIP_OFFSET = QPoint(14, 18)
@@ -114,6 +123,13 @@ class CtrlHoverHelp(QObject):
     # -- event filter ------------------------------------------------------
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:
+        if in_bulk_restyle():
+            # Bulk stylesheet restyle in progress (gui_themes.apply_theme):
+            # tens of thousands of style/palette/font events stream past in
+            # one synchronous call. None of them match a branch below, and
+            # real input cannot arrive until the call returns to the event
+            # loop — skip the per-event Python round-trip entirely.
+            return False
         etype = event.type()
         if etype == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Control:
             self._ctrl_down = True

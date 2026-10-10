@@ -7,7 +7,16 @@ builder's real emissions so a new unchecked pair fails this test instead of
 silently shipping an illegible theme.
 """
 
-from the_oracle.gui_themes import DEFAULT_THEME, THEMES, USED_PAIRS, apply_theme, contrast_ratio
+import pytest
+
+from the_oracle.gui_themes import (
+    DEFAULT_THEME,
+    THEMES,
+    USED_PAIRS,
+    apply_theme,
+    contrast_ratio,
+    in_bulk_restyle,
+)
 
 # (fg, bg, min) pairs build_stylesheet() actually paints. Keep in sync with
 # gui_themes.build_stylesheet — this list is the drift pin.
@@ -66,17 +75,20 @@ def test_apply_theme_skips_a_redundant_restyle() -> None:
     """
 
     class _AppSpy:
-        """Duck-typed QApplication stand-in: records stylesheet writes."""
+        """Duck-typed QApplication stand-in: records stylesheet writes and
+        whether the bulk-restyle scope was open inside each one."""
 
         def __init__(self) -> None:
             self.style_sheet = ""
             self.set_calls = 0
+            self.scope_during_set: list[bool] = []
 
         def styleSheet(self) -> str:  # noqa: N802 (Qt naming)
             return self.style_sheet
 
         def setStyleSheet(self, css: str) -> None:  # noqa: N802 (Qt naming)
             self.set_calls += 1
+            self.scope_during_set.append(in_bulk_restyle())
             self.style_sheet = css
 
     app = _AppSpy()
@@ -99,3 +111,25 @@ def test_apply_theme_skips_a_redundant_restyle() -> None:
     # ...and asking for that same default again stays a no-op.
     assert apply_theme(app, "no-such-theme") == DEFAULT_THEME
     assert app.set_calls == 3
+
+    # Every stylesheet write ran inside the bulk-restyle scope (so app-wide
+    # event filters can skip the ~20k-event storm), and the scope is closed
+    # again by the time apply_theme returns.
+    assert app.scope_during_set == [True, True, True]
+    assert in_bulk_restyle() is False
+
+
+def test_bulk_restyle_scope_closes_when_setstylesheet_raises() -> None:
+    """A raising ``setStyleSheet`` must not leave app-wide event filters
+    gated off forever: the scope unwinds in ``finally``."""
+
+    class _RaisingApp:
+        def styleSheet(self) -> str:  # noqa: N802 (Qt naming)
+            return ""
+
+        def setStyleSheet(self, css: str) -> None:  # noqa: N802 (Qt naming)
+            raise RuntimeError("style rejected")
+
+    with pytest.raises(RuntimeError, match="style rejected"):
+        apply_theme(_RaisingApp(), DEFAULT_THEME)
+    assert in_bulk_restyle() is False
