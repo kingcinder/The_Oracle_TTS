@@ -1244,6 +1244,100 @@ cited when the entry is next touched.
 
 ## Next
 
+- **2026-10-10: the twelfth extraction slice is picked and armed — the menu
+  bar (`_build_menu`) — pre-flight gates green; the tree is settled at
+  `ad033cb`, so this pick is NOT held.** Picked from the current 156-method
+  MainWindow (3665 lines) by the campaign's own criteria, measured live
+  rather than assumed: the cluster is `_build_menu` (187 lines, L568–754),
+  the single biggest remaining method — it builds the File / Settings /
+  Theme / Help menus plus the menu-bar Recording Studio action, owns 24
+  public action attributes (`new_action` … `about_action`), the
+  `inference_wizard_menu` and `templates_menu` menus and the
+  `_theme_actions` dict, and wires the three `textEdited`
+  workspace-persistence connections; called once from `__init__` (L269)
+  between `_build_ui()` and `_register_ctrl_help_descriptions()`. It won on
+  patch-coupling — graded by the patch-surface net's own AST census,
+  measured live at 21 app_gui-rebound names (the eleventh entry's "34" is
+  not reproducible, and is not a census shift: no test file changed between
+  `4c66ede` and `ad033cb`, so the scanner returns the same 21 names at both
+  points — a stale miscount in that entry, not a change in the suite) —
+  resolving EXACTLY ZERO
+  coupled names, and it carries the strongest drive-from-window proof base
+  of the field. Field, re-measured with the same scanner (and CORRECTING
+  the eleventh slice's arm record, which called all four candidates "0
+  coupled … none has drive-from-window coverage"): the cast-bar cluster
+  (108 lines — `_all_speaker_groups`, `_refresh_cast_bar`, `apply_cast`,
+  `_update_speaker_group_title`, `_sync_extra_speaker_groups`,
+  `_speaker_settings`, `_speaker_config_from_payload`, `open_cast_manager`,
+  `cast_keys`, `speaker_names`) resolves 0 coupled names but builds/reads
+  SEVEN app_gui-global cast/settings names (`CastManagementDialog`,
+  `SpeakerGroup`, `SpeakerSettings`, `_apply_speaker_settings_to_group`,
+  `_speaker_settings_from_group`, `normalize_cast_keys`,
+  `speaker_config_from_payload`), and the manifest's gui_cast note
+  explicitly forbids moving four of them — MainWindow still constructs/reads
+  them from app_gui globals (the split-readership hazard) — so this cluster
+  is the RISKIEST, not the safest, and it is the one candidate with
+  genuinely no window coverage (only `test_gui_settings.py` references its
+  names, and that file builds no window); workspace layout persistence (98
+  lines — `_register_section`, `_persist_workspace_layout`,
+  `_apply_workspace_layout`) resolves 0 coupled names but reads
+  `QHSectionGroup`, the manifest's recorded PARTIAL_OWNED split-readership
+  hazard (gui_chrome builds the Live column's from its own globals), and
+  slice 6's record keeps `_register_section` in app_gui "where the layout
+  state lives" — a recorded decision this slice will not contradict;
+  input/path pickers (107 lines) resolves 0 coupled names but 38 of its
+  lines are `_convert_subtitle_input`, source-pinned to stay by the
+  one-owner net, and its remaining ~69 lines mix pickers with layout-row
+  building. Drive-from-window proof base for the pick, all through a real
+  MainWindow: `test_app_gui_profiles.py` drives menu-created action state
+  (`download_vulkan_model_action.isEnabled()` and its disable path,
+  `remember_backend_action.setChecked(False)` with the persisted-payload
+  assertions, `output_filename_warning_action.setChecked(...)` with the
+  warning behavior, `replay_full_wizard_action.text()` pinned to "Replay
+  Entire Setup & Tutorial"); `test_gui_tooltips.py::
+  test_main_window_registers_ctrl_help` asserts the Ctrl+hover registry
+  entries for the `new_action` and `download_vulkan_model_action` the menu
+  creates; `test_recording_studio.py` pins `recording_studio_action.text()`;
+  `scripts/certify_gui_themes.py` (run by `test_gui_theme_certification.py`)
+  builds real windows and asserts the File menu carries "Save Profile…"/
+  "Load Profile…" and that `window._theme_actions` holds six entries — the
+  theme-menu loop; `test_gui_window_lifetime.py` builds real windows and
+  asserts they can be destroyed, which the menu's C-level `triggered`
+  lambdas are the recorded reason to need. Owner: MINTS
+  `src/the_oracle/gui_menu.py` — no existing owner covers the menu bar
+  (gui_chrome.py's docstring scopes it to the Live sidebar column), and
+  minting is the campaign's own precedent (slices 1, 2, 4, 5, 10).
+  Harm-class inventory (same scope-aware scan): ZERO census-coupled free
+  names; the body's only module globals are `QAction` (PySide6.QtGui) and
+  `THEMES` (gui_themes), NEITHER patch-coupled, so the patch-couple net
+  needs NO new bare-set exemption. Design: `THEMES` crosses as an INJECTION
+  parameter on the delegate call (`build_menu(self, themes=THEMES)`), so
+  app_gui stays the single resolution point for a mapping its own staying
+  `_apply_theme_selection` also reads — foreclosing a latent app_gui-level
+  `THEMES` split (the tenth slice's inject-for-symmetry stance); `QAction`
+  is imported by the new module, and no test patches `app_gui.QAction`.
+  Every widget, action attribute, and window-method callback the body
+  touches rides `main_window` (the gui_ingest_tools direction rule), so
+  there is no other seam. Sibling import: gui_menu → gui_themes is a
+  within-layer sibling import with precedent (gui_chrome → gui_render /
+  gui_sections); the import-direction net forbids only gui_render from
+  looking up, and gui_menu is not gui_render. MOVED_OWNERS gains
+  `the_oracle.gui_menu` (1 name: `build_menu`); MainWindow keeps `_build_menu`
+  as a thin delegate with its exact call-site signature (the gui_ingest_tools
+  delegate precedent), and it stays a payload-policy sanctioned reader, so
+  that record needs no change. Pre-flight gates ran green on the committed
+  tree (39 passed / 0 failed, exit 0): test_app_gui_patch_surface.py,
+  test_payload_policy_ownership.py, test_gui_import_direction.py,
+  test_gui_tooltips.py; cluster baseline (theme certifier + window
+  lifetime) 10 passed / 0 failed, exit 0. Conflict map: the tree is CLEAN
+  at `ad033cb` (the eleventh slice's own commit; the only untracked file is
+  a parallel session's temp probe, `tests/_theme_switch_probe.py`, not part
+  of this campaign), so there are no shared hunks to wait on and the move
+  can execute immediately. Next-ranked candidates on record: input/path
+  pickers (smaller, mixed concerns, one source-pinned method), then the
+  cast-bar cluster (biggest coupling risk — the manifest's recorded
+  split-readership notes must be resolved first).
+
 - **2026-10-10: the eleventh extraction slice is EXECUTED — the Ctrl+hover
   help description table moved to the existing `gui_tooltips` owner,
   seam-proven by mutation.** The move followed the plan recorded below
