@@ -1244,6 +1244,44 @@ cited when the entry is next touched.
 
 ## Next
 
+- **2026-10-10: the eleventh extraction slice is EXECUTED — the Ctrl+hover
+  help description table moved to the existing `gui_tooltips` owner,
+  seam-proven by mutation.** The move followed the plan recorded below
+  exactly: the 273-line body of `MainWindow._register_ctrl_help_descriptions`
+  (L775–1047) moved VERBATIM into `src/the_oracle/gui_tooltips.py` as the new
+  module-level `register_ctrl_help_descriptions(main_window, *,
+  cuda_reason_fn)` — the widgets and actions ride the window (the
+  gui_ingest_tools direction rule; the module still imports nothing from
+  app_gui). MainWindow keeps `_register_ctrl_help_descriptions` as a thin
+  delegate with its exact call-site signature, passing the bare app_gui
+  `cuda_reason` name so it resolves from app_gui's globals at call time: the
+  PyTorch-device sentence is composed from the CALLER's globals, the
+  `_vulkan_prerequisite_missing` `find_binary=` precedent generalized. The
+  call stays behind the `_ctrl_help is None` guard, so a missing help
+  registry still never computes the reason (the function object binds
+  eagerly; the call does not). The moved body is byte-identical to the
+  original modulo the required re-indent and the two substitutions (`self.`
+  → `main_window.`, `cuda_reason()` → `cuda_reason_fn()`), proven by a script
+  diffing it against `git show HEAD:...` rather than by eye. MOVED_OWNERS
+  gains `the_oracle.gui_tooltips` (1 name); no bare-set exemption was needed —
+  the patch-couple net's raw bare set still equals the sanctioned set,
+  because the injection is a call-boundary parameter and gui_tooltips binds
+  no coupled name. The seam is mutation-proven on a real window: with the
+  seam intact, an app_gui-level `cuda_reason` rebind reaches the moved text
+  (the registered PyTorch-device description ends with the sentinel; probe
+  exit 0); with a bare-global `cuda_reason` resolution mutated into
+  gui_tooltips, the identical rebind is bypassed and the probe fails (exit
+  1) — the exact Vulkan-slice harm made concrete — then reverted
+  byte-identically (proven by a content equality check). Verified: pre-flight
+  gates 39/39
+  (test_app_gui_patch_surface, test_payload_policy_ownership,
+  test_gui_import_direction, test_gui_tooltips), neighbor GUI nets 453/453,
+  full suite 1680 passed / 0 failed (exit 0, 353 s) — the cluster's existing
+  drive-from-window move-proof (`test_main_window_registers_ctrl_help`)
+  passed unchanged, alongside the file's 15 other poller/registry nets. app_gui.py
+  3927 → 3665 lines; gui_tooltips.py 225 → 512; the MainWindow method count is
+  unchanged at 156 (the delegate stays a method).
+
 - **2026-10-10: the eleventh extraction slice is picked and armed — the
   Ctrl+hover help description table — pre-flight gates green; the tree is
   settled, so this pick is NOT held.** Picked from the current 156-method
@@ -1295,7 +1333,7 @@ cited when the entry is next touched.
   the real MainWindow and asserts the registry contents — buttons,
   combos, speaker spin boxes, menu actions, the path-row label/button
   pairs, and the label↔field sharing — so the moved table must pass it
-  unchanged, alongside the file's other 21 registry nets. Pre-flight gates
+  unchanged, alongside the file's 15 other poller/registry nets. Pre-flight gates
   ran green on the settled tree (39 passed / 0 failed, exit 0):
   test_app_gui_patch_surface.py, test_payload_policy_ownership.py,
   test_gui_import_direction.py, and the cluster's own baseline

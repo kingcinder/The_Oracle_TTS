@@ -53,6 +53,12 @@
         "restore_most_recent_format_backup"
       ],
       "note": "extraction slice 10 (2026-10-08): the ingest-tools handler flow bodies moved verbatim from MainWindow methods (which remain as thin delegates with the exact test-driven signatures); every patch-coupled Qt name crosses as an INJECTION parameter resolved from app_gui globals at call time (message_box_cls, file_dialog_cls) so app_gui-level wholesale rebinds keep intercepting the moved code"
+    },
+    "the_oracle.gui_tooltips": {
+      "names": [
+        "register_ctrl_help_descriptions"
+      ],
+      "note": "extraction slice 11 (2026-10-10): the Ctrl+hover description table moved verbatim from MainWindow._register_ctrl_help_descriptions (which remains a thin delegate with its exact call-site signature). The one patch-coupled name that body uses, cuda_reason, crosses as an INJECTION callable (cuda_reason_fn) resolved from app_gui globals at call time - the _vulkan_prerequisite_missing find_binary= precedent - so app_gui-level wholesale rebinds keep reaching the moved text, and this module needs no bare-set exemption (it binds no coupled name)."
     }
   },
   "payload_policy": {
