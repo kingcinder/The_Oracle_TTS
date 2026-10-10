@@ -614,7 +614,19 @@ QStatusBar {{
 
 def apply_theme(app, key: str) -> str:
     """Apply theme ``key`` to ``app`` and return the applied key (the caller
-    stores it). Unknown keys fall back to the default theme."""
+    stores it). Unknown keys fall back to the default theme.
+
+    Re-applying the theme already shown is a no-op: Qt re-polishes the whole
+    widget tree on every ``setStyleSheet`` call — ~0.45 s synchronous on a
+    fully built MainWindow (a first set on an unstyled app is ~0.08 s) — and
+    that stall lands inside whatever event-loop pass triggered the call,
+    starving sub-second timers around it (reproduced: the recording guide's
+    150 ms launch timer missing its deadline whenever a later window
+    re-applied the default theme over an earlier window's).
+    """
     tokens = THEMES.get(key) or THEMES[DEFAULT_THEME]
-    app.setStyleSheet(build_stylesheet(tokens))
+    css = build_stylesheet(tokens)
+    if app.styleSheet() == css:
+        return tokens.key
+    app.setStyleSheet(css)
     return tokens.key

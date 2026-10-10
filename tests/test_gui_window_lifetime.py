@@ -102,6 +102,70 @@ def test_wizard_launch_timer_keeps_its_250ms_delay(
     assert interval == 250, f"wizard launch timer interval is {interval} ms, expected 250"
 
 
+def test_recording_wizard_timer_is_a_child_of_the_window(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """``open_recording_studio`` must arm its 150 ms guide launch from a
+    single-shot child timer of the window, not the context-less
+    ``QTimer.singleShot`` helper — the same conversion the three startup
+    callbacks got, and the last one left on MainWindow.
+
+    A child's ownership is explicit: created by the window, destroyed with
+    it, pending call cancelled with it. (Measured on this PySide6 build, the
+    context-less overload merely skips a call whose bound-method receiver is
+    already dead — so this pin guards the explicit form, not a reproduced
+    pin.)
+    """
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    window.open_recording_studio()
+    timer = getattr(window, "_recording_wizard_launch_timer", None)
+    assert timer is not None, (
+        "open_recording_studio did not arm a child launch timer "
+        "(context-less QTimer.singleShot is back)"
+    )
+    assert timer.parent() is window, "launch timer is not parented to the window"
+    assert timer.isSingleShot(), "launch timer must be single-shot"
+    assert timer.interval() == 150, (
+        f"recording wizard launch interval is {timer.interval()} ms, expected 150"
+    )
+    assert timer.isActive(), "launch timer was not armed by open_recording_studio"
+    destroy_leftover_main_windows(qt_app)
+
+
+def test_recording_wizard_timer_does_not_outlive_the_window(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The pending guide launch must not outlive its window.
+
+    Guards the child-timer conversion against its two plausible regressions:
+    rearming the launch from a lambda that strongly captures ``self`` (the
+    window then survives until the deadline), or re-parenting the timer
+    above the window (the pending call fires after destruction). Both fail
+    the weakref check below.
+    """
+    from the_oracle.recording_wizard import RecordingStudioSetupWizard
+
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    window.open_recording_studio()
+    ref = weakref.ref(window)
+    destroy_leftover_main_windows(qt_app)
+    del window
+    gc.collect()
+    assert ref() is None, (
+        "the pending recording-wizard launch outlived the MainWindow after "
+        "teardown"
+    )
+    # Let the 150 ms deadline pass: with the window gone the timer must be
+    # gone with it — no recording guide may spawn from a destroyed window.
+    QTest.qWait(400)
+    wizards = [
+        w
+        for w in qt_app.topLevelWidgets()
+        if isinstance(w, RecordingStudioSetupWizard)
+    ]
+    assert not wizards, "recording guide launched after its owning window was destroyed"
+
+
 def test_teardown_never_destroys_a_window_whose_close_is_refused(
     qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

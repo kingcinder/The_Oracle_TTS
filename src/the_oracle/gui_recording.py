@@ -610,7 +610,10 @@ class RecordingStudioDialog(QDialog):
         # handler with a zero-timer so the backend finishes delivering first.
         end_state = getattr(status, "EndOfMedia", None)
         if end_state is not None and status == end_state:
-            QTimer.singleShot(0, self._stop_playback)
+            # Context form: the pending stop dies with this dialog instead of
+            # riding the context-less overload's undocumented receiver
+            # semantics.
+            QTimer.singleShot(0, self, self._stop_playback)
 
     def _stop_playback(self) -> None:
         player = self._player

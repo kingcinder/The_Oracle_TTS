@@ -1150,7 +1150,6 @@ cited when the entry is next touched.
   227/227; full suite 1664 passed, exit 0, real config byte-identical
   across the run.
 
-
 - **2026-10-10: the six-theme section-chrome probe is persisted as a tracked
   CI gate — `scripts/certify_section_chrome.py`, two workflow steps, two
   pins.** The legibility pass's offscreen verification lived in a one-off
@@ -1242,6 +1241,7 @@ cited when the entry is next touched.
   tree. Validation: parking/crash/arming/chrome nets 80 passed; full
   suite 1680 passed / 0 failed / 0 skipped, exit 0 — including the
   concurrent session's newer in-flight tests, as before.
+
 ## Next
 
 - **2026-10-08: the tenth extraction slice is EXECUTED — the ingest-tools
@@ -1523,17 +1523,62 @@ cited when the entry is next touched.
   fresh campaign; the change lives in the skill (outside this repo), so
   it is documented here rather than committed here.
 
-- **2026-10-09 (adversarial pass over 8e932bd, noticed not actioned): the
-  last context-less deferred callback on MainWindow.**
-  `open_recording_studio` still arms
-  `QTimer.singleShot(150, self._start_recording_wizard)` — the exact
-  strong-reference pattern that commit converted for the three startup
-  timers. Harm today is bounded: it pins the window wrapper for 150 ms and
-  `_start_recording_wizard` early-returns when the studio set is empty
-  (MainWindow.closeEvent closes and discards every studio first), so the
-  observed replay is benign. If it is ever touched, give the call the
-  context overload `QTimer.singleShot(150, self, ...)` or a child timer,
-  like the startup three.
+- **2026-10-09 (adversarial pass over 8e932bd → ACTIONED 2026-10-10): the
+  last context-less deferred callback on MainWindow.** `open_recording_studio`
+  armed `QTimer.singleShot(150, self._start_recording_wizard)`; it now arms
+  `self._recording_wizard_launch_timer`, a single-shot child of the window
+  created in `__init__` (`start(150)` restarts, so a second studio open moves
+  the deadline instead of doubling it), and the teardown sweep stops it with
+  the other startup timers. Pinned by three tests: child/interval/armed
+  (`test_recording_wizard_timer_is_a_child_of_the_window`), no-outlive
+  (`test_recording_wizard_timer_does_not_outlive_the_window`), and the
+  end-to-end launch
+  (`test_open_recording_studio_launches_the_guide_from_the_child_timer`).
+  **Rationale corrected while actioning**: the original "pins the window
+  wrapper for 150 ms" claim does not reproduce on this PySide6 build — a
+  probe showed `QTimer.singleShot(msec, bound_method)` holds the receiver
+  *weakly* (receiver collected after `del`, the call silently skipped), so
+  the conversion buys explicit child ownership over an undocumented overload
+  detail, not a fixed leak. The lifetime pin therefore guards against
+  lambda/app-level regressions, not the original helper verbatim.
+
+- **2026-10-10 (found while validating the conversion, FIXED): every
+  redundant `apply_theme` re-set cost ~0.45 s and starved timers.** Qt
+  re-polishes the whole widget tree on every `QApplication.setStyleSheet`
+  call: measured 0.45–0.50 s synchronous on a fully built MainWindow (first
+  set on an unstyled app is ~0.08 s). `_on_gui_shown` re-applied the app
+  theme unconditionally, so any process holding a previously themed window
+  (every multi-window test run) blocked ~0.5 s in the next window's first
+  event pump, and any sub-second timer scheduled around it missed its
+  deadline — exactly why the new 150 ms recording-guide launch test failed
+  only in combined runs. `apply_theme` now returns early when
+  `app.styleSheet()` already equals the built css; pinned by
+  `test_apply_theme_skips_a_redundant_restyle` in
+  tests/test_gui_theme_certification.py.
+
+- **2026-10-10 (noticed, not actioned): a genuine theme switch still blocks
+  ~0.45 s** (different css — the early-return does not apply; measured
+  0.479 s for a full-window switch). One-time visible freeze per switch,
+  apparently inherent to Qt's unpolish/repolish cycle; a cheaper restyle
+  path is a separate unit of work.
+
+- **2026-10-10 (dialog teardown/config-isolation audit, ACTIONED): all five
+  non-MainWindow windows audited against MainWindow's guarantees.**
+  RecordingStudioDialog (closeEvent bounded-wait + refusal for its take
+  worker; MainWindow.closeEvent joins studio workers before destruction),
+  RecordingStudioSetupWizard (parented to its studio, deleteLater on
+  finish), InferenceSetupWizard (already in the teardown sweep, context
+  singleShot), CastManagementDialog (modal exec, parented, no threads,
+  `_cast_dialogs` tracked with finished+finally discard), and
+  RenderProgressDialog (display-only, parented, workers owned and waited by
+  MainWindow) — all clean; every test-side builder isolates user config.
+  The only gap was the last two context-less `QTimer.singleShot(0,
+  bound_method)` EndOfMedia deferrals (studio `_on_playback_status` and
+  MainWindow `_on_preview_playback_status`) — converted to the context
+  overload (pending stop dies with its owner; live behavior identical),
+  and pinned against regressions by
+  tests/test_qt_timer_ownership.py (AST scan: every `QTimer.singleShot` in
+  src must pass an explicit receiver).
 
 ## Deferred (intentional)
 
