@@ -15,6 +15,14 @@ themes:
     back intact on a fresh window.
 
 Exit code 0 means the GUI says all good across all six themes.
+
+The crash-records store is parked for the whole run and the modal D8
+startup flow is stubbed per window: the startup review opens a QDialog.exec
+whenever records exist (or whenever no consent decision is recorded), and
+nothing in a headless sweep can answer it — the park keeps the reader from
+seeing records at all (a park left behind by a crashed run is recovered by
+the next one), the stub covers the never-asked branch. See
+scripts/certify_section_chrome.py for the same two layers with comments.
 """
 
 from __future__ import annotations
@@ -45,6 +53,18 @@ notes: list[str] = []
 def check(condition: bool, message: str) -> None:
     if not condition:
         failures.append(message)
+
+
+def _neutralize_startup_dialogs(window: MainWindow) -> None:
+    """Stub the modal D8 crash flow before the first event pump.
+
+    The queued crash-flow timer connects inside ``_on_gui_shown``, which
+    looks the method up on the instance at connect time — an instance
+    attribute set right after construction is what the timer fires (the
+    tests/test_app_gui_profiles idiom), so no modal can open on any machine
+    state. The dialogs themselves stay covered by test_gui_crash.py.
+    """
+    window._maybe_run_crash_startup_flow = lambda: None
 
 
 def collect_problems(widget, prefix: str = "") -> list[str]:
@@ -93,6 +113,8 @@ def main() -> int:
     from the_oracle.crash import handlers as crash_handlers
 
     crash_handlers.arm_native_capture()
+    from the_oracle.crash import bundle as crash_bundle
+
     app = QApplication.instance() or QApplication([])
     settings_file = app_settings_path()
     # Back the settings file up to disk (not just memory) before the
@@ -101,6 +123,7 @@ def main() -> int:
     # here on the next successful exit; a leftover backup also allows manual
     # recovery.
     backup_path: Path | None = None
+    parked = None
     if settings_file.exists():
         try:
             fd, backup_name = tempfile.mkstemp(prefix="oracle_settings_backup_", suffix=".json")
@@ -116,6 +139,11 @@ def main() -> int:
     all_sections = ("shared", "speaker_a", "speaker_b", "status", "live")
 
     try:
+        # Park the records store (repo root, the same root MainWindow's D8
+        # flow reads): a leftover park from a crashed predecessor is
+        # recovered here, and the D8 review modal has no records to react
+        # to for the whole run.
+        parked = crash_bundle.park_records(REPO_ROOT)
         for key in THEMES:
             tokens = THEMES[key]
             # Fresh settings for each theme so the launch path runs its
@@ -125,6 +153,7 @@ def main() -> int:
             gui_settings.save_app_settings({"theme": key})
 
             window = MainWindow()
+            _neutralize_startup_dialogs(window)
             window.show()
             window.resize(1500, 1500)
             for _ in range(8):
@@ -221,6 +250,7 @@ def main() -> int:
             app.processEvents()
 
             reopened = MainWindow()
+            _neutralize_startup_dialogs(reopened)
             reopened.show()
             app.processEvents()
             check(
@@ -250,6 +280,7 @@ def main() -> int:
             settings_file.unlink()
         gui_settings.save_app_settings({"theme": "oracle_light"})
         window = MainWindow()
+        _neutralize_startup_dialogs(window)
         window.show()
         app.processEvents()
         labels = [action.text() for menu in window.menuBar().actions() if menu.menu() for action in menu.menu().actions()]
@@ -260,6 +291,10 @@ def main() -> int:
         window.close()
         app.processEvents()
     finally:
+        # Bring the records store home first: merge (not rename), so a
+        # record written during the parked window survives beside the
+        # parked originals.
+        crash_bundle.restore_parked_records(REPO_ROOT, parked)
         if backup_path is not None and backup_path.exists():
             try:
                 shutil.copy2(backup_path, settings_file)

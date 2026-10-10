@@ -5,6 +5,11 @@ previous record. The directory holds at most MAX_RECORDS records: the oldest
 matching file is removed only when the cap is exceeded, and only files this
 unit named are ever candidates — never anything else the user keeps in the
 folder.
+
+Also home to the park/restore pair that unattended offscreen runs (the
+standalone certifier scripts) use to keep the D8 startup modal out of their
+way: the startup branch opens a MODAL review whenever records exist, which
+nothing in a headless sweep can answer.
 """
 
 from __future__ import annotations
@@ -95,3 +100,91 @@ def clear_records(root: str | Path) -> int:
         except OSError:
             continue
     return removed
+
+
+# --- parking: keeping the D8 startup modal out of unattended runs -------------
+
+#: A parked store is renamed to this prefix + the parking process's pid, in
+#: the repo root next to the store it came from. In the root (not a temp
+#: dir) on purpose: a sweep that dies skips every ``finally``, and a park a
+#: later run can find is a park it can bring home — evidence is at worst
+#: mislaid until the next parked run, never lost.
+_PARK_PREFIX = "crash_reports.certifier-park-"
+
+
+def _merge_dir(source: Path, destination: Path) -> None:
+    """Move every child of ``source`` into ``destination``; lose nothing.
+
+    A name already present in ``destination`` is byte-compared: an identical
+    duplicate is dropped (the same record arriving by both paths), a
+    differing one is moved beside it under ``<name>.parked`` so both copies
+    survive. Records carry unique timestamp+uuid names, so a collision is
+    not a normal event and neither half of it may be silently discarded.
+    """
+    if not source.is_dir():
+        return
+    destination.mkdir(parents=True, exist_ok=True)
+    for child in sorted(source.iterdir()):
+        target = destination / child.name
+        if not target.exists():
+            child.rename(target)
+            continue
+        if child.is_file() and target.is_file():
+            try:
+                if child.read_bytes() == target.read_bytes():
+                    child.unlink()
+                    continue
+            except OSError:
+                pass
+        survivor = destination / f"{child.name}.parked"
+        counter = 1
+        while survivor.exists():
+            survivor = destination / f"{child.name}.parked.{counter}"
+            counter += 1
+        child.rename(survivor)
+    try:
+        source.rmdir()
+    except OSError:
+        # Something the merge could not place stays put; the next run's
+        # recovery sweep gets another chance.
+        pass
+
+
+def park_records(root: str | Path) -> Path | None:
+    """Hide the records store for the duration of an unattended run.
+
+    ``gui_crash.maybe_run_startup_flow`` (startup branch D8) opens a modal
+    review whenever ``list_records`` is non-empty — a dialog no headless
+    sweep can answer, so the run blocks forever. Parking renames the whole
+    directory out of the D8 reader's sight; ``list_records`` inside the
+    parked window sees an empty store. Returns the park path, or None when
+    there was nothing to park. Restore with :func:`restore_parked_records`
+    in the caller's cleanup path (the certifiers' ``finally`` blocks).
+
+    First, any park left behind by a crashed predecessor is merged home —
+    a sweep that died (SIGSEGV skips every ``finally``) leaves its park in
+    the root, and the next sweep recovers it before hiding the store again.
+    """
+    root = Path(root)
+    store = crash_dir(root)
+
+    for leftover in sorted(root.glob(_PARK_PREFIX + "*")):
+        _merge_dir(leftover, store)
+
+    if not store.is_dir():
+        return None
+    parked = root / f"{_PARK_PREFIX}{os.getpid()}"
+    store.rename(parked)
+    return parked
+
+
+def restore_parked_records(root: str | Path, parked: Path | None) -> None:
+    """Bring a park home (no-op for ``parked=None`` or an already-empty
+    park). Merge, not rename, so records written DURING the parked window —
+    a genuine crash in the sweep itself, the Qt fatal handler — survive
+    alongside the parked originals."""
+    if parked is None:
+        return
+    parked = Path(parked)
+    if parked.exists():
+        _merge_dir(parked, crash_dir(root))
