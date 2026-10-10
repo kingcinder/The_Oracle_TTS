@@ -29,13 +29,34 @@ drives the REAL window on every theme, so a theme-stylesheet regression that
 only shows up in rendered chrome fails here. Standalone like
 certify_gui_themes.py — CI runs it as a named step on both operating systems.
 
-Machine state is isolated, not backed up: the whole run points the platform
-config root (``XDG_CONFIG_HOME`` / ``%APPDATA%`` — both, per the
-isolate_user_config contract) at a throwaway directory, so the per-theme
-settings rewrites and the persistence round-trip never touch the developer's
-real config — even if this process dies mid-run (a SIGSEGV skips every
-``finally``; a backup file the crash leaves behind is a recovery chore, a
-throwaway root is simply litter in /tmp).
+Machine state is isolated, not backed up: three layers, all pointing at the
+one throwaway directory (``tempfile.mkdtemp`` under /tmp) — never the
+developer's real state. The contract is "never writes the real config or
+repo logs", pinned by tests/test_certifier_hermeticity.py (a before/after
+snapshot of the real repo AND the real config root around a real run):
+
+1. **Config root** — ``XDG_CONFIG_HOME`` / ``%APPDATA%`` (both, per the
+   isolate_user_config contract) are redirected before any ``the_oracle``
+   import, so the per-theme settings rewrites and the persistence
+   round-trip never touch the real config — even if this process dies
+   mid-run (a SIGSEGV skips every ``finally``; a backup file the crash
+   leaves behind is a recovery chore, a throwaway root is simply litter
+   in /tmp).
+2. **Window default paths** — ``app_gui.ensure_repo_default_paths`` is
+   repointed at the throwaway, so ``Input/ Output/ Profiles/ Seashells``
+   and, decisively, the timing logs MainWindow writes under
+   ``Output/logs/`` (``gui_startup_timing.json`` on every construction,
+   ``gui_prewarm_timing.json`` when the startup prewarm lands) land
+   there: a before/after repo snapshot of the pre-fix sweep measured
+   exactly those two as its only repo writes.
+3. **Crash roots** — ``handlers.install(root=<throwaway>)`` before the
+   launch-path arm, so the native dump plus exception/Qt-fatal records
+   resolve into the throwaway, and the user's EXISTING consent decision
+   is mirrored byte-for-byte (never created from nothing) so a consented
+   machine still arms while a fresh checkout stays fail-closed. Without
+   the mirror, the root override would make the fail-closed consent read
+   silently run a consented machine's sweep unarmed — the entry-point
+   pin is source-level and would pass either way.
 
 Startup dialogs are neutralized in two layers. The records store is parked
 for the whole run (`bundle.park_records`: ``crash_reports/`` is renamed to
@@ -90,10 +111,23 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QSlider, QTableWidgetItem  # noqa: E402
 
+from the_oracle import app_gui as _app_gui  # noqa: E402
 from the_oracle import gui_settings  # noqa: E402
 from the_oracle.app_gui import MainWindow  # noqa: E402
+from the_oracle.app_paths import ensure_repo_default_paths  # noqa: E402
 from the_oracle.gui_settings import app_settings_path  # noqa: E402
 from the_oracle.gui_themes import THEMES  # noqa: E402
+
+
+def _hermetic_paths(_repo_root):
+    """The real builder, rooted in the throwaway: MainWindow's ``self.paths``
+    (and every ``Output/logs`` write hanging off it) resolve under the
+    config root for this whole run. Same seam the suite patches
+    (tests/test_app_gui_profiles._build_window)."""
+    return ensure_repo_default_paths(_CONFIG_ROOT)
+
+
+_app_gui.ensure_repo_default_paths = _hermetic_paths
 
 failures: list[str] = []
 notes: list[str] = []
@@ -159,8 +193,27 @@ def main() -> int:
     # builds the REAL MainWindow offscreen — native-crash territory — and a
     # script entry never passes through cli.main's install+arm. Idempotent;
     # fails closed to unarmed when consent is off.
+    #
+    # The root override makes every crash artifact this run can produce —
+    # the native dump, exception records, Qt-fatal records — resolve into
+    # the throwaway config root instead of the repo's crash_reports/
+    # (hermeticity has to hold for the crash channel too; the bare arm
+    # below resolves _root(), which the override has already repointed).
+    from the_oracle.crash import consent as crash_consent
     from the_oracle.crash import handlers as crash_handlers
 
+    crash_handlers.install(root=_CONFIG_ROOT)
+    if crash_consent.read_consent(REPO_ROOT):
+        # Mirror the user's EXISTING consent decision, byte for byte, into
+        # the isolated root: read_consent is fail-closed, so without this a
+        # consented machine would run the sweep silently unarmed (the
+        # entry-point pin is source-level and passes either way). No
+        # decision is ever created here — absent/false consent stays
+        # absent/false and the arm stays fail-closed.
+        shutil.copyfile(
+            crash_consent.consent_path(REPO_ROOT),
+            crash_consent.consent_path(_CONFIG_ROOT),
+        )
     crash_handlers.arm_native_capture()
     from the_oracle.crash import bundle as crash_bundle
 

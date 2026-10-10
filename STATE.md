@@ -1849,6 +1849,40 @@ cited when the entry is next touched.
   tests/test_qt_timer_ownership.py (AST scan: every `QTimer.singleShot` in
   src must pass an explicit receiver).
 
+- **2026-10-10 (certify_section_chrome hermeticity, ACTIONED): the sweep
+  wrote two repo logs on every run — and the crash channel could write a
+  third.** Measured (repo-tree + real-config snapshot either side of a real
+  consented-machine run): config was already clean (XDG/APPDATA redirect),
+  but `MainWindow.__init__` writes `Output/logs/gui_startup_timing.json` on
+  every construction and the startup prewarm writes
+  `Output/logs/gui_prewarm_timing.json` — exactly those two files changed
+  (12 windows across 6 themes). Latent third channel:
+  `arm_native_capture()` resolved the repo root, so a consent-ON machine
+  opens/creates `<repo>/crash_reports/native-crash.txt` (invisible to a
+  snapshot once the file exists; a fresh checkout gets it created).
+  Fixed in scripts/certify_section_chrome.py: `app_gui.ensure_repo_default_paths`
+  repointed at the throwaway (`_hermetic_paths`, the same seam the suite
+  patches), and `handlers.install(root=_CONFIG_ROOT)` before the unchanged
+  bare arm so the native dump + exception/Qt-fatal records resolve into the
+  throwaway — with the user's existing consent mirrored byte-for-byte
+  (`shutil.copyfile`, never fabricated: absent/false consent stays
+  fail-closed) or a consented machine would run silently unarmed while the
+  source-level arming pin still passed. Post-fix snapshot: repo 0/0/0,
+  config 0/0/0, rc=0, 11.3 s. Pinned by tests/test_certifier_hermeticity.py
+  (behavioral subprocess snapshot + source pins for the channels a snapshot
+  cannot see: arm-root/consent-mirror order, redirect-before-import,
+  no configure_logging/launch_gui, app_gui seam drift); mutation-proven
+  live M1–M4 (drop paths redirect → behavioral red naming
+  Output/logs/gui_startup_timing.json; drop XDG redirect → red naming real
+  config; drop install(root) → source red; add configure_logging → source
+  red), each reverted byte-identical. **Noticed, not actioned:**
+  `certify_gui_themes.py` has the same three channels (it also builds real
+  MainWindows; its config redirect and record park are in place, but the
+  timing logs and the bare arm are unredirected) — separate unit of work,
+  same fix shape. Out of contract (stated): OS caches outside the app config
+  root (fontconfig/Qt under `HOME`) and the /tmp litter a SIGSEGV leaves
+  behind.
+
 ## Deferred (intentional)
 
 - **The 2026-10-08 native-crash audit closed every script-entry capture
