@@ -1800,11 +1800,36 @@ cited when the entry is next touched.
   `test_apply_theme_skips_a_redundant_restyle` in
   tests/test_gui_theme_certification.py.
 
-- **2026-10-10 (noticed, not actioned): a genuine theme switch still blocks
-  ~0.45 s** (different css — the early-return does not apply; measured
-  0.479 s for a full-window switch). One-time visible freeze per switch,
-  apparently inherent to Qt's unpolish/repolish cycle; a cheaper restyle
-  path is a separate unit of work.
+- **2026-10-10 (genuine theme switch blocks ~0.45 s → investigated and
+  ACTIONED the same day: −137 ms / −27%).** Different css (the redundant
+  early-return does not apply) and the whole stall is synchronous inside
+  `QApplication.setStyleSheet`. Probe breakdown on a fully built MainWindow
+  (491 widgets incl. combo popups/menus, offscreen, `tests/_theme_switch_probe.py`
+  temp harness): (1) **~330 ms is Qt's full-tree unpolish/repolish, ∝ widget
+  count × depth** — hiding the window or disabling updates changes nothing
+  (441–457 vs 450 ms), a bare app with the same css is ~0 ms, flat
+  400-siblings costs +78 ms while the same 400 at depth 26 costs +733 ms;
+  inherent to Qt, only fewer/shallower widgets would cut it. (2) **~130 ms is
+  QSS rule matching, ∝ rules** — a 2-rule css on the same tree is ~311 ms
+  vs ~441–471 for the 59-rule stylesheet (a duplicated 118-rule css adds
+  ~79 ms); a selector diet is a legibility-owned follow-up, not taken here.
+  (3) **~137 ms was ours**: the app-wide Ctrl-hover event filter re-entered
+  Python ~20.6k times per switch (PaletteChange ×10.9k, FontChange ×10.5k,
+  StyleChange ×5.9k storm) even though no branch in it can ever fire for an
+  event generated inside `setStyleSheet` (no user input is processed until
+  the call returns to the event loop). Fixed with a `bulk_restyle()` scope
+  in gui_themes — `apply_theme` opens it around `setStyleSheet`,
+  `CtrlHoverHelp.eventFilter` short-circuits as its first line, unwound in
+  `finally`. Interleaved A/B in one process: gate-off mean 510 ms vs
+  gate-on mean 373 ms. Pinned by `test_event_filter_short_circuits_during_a_bulk_restyle`
+  (tests/test_gui_tooltips.py), the `scope_during_set == [True, True, True]`
+  assertion and `test_bulk_restyle_scope_closes_when_setstylesheet_raises`
+  (tests/test_gui_theme_certification.py). Remaining ~370 ms is Qt-inherent
+  for this tree; the two open levers are lazy-building collapsed section
+  content (cuts the n×depth term for every restyle *and* startup) and the
+  css selector diet (~130 ms). Widget-level `setStyleSheet` calls at widget
+  construction (gui_sections/gui_cast/gui_chrome/gui_widgets) stream their
+  own smaller storms ungated — unmeasured, separate unit of work.
 
 - **2026-10-10 (dialog teardown/config-isolation audit, ACTIONED): all five
   non-MainWindow windows audited against MainWindow's guarantees.**
