@@ -1244,6 +1244,70 @@ cited when the entry is next touched.
 
 ## Next
 
+- **2026-10-10: the eleventh extraction slice is picked and armed — the
+  Ctrl+hover help description table — pre-flight gates green; the tree is
+  settled, so this pick is NOT held.** Picked from the current 156-method
+  MainWindow (3927 lines) by the campaign's own criteria, measured live
+  rather than assumed: the cluster is `_register_ctrl_help_descriptions`
+  (273 lines, L775–1047) — the (widget, description) table that feeds the
+  Ctrl+hover help registry (4 `register_many` calls / 37 pairs, 3
+  `register_action`, 8 single `register`s), called once from `_build_ui`
+  (L270) right after `install_ctrl_hover_help` stores `self._ctrl_help`.
+  It won on patch-coupling, graded by the patch-surface net's own AST
+  census (34 app_gui names rebound across the suite): the cluster resolves
+  exactly ONE coupled name — `cuda_reason`, rebound by
+  `test_app_gui_profiles.py:1939`, which the PyTorch device description at
+  L868 calls to compose its "4 GiB Chatterbox VRAM floor" sentence.
+  Field, measured the same way: `_build_menu` (187 lines) and the three
+  small clusters (cast bar sync 108 lines, input/path pickers 106 — minus
+  `_convert_subtitle_input`, which stays, source-pinned by the one-owner
+  net — and workspace layout persistence 98, constrained by slice 6's
+  record that layout state stays in app_gui) all show 0 coupled names but
+  none has drive-from-window coverage; every sizeable cluster with real
+  coupling was graded and rejected: project lifecycle+profiles (330 lines,
+  `QMessageBox` via test_ingest_transformer_gui), render/preview window
+  handlers (364, `RenderWorker`/`PreviewWorker`/`QMessageBox` across 3
+  files), Vulkan window handlers (345, the four thread classes +
+  `_vulkan_preflight_report`, 3 files), settings appliers+knobs (220,
+  `ChatterboxEngine`/`cuda_reason`, 3 files), inference wizard wiring
+  (115, four agent globals, 3 files), prewarm (87, `OraclePipeline`, 3
+  files). Its policy layer already has an owner, the tenth-slice risk
+  argument: gui_tooltips owns the registry itself
+  (`CtrlHoverHelp.register`/`register_action`/`register_many`/
+  `description_for`, `install_ctrl_hover_help`), so the description table
+  is that owner's content and the slice extends an existing module rather
+  than minting one. Harm-class inventory for the move design (measured,
+  not guessed): exactly one bare global to seam — `cuda_reason` crosses as
+  an INJECTION parameter resolved from app_gui globals at call time (the
+  VulkanPreflightThread `preflight_report=` / gui_ingest_tools
+  `message_box_cls=` precedent, so the existing app_gui-level rebind keeps
+  reaching the moved text); NO Qt class resolves bare in the body (verified
+  by the same scope-aware scan — the widget/action references all ride the
+  window, which crosses as the `main_window` value per the gui_cast /
+  gui_ingest_tools direction rule), and injection means no own-binding, so
+  the patch-couple net's bare-set rule needs NO new exemption (gui_tooltips
+  binds no coupled name today). MOVED_OWNERS gains
+  `the_oracle.gui_tooltips` with the new function name; MainWindow keeps
+  `_register_ctrl_help_descriptions` as a thin delegate with its exact
+  call-site signature (the gui_ingest_tools delegate precedent). The
+  move-proof already exists: `test_gui_tooltips.py::
+  test_main_window_registers_ctrl_help` drives the registration through
+  the real MainWindow and asserts the registry contents — buttons,
+  combos, speaker spin boxes, menu actions, the path-row label/button
+  pairs, and the label↔field sharing — so the moved table must pass it
+  unchanged, alongside the file's other 21 registry nets. Pre-flight gates
+  ran green on the settled tree (39 passed / 0 failed, exit 0):
+  test_app_gui_patch_surface.py, test_payload_policy_ownership.py,
+  test_gui_import_direction.py, and the cluster's own baseline
+  (test_gui_tooltips.py) — run on the committed tree, not the working one.
+  Conflict map: the tree is CLEAN at `b35aaa9` (the parallel session's
+  recording-timer/apply_theme work landed there and carries no suite
+  number of its own, so none is claimed here), so unlike the tenth
+  slice's pick there are no shared hunks to wait on — the move can execute
+  immediately; next-ranked candidate on record is `_build_menu` (187
+  lines, 0 coupled names, but no drive-from-window pin, so its proof base
+  is thinner).
+
 - **2026-10-08: the tenth extraction slice is EXECUTED — the ingest-tools
   handler cluster moved to the new `gui_ingest_tools` owner, seam-proven by
   mutation.** The move followed the plan recorded below exactly: the three
