@@ -1207,6 +1207,41 @@ cited when the entry is next touched.
   0 skipped, exit 0 — that number includes the concurrent session's
   in-flight recording-wizard-timer and apply_theme work (its own 4 tests,
   left uncommitted for its owner).
+
+- **2026-10-10 (second landing): both certifiers now park the
+  crash-records store, so the D8 startup modal can never block them.** The
+  D8 branch opens a modal whenever `bundle.list_records` is non-empty — a
+  QDialog.exec no headless sweep can answer — and the earlier offscreen
+  sessions had worked around it by hand-moving `crash_reports/` out of the
+  repo root (once leaving the store misplaced). `bundle` (the store owner)
+  gained `park_records` / `restore_parked_records`: the directory is
+  renamed to `crash_reports.certifier-park-<pid>` in the repo root (in the
+  root, not /tmp, on purpose — a SIGSEGV skips every `finally`, and a park
+  a later run CAN find is a park it can bring home), and the restore
+  merges rather than renames, so a record written DURING the parked window
+  (a genuine crash in the sweep itself, the Qt fatal handler) survives
+  beside the parked originals; a name colliding on both sides is
+  byte-compared (identical duplicate dropped, differing copy preserved as
+  `.parked`) so parking may hide evidence but never destroy it. The next
+  run's `park_records` recovers any crashed predecessor's park first — the
+  mislaid-evidence failure mode self-heals. `scripts/certify_gui_themes.py`
+  also gained the per-window `_maybe_run_crash_startup_flow` stub at all
+  three of its MainWindow sites (the park kills the records-review branch;
+  a fresh checkout with no consent decision would still block on the
+  first-run ask — both layers needed). Pinned by
+  tests/test_crash_records_parking.py (7 tests: hide + byte-identical
+  restore, no-store noop, raise-path restore, crashed-predecessor
+  recovery, collision preservation, both-certifiers source scans with an
+  order pin, and a vacuity guard on the scan literals). Acceptance on the
+  REAL store: a synthetic record planted in the repo's crash_reports —
+  the exact shape that blocked an unparked sweep in the earlier sessions —
+  and both certifiers completed exit 0 with the record byte-identical
+  afterwards and zero park dirs left; the synthetic record was then
+  removed (native-crash.txt untouched). `.gitignore` gained the park
+  pattern so a crashed run's leftover is untracked noise, not a dirty
+  tree. Validation: parking/crash/arming/chrome nets 80 passed; full
+  suite 1680 passed / 0 failed / 0 skipped, exit 0 — including the
+  concurrent session's newer in-flight tests, as before.
 ## Next
 
 - **2026-10-08: the tenth extraction slice is EXECUTED — the ingest-tools

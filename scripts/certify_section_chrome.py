@@ -37,12 +37,17 @@ real config — even if this process dies mid-run (a SIGSEGV skips every
 ``finally``; a backup file the crash leaves behind is a recovery chore, a
 throwaway root is simply litter in /tmp).
 
-Startup dialogs are neutralized per window, not by moving machine state
-around: the D8 crash flow (next-session review / first-run consent) is modal
-and reads the machine's real crash_reports/consent state — a fresh CI
-checkout has no recorded decision, so it would open a modal and block the
-sweep — and the first-run inference wizard launches hardware discovery that
-has nothing to do with chrome. Both timers connect inside ``_on_gui_shown``
+Startup dialogs are neutralized in two layers. The records store is parked
+for the whole run (`bundle.park_records`: ``crash_reports/`` is renamed to
+``crash_reports.certifier-park-<pid>`` in the repo root and merged back in
+the ``finally``; a park left by a crashed predecessor is recovered by the
+next run), so the D8 review branch — which opens a modal whenever records
+exist — has nothing to read even if the stub below were removed. On top of
+that, the per-window stubs below: the D8 crash flow (next-session review /
+first-run consent) is modal and reads the machine's real consent state —
+a fresh CI checkout has no recorded decision, so the first-run ask would
+still block — and the first-run inference wizard launches hardware
+discovery that has nothing to do with chrome. Both timers connect inside ``_on_gui_shown``
 (the first queued startup timer), which looks the methods up on the instance
 at connect time, so plain instance attributes set right after construction
 are what the timers fire — the same stub idiom
@@ -157,12 +162,20 @@ def main() -> int:
     from the_oracle.crash import handlers as crash_handlers
 
     crash_handlers.arm_native_capture()
+    from the_oracle.crash import bundle as crash_bundle
+
     app = QApplication.instance() or QApplication([])
     # Resolved AFTER the env redirect above: this is the throwaway root's
     # file, never the developer's real settings.
     settings_file = app_settings_path()
+    parked = None
 
     try:
+        # Park the records store (repo root, the same root MainWindow's D8
+        # flow reads): a leftover park from a crashed predecessor is
+        # recovered here, and the D8 review modal has no records to react
+        # to for the whole run.
+        parked = crash_bundle.park_records(REPO_ROOT)
         for key in THEMES:
             failures_before = len(failures)
             # Fresh settings for each theme so the launch path runs its
@@ -303,6 +316,10 @@ def main() -> int:
 
         print("\n".join(f"  {note}" for note in notes))
     finally:
+        # Bring the records store home first: merge (not rename), so a
+        # record written during the parked window survives beside the
+        # parked originals.
+        crash_bundle.restore_parked_records(REPO_ROOT, parked)
         # The config root is throwaway; cleaning it up is courtesy (a crash
         # that skips this leaves only an inert directory in /tmp). No real
         # settings exist to restore — that is the point of the redirect.

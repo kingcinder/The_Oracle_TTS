@@ -88,6 +88,7 @@ release_artifacts/**/*.json
 # Crash unit runtime artifacts (CRASH_TELEMETRY_DESIGN §2/§3): local-only
 # diagnostics; never tracked, never shipped.
 crash_reports/
+crash_reports.certifier-park-*/
 crash_consent.json
 
 # User working files, keep-dispositioned in STATE.md (## Deferred):
