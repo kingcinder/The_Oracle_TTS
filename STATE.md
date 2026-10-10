@@ -1150,6 +1150,39 @@ cited when the entry is next touched.
   227/227; full suite 1664 passed, exit 0, real config byte-identical
   across the run.
 
+- **2026-10-10: the theme certifier's section sweep now covers every
+  registered section — `paths`/`table`/`extra_voices` added, and the sweep
+  loop made correct for them.** `scripts/certify_gui_themes.py` pinned a
+  five-key tuple (`shared`, `speaker_a`, `speaker_b`, `status`, `live`) while
+  `_section_registry` had grown to eight keys: the three sections the
+  2026-10-08 legibility pass gave chrome to were registered but unswept, so a
+  regression visible only in their chrome passed this certifier. Extending
+  the tuple alone does NOT work, and each reason is measured rather than
+  assumed: (1) `extra_voices` is hidden by design until a cast beyond A/B
+  exists and the redistributer deliberately skips hidden panes, so its slider
+  legitimately cannot move splitter space (pinned by
+  `test_hidden_extra_voices_pane_does_not_break_size_slider`) — a hidden pane
+  is now exempt from the drive, its slider-while-shown behavior staying
+  certified by the sibling `certify_section_chrome.py`, which shows the pane;
+  (2) the incumbent loop drove one slider and then collapsed that section
+  before moving on, which measures leftover state instead of launch geometry
+  (a collapse clips its pane to 30 px and the splitter keeps that size on
+  expand — the failure the sibling certifier reproduced on the Review pane,
+  floor-locked at [174, 104]) — the sweep is now two passes, every slider
+  driven from launch geometry first, then every collapse; (3) a
+  single-direction slide has a no-op regime in each branch (75 matches the
+  launch geometry when the pane already sits there, 30 clamps silently to a
+  content floor), so the drive now requests both directions and passes iff
+  one moves, restoring the launch geometry after each drive. Collapse restore
+  is asserted too, because the persistence step that follows must snapshot an
+  uncollapsed layout. Acceptance: the full six-theme run exits 0 (all six
+  report contrast body and on-accent ratios, no truncation, legibility
+  certified, persistence verified), and the coverage is mutation-proven —
+  popping `paths` out of the registry before the sweep fails the run with six
+  `missing section paths` findings (exit 1), reverted byte-identically; the
+  five certifier-pinning test files pass 37/37 (exit 0), and the run leaves
+  no parked crash-records store behind.
+
 - **2026-10-10: the six-theme section-chrome probe is persisted as a tracked
   CI gate — `scripts/certify_section_chrome.py`, two workflow steps, two
   pins.** The legibility pass's offscreen verification lived in a one-off
@@ -1561,6 +1594,21 @@ cited when the entry is next touched.
   voices as live verification of the assembly fix (hardware-dependent).
 
 ## Noticed, not yet actioned
+
+- **`certify_gui_themes.py` is not wired into CI, and a sibling docstring
+  says it is (found 2026-10-10, while extending its section sweep)**:
+  `scripts/certify_section_chrome.py`'s module docstring states "Standalone
+  like certify_gui_themes.py — CI runs it as a named step on both operating
+  systems", but `.github/workflows/ci.yml` carries no step for
+  `certify_gui_themes.py` — its only two "Six-Theme" steps invoke
+  `certify_section_chrome.py`. The theme certifier is executed by nothing but
+  a human: the test suite only source-scans it
+  (`tests/test_crash_records_parking.py`, `tests/test_entry_point_arming.py`),
+  and no runner or acceptance script shells out to it. Its no-truncation /
+  legibility / persistence contract is therefore enforced on no push. Not
+  actioned here (the request was the section-coverage extension, not CI
+  wiring); the fix is either a pair of workflow steps for it or a corrected
+  sentence in the sibling's docstring.
 
 - **faulthandler net arms only on consent transitions — a normal GUI relaunch
   runs unarmed (found 2026-09-28, off the 08:06:51 GUI segfault)**:
