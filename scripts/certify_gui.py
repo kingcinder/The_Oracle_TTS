@@ -146,7 +146,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
-from PySide6.QtWidgets import QApplication, QSlider, QTableWidgetItem  # noqa: E402
+from PySide6.QtWidgets import QApplication, QSlider, QTableWidgetItem, QWidget  # noqa: E402
 
 from the_oracle import app_gui as _app_gui  # noqa: E402
 from the_oracle import gui_settings  # noqa: E402
@@ -321,8 +321,6 @@ def _collect_problems(widget, prefix: str = "") -> list[str]:
                 f"clipped child {geo.size().toTuple()} in parent {parent_geo.size().toTuple()}"
             )
     for child in widget.children():
-        from PySide6.QtWidgets import QWidget
-
         if isinstance(child, QWidget):
             problems.extend(_collect_problems(child, prefix))
     return problems
