@@ -1275,7 +1275,50 @@ cited when the entry is next touched.
   suite 1680 passed / 0 failed / 0 skipped, exit 0 — including the
   concurrent session's newer in-flight tests, as before.
 
+- **2026-10-10: suite-count drift is a check now, not a memory —
+  `scripts/certify_suite_counts.py` + `scripts/suite_counts_baseline.json`.** The
+  counts were already what caught this repo's skip drift twice (the Vulkan
+  smoke's skip count moving 1 → 3 as more audio-gated tests were added), but both
+  times a human compared two runs in their head, and a number only a human
+  remembers is not a check. `python scripts/certify_suite_counts.py [REF]`
+  checks a commit out into a fresh detached worktree, asserts the tree under test
+  imports its OWN code (the editable install points at the working tree, so a
+  silent wrong-tree load would report counts for code that never ran), runs the
+  full suite, and compares it against the counts recorded for that commit: exit 0
+  match, 1 drift (both values, plus any skip id that appeared or disappeared), 2
+  could not run — and an unrecorded commit is 2, never a pass. `--record` writes
+  the counts for the resolved sha and prints every field it changed, so
+  re-baselining is visible rather than reflexive; `--capture-output` keeps the
+  run's raw bytes so a mismatch can be read instead of re-run.
+  **A worktree and not a `git archive`, because measurement said so**: an archive
+  has no `.git`, and four files of this suite need one — an archive of HEAD
+  reports 1 failed / 7 skipped (`test_commit_slices`' landed-fix pin clones
+  `file://HEAD` under `check=True`; `test_record_integrity` ×3 and `test_release`
+  ×1 skip without a repository) where the worktree reports 0 failed / 3 skipped.
+  Recorded for `40b8ddbd6058`: **1684 passed / 3 skipped / 0 failed / exit 0**,
+  the 3 being the audio-gated smokes the absent native build explains; three
+  independent fresh-worktree runs of that commit agree, and the verify path exits
+  0 reporting "reproduces its recorded suite counts". Drift was proven to fail
+  rather than assumed: `--pytest-args "-k test_skip_audit"` exits 1 naming
+  `passed 1684 → 27` and `skipped 3 → 0`. Skip-id comparison is gated on the audit
+  being complete, so a truncated list can neither invent drift nor hide behind
+  one (see the Noticed entry on the ledger); the counts are compared either way.
+  Refusals and paths leave no half-state either, both fixed after measurement:
+  the not-added path no longer "removes" a worktree it never created (it had
+  shipped a spurious WARNING naming an unregistered path), and `--scratch` now
+  creates the directory it was pointed at instead of dying in a
+  `FileNotFoundError` traceback whose exit code 1 collided with the code reserved
+  for drift; both `--record` branches are exercised live (a first record prints
+  every field it wrote, a repeat says "already matches; nothing changed"). Pinned
+  by `tests/test_suite_counts.py` (31 tests: summary parsing, the audit's skip
+  ids, count/exit-code/id drift in both directions, ids compared as a set not a
+  list, baseline round-trip and shape, the unrecorded-commit refusal with no
+  leftover scratch, a scratch directory that does not exist yet, worktree
+  acquisition at a named ref with clone-ability and removal reporting, and both
+  fresh-tree checks'  import assertions agreeing).
+
 ## Next
+
 
 - **2026-10-10: the twelfth extraction slice is picked and armed — the menu
   bar (`_build_menu`) — pre-flight gates green; the tree is settled at
@@ -1594,6 +1637,43 @@ cited when the entry is next touched.
   voices as live verification of the assembly fix (hardware-dependent).
 
 ## Noticed, not yet actioned
+
+- **The skip audit can be emptied mid-run, so `ORACLE_FAIL_ON_SKIP=1` can exit 0
+  with tests skipped (found 2026-10-10, while recording the suite-count
+  baseline)**: the audit every run prints — and the strict CI gate that reads the
+  same `_SKIPS` ledger — are only as complete as the last file that skipped.
+  `tests/test_skip_audit.py` carries an autouse `_clean_audit` fixture that calls
+  `conftest.pytest_sessionstart(...)`, whose whole job is `_SKIPS.clear()`, before
+  and after each of its tests, so every skip recorded earlier in the session is
+  dropped from the ledger both of them read. Measured rather than read off the
+  code: the same three tests skipping both times,
+  `test_engine_output_sanitizer.py test_skip_audit.py test_vulkan_backend.py`
+  prints "1 test(s) did not run here" against pytest's own "3 skipped", while
+  the same selection without `test_skip_audit.py` prints all 3. Consequence, also
+  measured: `ORACLE_FAIL_ON_SKIP=1` over
+  `test_engine_output_sanitizer.py test_skip_audit.py` — 2 skips, both wiped —
+  exits **0**, where `test_engine_output_sanitizer.py` alone exits 1 and names
+  both skips in the failure block. So the gate whose own docstring exists so that
+  "a skip fails the job instead of hiding in it" can be defeated by test
+  ordering: a strict job whose only skips fall in files sorted before
+  `test_skip_audit.py` reports green while covering nothing — the exact failure
+  `tests/skip_audit.py` was written about. Not actioned here (the request was the
+  drift check, and that check now reports the shortfall instead of trusting the
+  list); the fix is for that fixture to save and restore the ledger rather than
+  clear it, or to move the session reset somewhere a test cannot reach
+  mid-session.
+
+- **`fresh_clone_acceptance.py --scratch` dies on a path that does not exist yet
+  (found 2026-10-10, checking whether the new count check's own repair applied
+  there)**: `--scratch /tmp/somewhere/new` raises `FileNotFoundError` out of
+  `tempfile.mkdtemp(dir=...)` and exits **1** — the code that script's docstring
+  reserves for "a check failed or a delta was unexpected" — so a user reads a
+  crash as a finding. Verified live rather than read off the code:
+  `--only wrappers --scratch /tmp/nope_xyz` traces back from
+  `scripts/fresh_clone_acceptance.py:625`. Not actioned here (the request was the
+  count check, and this is a two-line fix in another script that has its own test
+  file); the fix is to `mkdir(parents=True, exist_ok=True)` the scratch parent,
+  exactly as `scripts/certify_suite_counts.py` now does.
 
 - **`certify_gui_themes.py` is not wired into CI, and a sibling docstring
   says it is (found 2026-10-10, while extending its section sweep)**:
