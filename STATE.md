@@ -1317,6 +1317,50 @@ cited when the entry is next touched.
   acquisition at a named ref with clone-ability and removal reporting, and both
   fresh-tree checks'  import assertions agreeing).
 
+- **2026-10-10: the theme-switch probe is retired and its measurement is a
+  tracked, CI-wired certifier — `scripts/certify_theme_switch.py`.** The
+  investigation ran as a temp harness (`tests/_theme_switch_probe.py`, v5 = an
+  interleaved A/B of the restyle gate) and its findings landed as `bf591a5`; the
+  harness itself was untracked draft litter, and its source has since been
+  deleted (a stale `__pycache__` entry is all that remains). The measurement is
+  now permanent, splitting the switch cost into the three terms the probe
+  identified plus the one that was ours: **structure** (354 widgets, depth 13 on
+  the real MainWindow — the term nothing here can shrink), **propagation**
+  (16 210 change events inside one `setStyleSheet`, 18 506 by the end of the
+  pump: ~83% of the fan-out is synchronous inside the call), **rule matching**
+  (59 rules fan out 16 210 change events against 10 806 for a 2-rule stylesheet on
+  the same tree), and **ours** (the app's own Ctrl+hover filter is invoked 18 506
+  times during a real `apply_theme` switch and finds the bulk-restyle scope open
+  on EVERY one of them, where the ungated `setStyleSheet` path — what the code did
+  before the gate — finds it closed for all 18 506). Only the gate is asserted as
+  a contract; the rest are floors and relationships, and **timings are printed but
+  never asserted** (of this machine: 619 ms ungated / 531 ms gated / 435 ms for the
+  2-rule sheet / 0 ms for a redundant re-apply), pinned by
+  `test_timings_are_never_asserted` so a slow runner cannot fail the step.
+  Mutation-proven live, each reverted byte-identically (`gui_themes.py` hashed
+  before and after every mutation, the worktree each time returning to HEAD's own
+  bytes): dropping the `with bulk_restyle()` from `apply_theme` fails with
+  "saw 18506 of its 18506 events … with the bulk-restyle scope CLOSED (must be
+  0)"; dropping the redundant-restyle early return fails with "re-applying the
+  current theme fanned out 16196 events"; gutting `build_stylesheet` to two rules
+  fails four ways (the rule floor, the rule-matching separation, "not one gated
+  round performed a genuine switch", and the now-vacuous gate floor — the last two
+  after a live `StatisticsError` in the timings path was found and fixed, a crash
+  that would have read as a finding). Where the unit pins stop is stated in the
+  file itself: the suite drives `apply_theme` with a duck-typed app stand-in and a
+  synthetic event, so this certifier is the only place the scope is checked across
+  a REAL Qt fan-out. CI gains one step per OS beside the section-chrome sweep
+  (`.github/workflows/ci.yml`, "Theme Switch Restyle Split", Linux + Windows).
+  Pinned by `tests/test_theme_switch_certification.py` (23 tests: every verdict
+  driven just over its line, timings-never-asserted, the terms named in the
+  contract, the config redirect ahead of every `the_oracle` import, the paths drain
+  and the no-repo-log entry points, the two CI steps, and a subprocess run that
+  exits 0 having left the real repo tree AND the real config root byte-identical).
+  **Not resolved here, on purpose**: the open Noticed item about
+  `certify_gui_themes.py` being unwired — that certifier is still invoked by
+  nothing but a human, so this landing adds a second CI-wired theme artifact
+  without closing that gap.
+
 ## Next
 
 
@@ -1408,7 +1452,8 @@ cited when the entry is next touched.
   lifetime) 10 passed / 0 failed, exit 0. Conflict map: the tree is CLEAN
   at `ad033cb` (the eleventh slice's own commit; the only untracked file is
   a parallel session's temp probe, `tests/_theme_switch_probe.py`, not part
-  of this campaign), so there are no shared hunks to wait on and the move
+  of this campaign — **that probe is retired as of 2026-10-10; the measurement
+  was promoted to the tracked `scripts/certify_theme_switch.py`**), so there are no shared hunks to wait on and the move
   can execute immediately. Next-ranked candidates on record: input/path
   pickers (smaller, mixed concerns, one source-pinned method), then the
   cast-bar cluster (biggest coupling risk — the manifest's recorded
@@ -1885,7 +1930,8 @@ cited when the entry is next touched.
   early-return does not apply) and the whole stall is synchronous inside
   `QApplication.setStyleSheet`. Probe breakdown on a fully built MainWindow
   (491 widgets incl. combo popups/menus, offscreen, `tests/_theme_switch_probe.py`
-  temp harness): (1) **~330 ms is Qt's full-tree unpolish/repolish, ∝ widget
+  temp harness — **retired 2026-10-10: this same split is now the tracked,
+  CI-wired `scripts/certify_theme_switch.py`**): (1) **~330 ms is Qt's full-tree unpolish/repolish, ∝ widget
   count × depth** — hiding the window or disabling updates changes nothing
   (441–457 vs 450 ms), a bare app with the same css is ~0 ms, flat
   400-siblings costs +78 ms while the same 400 at depth 26 costs +733 ms;

@@ -151,6 +151,24 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\python.exe scripts/certify_section_chrome.py
 
+      # The suite pins the bulk-restyle gate against a duck-typed app stand-in
+      # and a synthetic event; this certifies it on the REAL window under a real
+      # Qt repolish, and splits the switch cost into the terms a temp probe
+      # measured (structure, propagation, rule matching, and ours). It asserts
+      # bounds and relationships rather than milliseconds -- the timings it
+      # prints are of the runner and would make this step flake, so it fails
+      # only on the facts, including that the app's own Ctrl+hover filter finds
+      # the scope open for the entire storm.
+      - name: Theme Switch Restyle Split (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./.venv/bin/python scripts/certify_theme_switch.py
+
+      - name: Theme Switch Restyle Split (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe scripts/certify_theme_switch.py
+
       # The doctor is the launch gate, so its verdict must not depend on how
       # many times it has been run. That regressed twice, each time because a
       # check graded state it had created on the earlier run, and neither was
