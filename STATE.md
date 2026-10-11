@@ -77,6 +77,13 @@ cited when the entry is next touched.
   (The 1554 figure still visible in JUNO's 2026-10-07 entry was the
   standing count at `0533e97` — correct as written there, and a
   historical note only.)
+  **Suite of record 2026-10-11: 1799 passed / 0 failed / 0 skipped, exit 0,
+  465 s** — the full suite run on the tree of the three slices below
+  (`d5cc554` the GUI work, `58cf7c9` the certifier family, `8c863a3`
+  mutation_probe) on this machine -- the tree those three slices were
+  committed on. The 1592 figure above stays correct as the count at
+  `ec136c8`; this entry records the increment the campaign's twelve landings
+  produced, measured rather than summed.
 
 - **Subtitle-target naming and speaker-ref hint wording each have one owner (2026-09-18)**:
   `src/the_oracle/subtitle_targets.py` owns where a subtitle's companion files go (the
@@ -1185,7 +1192,9 @@ cited when the entry is next touched.
 
 - **2026-10-10: the six-theme section-chrome probe is persisted as a tracked
   CI gate — `scripts/certify_section_chrome.py`, two workflow steps, two
-  pins.** The legibility pass's offscreen verification lived in a one-off
+  pins.** **(SUPERSEDED 2026-10-10: this script was merged into
+  `scripts/certify_gui.py`; the pins named in this entry were repointed, not
+  dropped — see the merge entry below.)** The legibility pass's offscreen verification lived in a one-off
   /tmp probe; it now lands as a standalone certifier that builds the REAL
   MainWindow for all six themes and checks the three chrome'd sections
   (registry presence, chrome titles, non-degenerate geometry, size sliders
@@ -1349,8 +1358,11 @@ cited when the entry is next touched.
   that would have read as a finding). Where the unit pins stop is stated in the
   file itself: the suite drives `apply_theme` with a duck-typed app stand-in and a
   synthetic event, so this certifier is the only place the scope is checked across
-  a REAL Qt fan-out. CI gains one step per OS beside the section-chrome sweep
-  (`.github/workflows/ci.yml`, "Theme Switch Restyle Split", Linux + Windows).
+  a REAL Qt fan-out. CI gains one step per OS beside the GUI certification
+  sweep (`.github/workflows/ci.yml`, "Theme Switch Restyle Split", Linux +
+  Windows; **amended 2026-10-10: the neighbour step was renamed to "GUI
+  Six-Theme Certification" when the two theme certifiers merged into
+  `scripts/certify_gui.py`**).
   Pinned by `tests/test_theme_switch_certification.py` (23 tests: every verdict
   driven just over its line, timings-never-asserted, the terms named in the
   contract, the config redirect ahead of every `the_oracle` import, the paths drain
@@ -1361,8 +1373,818 @@ cited when the entry is next touched.
   nothing but a human, so this landing adds a second CI-wired theme artifact
   without closing that gap.
 
+- **2026-10-10: the design-token and section-chrome certifications are local
+  gates now — `pytest` runs both, so a theme regression fails a developer's
+  run instead of the gate.** **(SUPERSEDED IN SHAPE THE SAME DAY, NOT IN
+  SUBSTANCE: the two certifiers merged into `scripts/certify_gui.py` with
+  `--aspects`, so the two gates here now drive its two aspects —
+  `test_gui_theme_certification.py` runs `--aspects contrast` (~8 s) and
+  `test_gui_sections_chrome.py` `--aspects chrome` (~14 s), against the 49 s
+  the two separate scripts cost together. Everything else below still holds:
+  the verdict is every theme's own summary line, the parsers stay pinned, and
+  the hermeticity assertion is unchanged. See the merge entry.)** Both certifiers were CI-shaped: named workflow
+  steps a runner or a human's shell invoked, with the suite touching
+  `certify_section_chrome.py` only for a *different* claim (the hermeticity
+  contract runs it and asserts its exit code as a side effect) and
+  `certify_gui_themes.py` — the six-theme design-token / contrast /
+  no-truncation / persistence certification — executed by NOTHING but a human
+  (the Noticed entry below, now amended). Each certification's own module
+  gained one slow test that runs its script as a real subprocess exactly as CI
+  does: `test_design_token_certification_runs_locally_and_passes` and
+  `test_section_chrome_certification_runs_locally_and_passes`. Exit 0 is
+  necessary but not sufficient, because a certifier that printed nothing and
+  returned 0 would look exactly like a clean sweep: every one of the six themes
+  must appear in the certifier's OWN summary lines — parsed for the theme
+  certifier into the (body, on-accent) ratios it reports, which must meet the
+  4.5/3.0 the certification promises, and compared as a key set against
+  `THEMES` for both — and the closing summary line must be present. Each parse
+  is pinned by a unit test that runs a truncated and an empty report through it
+  and requires FEWER keys, so the gate cannot pass vacuously.
+  **The theme certifier had to be made hermetic first, and that was the real
+  work**: running it per-developer-run was unsafe as it stood, measured — the
+  run rewrote the developer's REAL app settings file once per theme (a backup
+  copy and restore in `finally`, so a SIGSEGV mid-run lost the user's theme,
+  layout and last input — the same class the sibling's hermeticity work was
+  about) and wrote `Output/logs/gui_startup_timing.json` and
+  `gui_prewarm_timing.json` into the repo. It now carries the sibling's three
+  isolation layers — `XDG_CONFIG_HOME`/`APPDATA` redirected to a throwaway
+  `mkdtemp` before any `the_oracle` import, `app_gui.ensure_repo_default_paths`
+  repointed at it so every `Output/logs` write drains there, and
+  `crash_handlers.install(root=<throwaway>)` before the launch-path arm with the
+  user's EXISTING consent decision mirrored byte-for-byte (never created from
+  nothing) — and the backup/restore of the real settings is deleted rather than
+  kept as a second net, because isolation has no window in which a crash
+  matters. Verified around a full run: rc=0, six themes, the real repo tree AND
+  the real app-config root byte-identical (content and mtime), and the
+  throwaway removed afterwards.
+  Mutation-proven locally, each reverted byte-identically (`sha256` of every
+  touched file compared against HEAD after the restore, and the *runtime* value
+  checked, not just the file hash — see the caveat below): (1) `tape_deck`'s
+  `text_muted` set to its own panel colour fails at IMPORT, from `gui_themes`'
+  own `_certify` ("text_muted on panel = 1.00:1 … panel_alt = 1.15:1 … bg =
+  1.16:1"), i.e. that whole class was already local before this landing — worth
+  knowing, and the reason the gate's own teeth are proven by the other two;
+  (2) collapse no longer clipping the pane to its header fails BOTH new gates,
+  the certifier naming "did not clip when collapsed" per section per theme;
+  (3) the Theme menu dropping one of its six entries — `list(THEMES)[:5]` —
+  passes the fast half of the certification module (5 passed) and no test in
+  `tests/` names the theme menu at all (grepped), while the new gate fails
+  naming "Theme menu should list 6 themes, got ['Studio Light', 'Night Deck',
+  'Sephiroth', 'Pulp Science Fiction', 'Tape Deck']". That third mutation is
+  the coverage this landing buys: the contract is now enforced on a developer's
+  run and on every push, not on no push.
+  **Cost, stated rather than discovered later**: +36 s for the theme
+  certification run and +13 s for the section-chrome one, the latter because
+  `test_certifier_hermeticity.py` already runs that same 13 s sweep for its own
+  claim — deliberate duplication, disclosed in the new test's docstring: if the
+  hermeticity contract is re-scoped or deleted, the chrome gate must not vanish
+  with it.  Both new tests carry the `slow` marker the repo uses for real-window
+  work; the README's documented local command is a bare `pytest`, which runs
+  them, while `-m "not slow"` deliberately does not.
+  **AMENDED 2026-10-11**: the markers are gone — the fast subset runs them now,
+  and pyproject's marker description records that the certifications are
+  deliberately outside the marker's scope. The sentence above describes how it
+  stood for one day; see the entry above for the measured numbers.
+  **Measured caveat, worth keeping**: replaying a mutation exposed that
+  Python's pyc invalidation is (source mtime, source size) — restoring a
+  same-length file inside the same second as the mutated compile leaves the
+  cached bytecode looking current, so a second gate run loaded the MUTATED
+  module while every file hash said clean. It was caught by asserting the
+  runtime value (`THEMES['tape_deck'].text_muted`) instead of trusting the
+  diff, and the invalid run was thrown away and redone with mutated runs
+  isolating bytecode via `PYTHONPYCACHEPREFIX`. Nothing in the repo is wrong
+  here — it is stdlib invalidation — but a mutation run that restores quickly
+  can lie, which is the same lesson as the vacuous-pass assertions above.
+  **AMENDED 2026-10-11**: that hand-repair is the default now —
+  `scripts/mutation_probe.py` runs a mutation under fresh per-run bytecode
+  isolation with hash guards, and its own tests reproduce this collision on
+  purpose (see the entry above).
+
+- **2026-10-10: the two GUI certifiers are merged into one parametrized
+  six-theme harness — `scripts/certify_gui.py`; `certify_gui_themes.py` and
+  `certify_section_chrome.py` are deleted.** Both built their own windows and
+  repeated the same six-theme loop; the successor builds one window per theme
+  and runs both check families against it, selected by `--aspects
+  contrast,chrome` (default both). The suite's two local gates run one aspect
+  each (contrast from `test_gui_theme_certification.py`, chrome from
+  `test_gui_sections_chrome.py`) and CI runs the default as ONE step per OS
+  ("GUI Six-Theme Certification"; the two "Section Chrome Six-Theme Sweep"
+  steps are gone).
+  **Measured, not assumed.** `scripts/certify_gui.py` (both aspects) is 14 s
+  and green; the scripts it replaces cost 33 s + 13 s = 49 s on the same tree
+  for the same 13 windows. The speedup is the teardown discipline, and that
+  was proven rather than guessed: adding the inference-wizard stub to the old
+  theme certifier — the one change that was NOT teardown — made it SEGFAULT
+  (rc=139) at 22 s on this machine, because it destroyed windows with plain
+  `close()` + `processEvents()` and left them pinned, replaying every deferred
+  startup callback on each pump. The merged harness uses the
+  `_destroy_window` discipline both old docstrings describe. That crash left
+  its parked records store in the repo root; the next harness run merged it
+  home — the self-healing path the parking entry above describes, exercised
+  live rather than argued.
+  **Coverage parity is proven by mutation against a baseline taken BEFORE the
+  files were deleted.** With collapse made not to clip (`gui_sections.py`),
+  the merged harness reports 48 failures and the old theme certifier's 48
+  failure messages are byte-identical to it (`diff` empty), with none of the
+  old chrome certifier's 18 missing: the union, not the intersection. Every
+  check message was carried over verbatim so this comparison stays possible.
+  **The certification entry is the pin this was asked for.** One explicit
+  `ThemeCertification` per theme (body bar, on-accent bar, the sections it
+  must render) — literals, never a comprehension over `THEMES` — audited in
+  both directions BEFORE a window is built: a theme with no entry fails naming
+  it, proven by appending a real seventh theme (`THEMES["seventh_probe"]`),
+  which fails in 2 s with **zero bytes of stdout certified**; and an entry
+  naming a theme that does not exist fails naming that too. Section drift is
+  closed the same way — a registry key no entry covers fails the sweep, proven
+  by dropping `live` from `ALL_SECTIONS`; the old script carried that
+  expectation as a COMMENT, which is exactly how paths/table/extra_voices rode
+  uncertified for a while. The usage path is pinned as well: an unknown aspect
+  exits 2 having certified nothing, and `--help` lists both aspects. One
+  assertion was ADDED while merging: the contrast aspect now checks
+  `window._current_theme == key`, so the printed ratios certify the theme
+  actually on screen — probed first (a fresh window really does set it), so it
+  is a real check and not a false failure.
+  Pins repointed rather than dropped: the arming pins collapsed into
+  `test_certify_gui_arms_before_mainwindow`, the parking scan's `CERTIFIERS`
+  tuple and docstring name the one harness, the hermeticity contract points at
+  it (its source anchors were written against the section-chrome file and hold
+  verbatim, because the isolation layers were copied whole), and the CI-step
+  pin names the new steps. 74 tests pass / exit 0 across everything that names
+  either retired file, including the sibling theme-switch certifier and the
+  records net. Entries above that mention the deleted files as background are
+  left as dated history except where they described present state, which is
+  amended.
+  **Not done, on purpose**: no Windows run — the checks are OS-independent but
+  `scripts/certify_gui.py` has only ever executed on Linux, which its docstring
+  says rather than implies.
+
 ## Next
 
+
+- **2026-10-11: the certifier family's hermeticity preamble is ONE module
+  now — `scripts/certifier_isolation.py` owns the throwaway root, both
+  environment redirects and the reap, and the copies that lived in the two
+  certifiers are gone.** The two preambles were byte-for-byte twins: a
+  `tempfile.mkdtemp`, the same two `os.environ` writes, and the same reap loop
+  (five attempts, `0.1 s` pause, the same survivor warning) registered the same
+  way with `atexit` — the policy had two owners and therefore two places to be
+  right, which is the duplication this landing removes. The helper is
+  deliberately Qt-free and `the_oracle`-free and stays so (it must be importable
+  before the config root is known and reachable at interpreter exit, when the
+  C++ application may already be gone), so the ONE rule callers cannot delegate
+  is unchanged and still theirs: the redirect has to happen before the first
+  `the_oracle` import. Both call sites keep their own root prefix
+  (`oracle_gui_cert_cfg_`, `oracle_theme_switch_cfg_`) so a leaked root still
+  names the sweep that leaked it, and the two source-scanning pins that named
+  the removed lines (`tests/test_certifier_hermeticity.py`,
+  `tests/test_theme_switch_certification.py`) were repointed, not deleted.
+  **New owner-side net, `tests/test_certifier_isolation.py` (8 tests):** both
+  variables asserted against the real reader (`platform_support.user_config_root`)
+  rather than against the strings; the package-free claim proven in a FRESH
+  interpreter (this process has `the_oracle` loaded for other reasons); the reap
+  idempotent (a reaped root is success, not an error); a chmod-locked root
+  reported on stderr with `False` rather than swallowed; `atexit` measured, not
+  assumed, by a child that dies of `SystemExit(2)`; and the dedupe itself pinned
+  by AST SHAPE — a re-grown `mkdtemp`/`rmtree`/`atexit.register`/
+  `os.environ[...] = ...` in either certifier fails, because a textual scan would
+  flag the prose that documents the rule they no longer implement.
+  **Six mutations, all caught, every restore sha256-identical** (the probe from
+  this morning's landing, first use here): dropping `APPDATA` from the tuple,
+  making the reap return `True` while the root survives, unhooking `atexit`,
+  re-growing a `mkdtemp` in `certify_gui.py`, importing `the_oracle` from the
+  helper, and generifying a root prefix. **One of those six SURVIVED the first
+  pass and the finding is the useful part**: the redirect test looped over
+  `isolation.THROWAWAY_ENV_VARS`, so deleting a member from that tuple deleted it
+  from the test's own expectation too and all eight tests stayed green — the
+  expected set was being read off the code under test. Fixed by naming the two
+  variables in the test and re-run: caught, naming that test. **End-to-end, on the
+  refactored scripts**: both real sweeps rc=0 (`certify_gui.py`, and
+  `certify_theme_switch.py --quiet`), zero new roots in `TMPDIR`, zero survivor
+  warnings, and `git status --porcelain` byte-identical before and after (the
+  repo writes the redirect exists to prevent did not happen). The argparse
+  usage-error exit was exercised by accident and counted anyway — a bad flag
+  (`--no-open`, rc=2) is exactly the `SystemExit` path the `atexit` half covers,
+  and it left no root. Cluster 56 passed / 0 failed, rc=0 (84 s); parking +
+  entry-point-arming pins 19 passed; fast-subset/skip-audit/mutation-probe 36
+  passed. Suite 1791 → 1799. **Not done, on purpose**: the 28 `oracle_gui_cert_cfg_*`
+  and 14 `oracle_theme_switch_cfg_*` roots already in /tmp are left in place
+  (inert, and deleting them is not this task), and the two non-certifier
+  redirectors stay as they are — `u42_crash_repro.py` points at a repo-local
+  path by design, and u44's un-reaped roots are the standing Noticed entry next
+  door. Checked rather than assumed: those four files were the only other
+  `mkdtemp`/`XDG_CONFIG_HOME` sites, and none carries this preamble. Nothing
+  committed; these edits ride the same uncommitted tree. **LANDED 2026-10-11:
+  committed as `58cf7c9` (the certifier-family slice).**
+
+- **2026-10-11: the GUI certification gates are IN the fast subset — the
+  `slow` marker is off them, so `-m "not slow"` can no longer report green
+  without certifying a theme.** Four gates, each the local half of a named CI
+  step: contrast (9.86 s), studio+wizard (11.21 s), chrome (14.09 s) and the
+  theme-switch restyle run (10.32 s) — 45.5 s of certification per fast run, read
+  off `--durations`. Before this, the fast subset collected 1519 and deselected
+  271, and all four gates were inside that deselection while a bare `pytest` (the
+  README's documented command, and what CI runs) kept running them: a developer
+  working between changes had a green loop that proved nothing about any theme.
+  After: the subset collects 1524, deselects 267, and passes 1524 / 0 failed,
+  exit 0 in 228 s — 1519 + the 4 gates + 1 new pin, exactly. The marker keeps its
+  job (model-heavy and real-window sweeps), and pyproject's marker description
+  now says the certifications are deliberately outside its scope. **The contract
+  is pinned by ASKING PYTEST, not by scanning sources**: tests/test_fast_subset.py
+  runs `pytest --collect-only -q -m "not slow"` in a subprocess and requires the
+  four node ids in its own report, with a >1000-line floor so a truncated parse
+  cannot read as agreement. A source scan would be a second implementation of
+  "what the subset runs", which is the doctrine next door in
+  tests/test_skip_audit.py. **Mutation-proven with the new mutation probe** (both
+  restores sha256-identical — the probe's first real use on a change it did not
+  introduce): re-marking the chrome gate fails naming that node id, and pointing
+  the pin's own expression at `-m "slow"` fails the 269-line vacuity guard.
+  README's Development section now documents the fast loop and why the
+  certifications live in it. **Not done, on purpose**: the certifier-hermeticity
+  module stays `slow`-marked (hermeticity is not a certification verdict, and its
+  end-to-end run duplicates a gate that now runs in the subset anyway), and no
+  conftest hook was added to refuse marker-deselection — a hook would also fire
+  on legitimate `-k` subsets, so the exact command is pinned instead. The suite
+  count moves to 1791 (1782 before this session's three landings). Nothing
+  committed; these edits ride the same uncommitted tree. **LANDED 2026-10-11:
+  committed as `58cf7c9` (the certifier-family slice).**
+
+- **2026-10-11: the hand-done mutation discipline is a TOOL now —
+  `scripts/mutation_probe.py` applies, runs and reverts a source mutation with
+  hash guards and per-run bytecode isolation, so the same-second stale-bytecode
+  trap cannot invalidate a measurement again.** It exists because of the caveat
+  recorded in the 2026-10-10 local-gate entry below: CPython keys cached
+  bytecode on (source mtime in WHOLE SECONDS, source size), so a mutation
+  restored at the same length inside the same second leaves the `.pyc` looking
+  current — the next run executes bytes no file contains while every hash a tool
+  can read says clean, and that invalid run was caught by luck. **The design
+  makes the hand-repair the default**: every child runs with
+  `PYTHONPYCACHEPREFIX` pointed at a FRESH throwaway root per run (fresh, not
+  merely isolated — the same-second key collides inside a private cache too),
+  so it reads neither the repo's `__pycache__` nor an earlier phase's entry, and
+  nested processes inherit the variable, which is what makes probing `pytest`
+  cover pytest's own subprocesses. On top of that, the cache paths considered
+  are the DEFAULT repo-side `.pyc` AND the prefixed one, because
+  `importlib.util.cache_from_source` follows the CALLING process's prefix — a
+  real bug in this tool's first draft, where the tests' helper used that call
+  and therefore named the isolated root while under a probe: the isolation
+  mutation "passed for the wrong reason". A matching cache is dropped right
+  after every rewrite (`forget_hazardous_bytecode`), and whether it was dropped
+  is in the report. **Hash guards**: an optional `expect_sha256` per file, an
+  unambiguous occurrence count, a refusal when the replacement changes nothing,
+  an all-or-nothing apply (a half-applied spec is rolled back), a restore whose
+  sha256 is compared against the original rather than assumed, and — because
+  this is a shared checkout — a file that changed under the probe is REFUSED
+  and left exactly as found rather than clobbered. **Verdicts**: exit 0 CAUGHT,
+  1 SURVIVED, 2 nothing concluded (a guard refusal, an unusable spec, a
+  timeout). The last one earned a refinement by being driven at the real repo:
+  the first real run mutated `oracle_light`'s `text_muted` DARKER and
+  legitimately reported SURVIVED (darker text on a white panel raises contrast,
+  so the check should pass); the second pointed it toward the panel and broke
+  the module at import, so pytest exited 4 — and under `--expect-rc 1` that is
+  now INVALID ("a collection error is not a caught mutation"), not "the check
+  does not cover this line". **Verified**: 8 tests in
+  `tests/test_mutation_probe.py`, green plain and under
+  `PYTHONPYCACHEPREFIX`, including a reproduction of the trap in BOTH directions
+  (a naive child running the pre-mutation bytes while the file says otherwise,
+  and every hash on disk saying clean while the interpreter runs the reverted
+  ones) and a test that keeps the collision LIVE through the probe's own run by
+  re-keying the stale `.pyc` header to the file as it is then — without that,
+  the mutation's size change quietly destroyed the collision and the isolation
+  claim proved nothing; the real theme mutation came back CAUGHT with a
+  byte-identical restore (sha256 both sides); a wrong `expect_sha256` and a
+  malformed spec each exit 2 naming the file and both digests; and the tool's
+  own guards were mutated (shared cache root, `forget_hazardous_bytecode`
+  disabled, conflict guard disabled, hash guard disabled — caught by the right
+  assertion each, restores sha256-identical), with the honest nuance that the
+  no-isolation mutation is invisible from INSIDE another probe: a nested probe
+  has already given its child a prefix, so it is only load-bearing when run
+  directly. **Cost, stated rather than assumed**: a fresh cache root per run
+  recompiles what the child imports — medians 3.03 s isolated vs 2.18 s on the
+  repo cache for this file's own tests, three alternating rounds, so ~0.85 s per
+  child run here. **Limits**: there is no witness step, so a mutation the check
+  simply never reads reports SURVIVED — correct, but the caller still has to
+  choose a mutation that changes observable behaviour (the direction-wrong
+  theme mutation above is exactly that); the tool does not find the test that
+  covers a line; and no Windows execution from here. The 8 new tests will move
+  the recorded suite count, which is a commit-keyed baseline
+  (`scripts/suite_counts_baseline.json`) and is therefore untouched by
+  uncommitted work. Nothing committed; these files ride the same uncommitted
+  tree. **LANDED 2026-10-11: committed as `8c863a3` (the mutation-probe
+  slice); the baseline's own count moved with it and was re-verified, not
+  assumed.**
+
+- **2026-10-11: the GUI certification is one NAMED CI STEP PER ASPECT, so
+  the job list says which certification broke.** Before this, `ci.yml` ran the
+  merged harness as a single step per OS, so a contrast regression and a chrome
+  regression were the same red "GUI Six-Theme Certification" with the reason
+  somewhere in a log. Now `ci.yml` carries four steps per OS — `contrast`,
+  `chrome`, `studio`, `wizard`, the harness's own order — each named
+  `GUI Six-Theme Certification - <aspect> (<OS>)` and each selecting its aspect
+  by name (`--aspects <aspect>`), so a failure is attributable from the job
+  list alone. **The cost is measured, not assumed**: as separate processes the
+  four aspects take 8.1 + 13.8 + 9.3 + 8.9 = 40.1 s, against 17.5 s for one
+  process running all four (16.6 s on the re-measure), because every aspect
+  rebuilds the six-theme window loop (and the dialogs) it needs — ~+23 s per
+  OS against a 491 s suite. Attribution is what the time buys. **The drift is
+  pinned in both directions**:
+  `tests/test_gui_sections_chrome.py::test_workflow_runs_each_gui_certification_aspect_as_its_own_named_step`
+  reads the harness's `ASPECTS` tuple off the source (importing it would create
+  the throwaway config root and redirect the config environment — the isolation
+  that makes the sweep safe to run on a developer's machine — so the test would
+  become part of what it grades) and requires the workflow's certification
+  steps to be EXACTLY those aspects x {Linux, Windows}, each with the right
+  interpreter, `if:` guard, shell, and its own `--aspects <name>`; an aspect
+  added to the harness therefore fails the suite until it has a step, and a step
+  for an aspect that no longer exists fails too. **Mutation-proven three ways**
+  (each restore sha256-identical): the wizard (Linux) step losing its
+  `--aspects wizard` fails on "must select its own aspect by name"; deleting
+  the wizard (Windows) step fails naming it in `missing=[...]`; adding a fifth
+  aspect to `ASPECTS` fails on the pin's own literal list. **Verified**: the
+  workflow parses, the `test` job's 25 steps carry no duplicate name, and the
+  eight certification steps sit in the harness's order;
+  `tests/test_gui_sections_chrome.py` 9 passed / 0 failed (the slow
+  `--aspects chrome` run included); the affected cluster — chrome, design-token,
+  certifier hermeticity, entry-point arming, crash-record parking, smoke render,
+  theme-switch, doctor idempotence, fresh-clone acceptance, Windows install
+  smoke, Vulkan CI smoke — 166 passed / 0 failed, exit 0; the workflow's own
+  default invocation still exits 0 in 16.6 s leaving no throwaway root. The
+  harness docstring now says one step per aspect rather than one step, and the
+  pin's docstring says why the aspect belongs in the step NAME. **Not done, on
+  purpose**: no Windows execution from here — this machine is Linux, so the
+  eight steps are wired and pinned but only the Linux four have ever run.
+  Nothing committed; these edits ride the same uncommitted tree. **LANDED
+  2026-10-11: committed as `58cf7c9` (the certifier-family slice).**
+
+- **2026-10-10: the merged GUI harness grows two dialog aspects — `studio`
+  and `wizard` — so the six-theme certification covers the recording studio
+  and the inference tour, not only MainWindow.** Designed in the harness's own
+  idiom (certify facts a real window supplies) and measured before anything
+  was asserted. For each of the six themes: (1) the THEMED SURFACE — the
+  dialog carries no stylesheet of its own, an application stylesheet is really
+  installed, the dominant opaque pixel is one of that theme's surface tokens
+  (`bg`/`panel`/`panel_alt`), the theme's token colors cover at least 70% of
+  the dialog's painted pixels, and at least two distinct token colors appear.
+  Measured with the census's stride-3 sample: the studio paints **97%** theme
+  colors and the wizard **94%**, both led by `panel_alt` over `panel`,
+  `border` and `bg`. A full pixel scan of the same dialogs reads ~86%,
+  because the grid steps over most glyph antialiasing (blended by definition,
+  never a flat token), so the floor is set against the sampled number. The
+  census skips
+  alpha-0 pixels — a correction with a measurement behind it: `QWidget.grab()`
+  leaves ~13% of the studio dialog transparent, and counted as black those
+  pixels look exactly like an unthemed surface. (2) The STUDIO's own facts:
+  the teleprompter lists the text script it was given and never the audio
+  decoy beside it, Font Size 24 reaches the prompt area, and no visible widget
+  is zero-sized or clipped. (3) The WIZARD's own facts: all nine tour stages
+  render a heading and an explanation, every stage that names a highlight
+  target RESOLVES to a real widget on the actual MainWindow (eight do — the
+  tour exists to point at real controls, and a renamed control would otherwise
+  leave it pointing at nothing), the last stage offers Finish, the dialog
+  stays non-modal, and the first and last stages pass the surface certificate.
+  Wiring: both run inside the theme loop while that theme's window is alive
+  (the tour needs a real window to resolve against), then the window is torn
+  down as before; the report gains a line per theme and a summary per aspect.
+  The module docstring and the ci.yml step comment now describe four aspects,
+  and CI's default invocation runs all of them (18 s here, up from ~10 s).
+  **Mutation-proven three ways, each restore byte-identical (sha256 both
+  sides)**: a dialog-local stylesheet on the studio (it also broke the font
+  check) fails the studio aspect on the dialog painting itself;
+  `setModal(True)` on the wizard fails on modality; `_target` returning
+  nothing fails on the highlight targets, naming the stage and the control.
+  **Verified**: the default all-aspects run exit 0 with both dialog readings
+  for all six themes; the certifier cluster 84 passed / 0 failed, exit 0;
+  tests/test_gui_theme_certification.py 10 passed (the new dialog-aspect test
+  11.7 s, the new parser form proof instant). Full suite on the final bytes:
+  1782 passed / 0 failed, exit 0 (491.5 s) — the +2 over the standing 1780
+  baseline is exactly the two new tests in that file. Three things worth
+  naming: the aspects lean on the
+  tour's private `_stages`/`_continue`/`_target` names (a rename fails loudly,
+  which is the point), and the studio's construction enumerates the machine's
+  real input devices once per theme — a cost and a source of ALSA noise on
+  stderr, not a defect. Third, the /tmp pile grew by two during this task
+  (26 → 28 `oracle_gui_cert_cfg_*` roots; the 23:39 and 23:40 ones hold full
+  run content) and they are NOT a reap regression — probed rather than argued:
+  a run killed before its `finally` leaves exactly such a root (SIGKILL mid
+  studio aspect), while the passing, failing, piped-to-`head`, and
+  hard-pipe-close (`| true`, rc 120) paths all reap clean; the mutation runs
+  were piped, and a process the tool kills on timeout cannot reap anything.
+  The pile is inert and, as recorded in the entry below, left in place.
+  Nothing committed; these edits ride the same
+  uncommitted tree. **LANDED 2026-10-11: committed as `58cf7c9` (the
+  certifier-family slice).**
+
+- **2026-10-10: the certifier family stops littering /tmp — the throwaway
+  config root is now reaped on EVERY exit path, after the audio stack
+  settles, and the old "the audio teardown races the removal" cause is
+  replaced by the measured one.** Found while auditing this machine's /tmp:
+  22 `oracle_gui_cert_cfg_*` roots and 14 `oracle_theme_switch_cfg_*` roots,
+  one per run — and the theme-switch ones still held the WHOLE hermetic run
+  inside them (`the_oracle/app_settings.json`,
+  `Output/logs/gui_*_timing.json`, `Input/`, `Profiles/`, `Seashells/`).
+  (This session's own red-state probe runs, which deliberately exercised the
+  leaking paths before the fix, brought the first count to 26; the totals are
+  a snapshot, the shapes are the finding.) Measured per exit path instead of
+  assumed: `certify_gui.py --aspects contrast` and the heavy
+  `--aspects chrome` were ALREADY clean (both reach the sweep's `finally`),
+  while `--help` (argparse's `SystemExit`) and `--aspects legibility` (the
+  rc=2 usage error) left one root each, every run, containing nothing but the
+  PulseAudio client's `pulse/cookie` — which that client writes under
+  `$XDG_CONFIG_HOME` while it LOADS, i.e. at import, before any QApplication
+  exists (a phase probe with an atexit checkpoint showed it present at
+  import, absent from every teardown phase). `certify_theme_switch.py` had no
+  cleanup at all. So the old comment blaming a teardown-time write that races
+  the removal described a race nothing could reproduce; the litter was the
+  paths no `finally` covered. **The fix**: each script owns one Qt-free
+  `_reap_config_root()` — bounded retries, because the cookie write is a
+  load-time write a single `rmtree` can lose, and a root that survives the
+  retries is REPORTED on stderr rather than vanishing into `ignore_errors` —
+  registered with `atexit` so every exit path is covered, and called where
+  the audio stack has settled: the sweep's `finally` in `certify_gui.py`
+  (replacing the bare `rmtree`) and right after the window teardown in
+  `certify_theme_switch.py`. Both docstrings now state the measured cause.
+  **Pinned in both certifier test files** on a scratch `TMPDIR` (the
+  throwaway root's location is `TMPDIR`'s business, so a run is graded
+  against its own litter rather than the shared /tmp): the two fast paths
+  above and both slow end-to-end runs assert the scratch parent is empty.
+  Red first, measured: both pins failed on the real leaked roots before the
+  fix (`oracle_gui_cert_cfg_r3cdrew2`, `oracle_theme_switch_cfg_c7hpgw46`).
+  **Verified**: the certifier cluster 65 passed / 0 failed, exit 0 (both slow
+  runs included); all four exit paths re-run by hand with `TMPDIR` in a
+  scratch dir give `leftover=''` and the same rc as before (0 / 2 / 0 / 0);
+  and the honest-failure branch was exercised deliberately — a chmod-locked
+  root produced the stderr warning after five attempts at rc 0, not a crash.
+  Scope checked rather than assumed: the other two scripts that make scratch
+  directories (`certify_suite_counts.py`, `fresh_clone_acceptance.py`) already
+  reap theirs in a `finally`, so the leak was confined to these two, and the
+  only remaining non-reaper is the u44 harness (logged under Noticed). The
+  roots already sitting in /tmp were left in place (inert, and deleting them
+  is not this task); `rm -rf /tmp/oracle_gui_cert_cfg_*
+  /tmp/oracle_theme_switch_cfg_*` clears them. Nothing is committed; these
+  edits ride the same uncommitted tree as the extraction campaign. **LANDED
+  2026-10-11: committed as `58cf7c9` (the certifier-family slice).**
+  **AMENDED 2026-10-11: the per-script `_reap_config_root()` this entry landed
+  is now the shared `scripts/certifier_isolation.py` — same policy, same
+  reap-on-every-exit-path behaviour, one owner** (see the certifier-isolation
+  entry in Next). The measurement above is what the helper's docstring now
+  records — the litter was the exits no `finally` covered, and the cookie write
+  is a LOAD-time write a single `rmtree` can lose. Reachability facts unchanged;
+  only the address of the implementation moved.
+
+- **2026-10-10: the cast-bar cluster (extraction slice 13) is EXECUTED — the
+  ten MainWindow cast-bar methods' bodies moved into `gui_cast` behind four
+  call-boundary injections, seam-proven by mutation on a real window, and the
+  `moved_owners` gui_cast listing plus the pruned latent `SpeakerSettings`
+  adjudication land with it.** The move followed the manifest's recorded
+  disposal name-for-name. `src/the_oracle/gui_cast.py` gains ten module-level
+  functions (`cast_keys`, `speaker_names`, `_all_speaker_groups`,
+  `apply_cast`, `_update_speaker_group_title`, `_refresh_cast_bar`,
+  `open_cast_manager`, `_sync_extra_speaker_groups`, `_speaker_settings`,
+  `_speaker_config_from_payload`), GENERATED from the app_gui source rather
+  than transcribed and proved statement-for-statement against the originals
+  by AST dump after the documented substitutions — `self` → `main_window`,
+  the four injected names (`speaker_group_cls`, `settings_from_group_fn`,
+  `apply_settings_fn`, `normalize_keys_fn`), and
+  `CastManagementDialog(self)` → `CastManagementDialog(main_window)`; every
+  docstring, comment and blank line travelled byte-for-byte. MainWindow keeps
+  each of the ten as a thin delegate whose body imports its owner function
+  FUNCTION-LOCALLY (the settled entry-point convention), so app_gui holds no
+  module-level binding for any of them and gui_cast is the single patch
+  point. **The four injections are the recorded seam, not a convenience.**
+  Each name a staying app_gui site still reads (`SpeakerGroup` — `_build_ui`;
+  `_speaker_settings_from_group` — `_widget_snapshot`;
+  `_apply_speaker_settings_to_group` — `_restore_speaker_section`;
+  `normalize_cast_keys` — `_load_project_into_ui`/`prepare_project`) crosses
+  resolved from app_gui's globals at call time, so an app_gui-level rebind
+  still reaches the moved half of the flow; a module-global read inside
+  gui_cast would have made it a silent no-op. **Seam-proven by mutation on a
+  REAL MainWindow** (built through `tests/test_app_gui_profiles._build_window`),
+  14/14: an app_gui-level `SpeakerGroup` rebind is the class the moved
+  `_sync_extra_speaker_groups` constructs (and a gui_cast-level rebind is NOT
+  — the designed PARTIAL_OWNED split made visible); app_gui-level
+  `_speaker_settings_from_group` / `apply_settings_fn` / `normalize_keys_fn`
+  rebinds are what the moved `_speaker_settings` / `apply_cast` run; and the
+  moved `open_cast_manager` builds gui_cast's `CastManagementDialog`, which
+  app_gui no longer names in any runtime position. The probe is EPHEMERAL (a
+  script, not a test) for the slice-12 reason: the patch-couple census is
+  derived FROM this suite, and the patch-surface net refuses app_gui-level
+  patches of the three PARTIAL_OWNED names outright, so a durable
+  app_gui-level rebind would itself redden the nets (measured — an early
+  durable version did exactly that). The durable pins therefore cover the
+  shape (delegate + function-local import, the four keyword injections at the
+  delegate boundary, no injected name read as a gui_cast global) and the
+  owner-side behavior (inject recording fakes, watch them run). **Record
+  changes.** `moved_owners.the_oracle.gui_cast` now lists `_CastRow` and
+  `CastManagementDialog` — the dialog's only app_gui runtime reader was the
+  moved `open_cast_manager`, and its remaining `__init__` mention is an
+  annotation (the file has `from __future__ import annotations`), exactly the
+  concession the pre-flight predicted; app_gui's re-export is gone and the
+  pre-flight note was rewritten to the EXECUTED state with its reasoning kept.
+  `latent_split_readership.gui_cast.SpeakerSettings` is PRUNED: app_gui keeps
+  only annotation uses of it, so no runtime read remains on that side (raw set
+  and record re-checked equal, no new pairs). The now-unused
+  `speaker_config_from_payload` import left app_gui, and
+  `payload_policy.policy_owners` gained `the_oracle.gui_cast` as a delegates
+  owner — the decode delegate genuinely lives there now, and the payload net's
+  referenced-only-from-owners rule is what forced that honest record edit
+  rather than a seam. **Verified.** Net cluster 39 passed (patch-surface incl.
+  the offender and latent nets, payload policy, import-direction, cast-owner
+  with 16 of its own); wider targeted batch 218 passed (profiles, srt,
+  ingest-transformer gui, tooltips, theme certification, stem-writer
+  manifest, recording owner, entry-point arming, record-integrity); full suite
+  **1777 passed / 0 failed** (491.2 s, exit 0 preserved). Nothing is
+  committed; the slice rides the same uncommitted slice-12 + lazy-sections
+  tree as its two predecessors. **LANDED 2026-10-11: committed as `d5cc554`
+  (the GUI slice).**
+  Next-ranked candidates: input/path pickers
+  (107 lines, 38 of them source-pinned to stay by the one-owner net), then
+  workspace-layout persistence (98 lines — but slice 6's record keeps
+  `_register_section` in app_gui "where the layout state lives", so that one
+  needs the decision revisited first, not just a seam).
+
+- **2026-10-10: the entry-point delegate convention is SETTLED — the two
+  slice-11/12 delegates now import their owner functions function-locally,
+  making their `moved_owners` listings literally true (rule 1); the cast
+  slice's entry points follow it.** Adjudicated the Noticed item that the
+  `gui_menu.build_menu` / `gui_tooltips.register_ctrl_help_descriptions`
+  listings contradicted rule 1's "nothing in app_gui reads anymore"
+  predicate: both were bound at app_gui module level and the staying
+  delegates called them by bare name, so an app_gui-level patch WAS live for
+  the delegate call (app_gui held its own reference) while the net's remedy —
+  repoint at the owner — was inert. Chosen resolution (the item's first
+  candidate): function-local imports in the delegate bodies (the slice-10
+  gui_ingest_tools style), so app_gui keeps NO module-level binding, an
+  app_gui-level patch is a silent no-op, and the owner module resolves at
+  call time — the single patch point the net's printed remedy assumes. The
+  alternative (narrowing rule 1's text) was rejected: it would leave the net
+  flagging app_gui-level intercepts that genuinely work while its remedy
+  stays inert. **Measured, then verified behaviorally on the settled
+  bytes.** Before the change the net's own predicate
+  (`_app_gui_patchable_reads`) contained both names; after it, neither. A
+  Python probe proved dispatch, not just text: an app_gui attribute set to a
+  raising sentinel is never read, an owner-module recorder intercepts, and
+  the two documented seams stay live through the delegates — `app_gui.THEMES`
+  reaches `gui_menu.build_menu` (the slice-12 seam) and `app_gui.cuda_reason`
+  reaches `register_ctrl_help_descriptions` (the slice-11 seam).
+  `install_ctrl_hover_help` keeps its module-level import (still read in
+  `__init__`). Record amended in the manifest: the gui_menu and gui_tooltips
+  notes carry the convention, and the gui_cast note's open "entry-point
+  delegate bookkeeping" sentence is replaced by it. Nets re-ran green on the
+  settled bytes: patch-surface (incl. the offender and latent nets — raw 91
+  pairs unchanged, raw == sanctioned), import-direction, tooltips,
+  cast-owner, recording-owner, writer-manifest — 79 passed; real-window
+  suites test_gui_window_lifetime (7) and test_gui_sections_lazy (5) green,
+  so both delegates ran for real during MainWindow construction. Nothing is
+  committed; the edit rides the uncommitted slice-12 + lazy-sections tree.
+  **LANDED 2026-10-11: committed as `d5cc554` (the GUI slice).**
+
+- **2026-10-10: the cast-bar cluster's split-readership constraint is
+  RESOLVED in the record — the cluster is now a movable extraction candidate,
+  with the per-name disposal written into the manifest's `gui_cast` note.**
+  Method: an AST read-site sweep of the ten cluster methods
+  (`_all_speaker_groups`, `_refresh_cast_bar`, `apply_cast`,
+  `_update_speaker_group_title`, `_sync_extra_speaker_groups`,
+  `_speaker_settings`, `_speaker_config_from_payload`, `open_cast_manager`,
+  `cast_keys`, `speaker_names`), intersecting runtime-position reads
+  (annotations are not reads) with app_gui module-level bindings — the union
+  is EXACTLY the seven recorded names, so the constraint list was complete —
+  and every per-name site claim was checked by a verifier before the note was
+  written (exit 0). Disposal recorded: (1) `CastManagementDialog` —
+  `open_cast_manager` is its only runtime app_gui reader (the `__init__` use
+  is an annotation), so once the cluster moves no app_gui runtime reader
+  remains and the moving slice LISTS it in `moved_owners.the_oracle.gui_cast`
+  beside `_CastRow`, app_gui-level patches becoming offenders to repoint at
+  gui_cast; (2) `SpeakerSettings` and `speaker_config_from_payload` need no
+  seam — each is runtime-read only by the moving bodies and each is already
+  moved-owned elsewhere in the record (models.settings / gui_settings), so
+  app_gui-level patches are already offenders and the moved bodies resolve
+  gui_cast's imports; (3) `SpeakerGroup`, `_speaker_settings_from_group`,
+  `_apply_speaker_settings_to_group` and `normalize_cast_keys` keep
+  legitimate app_gui-level patches (staying readers: `_build_ui` panels A/B;
+  `_widget_snapshot`; `_restore_speaker_section`; `_load_project_into_ui` +
+  `prepare_project`), so none may be listed and the slice must INJECT each at
+  the call boundary from app_gui's globals (`speaker_group_cls` /
+  `settings_from_group_fn` / `apply_settings_fn` + `normalize_keys_fn` — the
+  find_audiocpp_binary pattern); those four stay unlistable permanently
+  (their staying readers are window-assembly and persistence code that does
+  not travel), the three PARTIAL_OWNED entries stay as written, and
+  `normalize_cast_keys` gains none. Verified on the settled bytes: the
+  structural diff is exactly the one note (owner names and order untouched),
+  and the readers re-ran green — patch-surface net (incl. the latent net),
+  cast-owner, recording-owner, writer-manifest: 56 passed / 0 failed, exit 0.
+  Nothing is committed; the note rides the same uncommitted manifest as the
+  latent record. **LANDED 2026-10-11: committed as `d5cc554` (the GUI
+  slice).**
+  The cluster's entry-point delegate bookkeeping now follows
+  the settled entry-point delegate convention (2026-10-10, the entry above):
+  thin delegates left in app_gui import their owner function
+  function-locally; next-ranked candidates remain input/path pickers, then
+  this cluster (now unblocked).
+
+- **2026-10-10: the patch-couple net gains the LATENT split-readership
+  rule — every name both a staying app_gui function body and a gui_* module
+  read in runtime position is now flagged and adjudicated, patched or not.**
+  The census net could only see names the suite already rebinds; a name read
+  on both sides is a split waiting for its first app_gui-level patch — and if
+  that first patch is a fix under time pressure, the silently-missed half IS
+  the bug. `tests/test_app_gui_patch_surface.py` gains `_RuntimeReads`
+  (runtime-position Name loads; annotations are not reads — a name used
+  solely as an annotation has no runtime effect), `_app_gui_patchable_reads`
+  (names bound at app_gui module level AND read inside some function body: a
+  MainWindow method or a module-level function; module-level reads ran at
+  import and are excluded, and builtins are never module bindings), 
+  `_latent_split_names`, the net
+  `test_latent_split_readership_pairs_are_adjudicated` (raw set equals the
+  record EXACTLY; floors, anchors, stale entries must prune), a synthetic
+  form-proof test (a real split is flagged; annotation-only, function-local
+  and module-level-only reads are not; the census exclusion passes through),
+  and five loud-failure cases for the new policy fields in
+  `test_a_malformed_manifest_fails_loudly`. The record lives in
+  `patch_couple_policy`: `latent_split_readership` (91 pairs across 16
+  gui_* modules), `latent_anchor_names` (`THEMES`, `QWidget`,
+  `save_gui_settings`) and `min_latent_pairs` (60, against 91 raw). Census
+  names are excluded by construction — the two nets partition the space, so
+  no pair is adjudicated twice. The 91 adjudications classify as 50 PySide6
+  platform imports, 18 stdlib imports, 12 package-sibling imports (repoint
+  at the owner's module), 10 same-module definitions (rebind at the owner
+  for both sides — gui_cast's SpeakerGroup trio, gui_settings'
+  load/save/GUISettingsError, gui_themes' THEMES/DEFAULT_THEME,
+  gui_utils' normalize_cast_keys), and 1 app_gui-defined wrapper (the vulkan
+  `_vulkan_prerequisite_missing` delegate, whose reason says to rebind inside
+  gui_vulkan). Every reason is per pair; the platform/stdlib clause names the
+  escalation: the census net picks the pair up automatically the moment a
+  test rebinds it. **Proven three ways.** (1) Forcing function: before the
+  record existed, BOTH nets refused the manifest (the loader's loud rule),
+  after it the file is 14 passed / exit 0. (2) Perturbation: dropping
+  `gui_themes.py.THEMES` fails naming it unadjudicated; planting a fake
+  `gui_menu.py.QSpacerItem` fails naming it stale (both fire in one run);
+  an absent anchor fails with "the latent scan lost QSpacerItem"; every
+  perturbation was restored byte-identical (`cmp`) and the file re-ran green.
+  (3) Form proofs, above. Neighbor manifest readers re-ran: writer-manifest
+  23 passed, cast/recording owners 19 passed, import-direction green; the
+  payload-policy net's 2 failures are the pre-existing concurrent-refactor
+  pair (relocated widget assignments, `_monologue_enabled`) listed in the
+  slice-12 entry, untouched by this task. **Caveat for the next session**:
+  the 91-pair set is measured mid-refactor — one pair (gui_tooltips' QWidget
+  read) already disappeared between two measurements minutes apart. When the
+  lazy-sections refactor lands, expect the net to fail on the delta until
+  each new pair is adjudicated and each vanished one pruned: that is the rule
+  working, not a regression. **RETIRED by re-measurement (2026-10-10, after
+  the refactor settled in the tree): the latent set is 90 pairs across 16
+  gui_* modules with raw == record EXACTLY — zero unadjudicated, zero stale
+  — so there is no delta left to adjudicate and nothing to prune. The one
+  vanished pair is the one the caveat named: gui_tooltips.py's QWidget read
+  is annotation-only now (`dict[QWidget, str]`, `widget: QWidget`,
+  `QWidget | None`), so no runtime read remains on that side and its entry
+  was already pruned. The seam census side re-measured in the same pass: 13
+  raw bare-use pairs == 13 sanctioned, gui_cast.py's five intact. Floors and
+  anchors all clear (16 modules vs floor 13, 90 vs floor 60, census 21 names
+  vs floor 15, and THEMES / QWidget / save_gui_settings all still seen). Both
+  patch-surface rules re-ran green with cast-owner, payload-policy and
+  import-direction (39 passed). Boundary for whoever commits this tree: the
+  refactor's code is IN the working tree (gui_sections.py / gui_tooltips.py
+  lazy machinery present, every lazy suite green, no writes for the hour
+  before the measurement) but still UNCOMMITTED — as is the latent record
+  itself, which is absent at HEAD — so committing re-measures the same 90, it
+  does not move the numbers. **LANDED 2026-10-11: committed as `d5cc554`**,
+  so the re-measure the sentence promises now has its answer — the numbers
+  were not re-measured by a second commit because the manifest landed in the
+  same slice as the code it records.
+
+- **2026-10-10: the twelfth extraction slice is EXECUTED — the whole menu bar
+  moved to a new `gui_menu` owner behind a THEMES injection seam, seam-proven
+  by mutation on a real window; the shared tree went mid-refactor under a
+  concurrent session immediately afterward, so the full-suite rerun is
+  attributed, not green.** The move followed the armed plan below exactly:
+  `_build_menu`'s body (186 lines) moved VERBATIM into
+  `src/the_oracle/gui_menu.py` as the module-level `build_menu(main_window,
+  *, themes: Mapping[str, ThemeTokens]) -> None` — every action attribute,
+  menu and callback rides the window (the gui_ingest_tools direction rule;
+  the module imports nothing from app_gui). MainWindow keeps `_build_menu`
+  as the thin delegate with its exact call-site signature, calling
+  `build_menu(self, themes=THEMES)` so the mapping resolves from app_gui's
+  globals — the single resolution point its own `_apply_theme_selection`
+  also reads; gui_menu binds no THEMES global. The extraction was generated
+  from the source programmatically, not transcribed, and proved byte-
+  identical against `git show HEAD:...` (186 lines each; 129 `self.` →
+  `main_window.` substitutions; AST name count == textual count); the old
+  body was then deleted structurally (156 MainWindow methods held; app_gui
+  3665 → 3491 lines at that point — the file has since grown to 3885/175
+  through the concurrent refactor, not this slice). MOVED_OWNERS gains
+  `the_oracle.gui_menu` (1 name: `build_menu`; `_build_menu` stays a method
+  and is NOT listed); no bare-set exemption was needed — neither `QAction`
+  (imported by gui_menu) nor `THEMES` (injected) is in the suite's
+  app_gui-rebind census.
+  **The seam is mutation-proven on a real window.** Probe: build through the
+  suite's own `_build_window`, with `app_gui.THEMES` rebound to a mapping
+  carrying a sentinel theme. Seam intact: the Theme menu contains
+  `sentinel_probe` / `SENTINEL-PROBE-NAME` (exit 0). With gui_menu mutated
+  to bind its own module-global `THEMES` and ignore the parameter, the
+  identical rebind is bypassed — six real themes, sentinel absent, exit 1.
+  Reverted and verified byte-identical (sha256 of the whole file, both
+  sides), probe green again on the restored bytes.
+  **Verification before the tree moved on**: the four pre-flight gate files
+  ran green — 40 passed / 0 failed, exit 0 (test_app_gui_patch_surface,
+  test_payload_policy_ownership, test_gui_import_direction,
+  test_gui_tooltips); the five-file menu-consumer cluster (profiles,
+  recording studio, window lifetime, theme cert, sections chrome) 124 passed
+  with one hermeticity-snapshot failure — the concurrent session's write to
+  `gui_chrome.py` at 02:29:57 UTC landing inside that window — and that file
+  passed 7/7 in isolation ~45 s later on the same bytes; the mutation probes
+  (which build real windows) pass.
+  **The full-suite attempt is attributed, not green, and none of it is slice
+  12.** The concurrent lazy-sections refactor began landing in app_gui.py /
+  gui_sections.py / gui_tooltips.py / gui_cast.py / gui_chrome.py (writes
+  from 19:09 through 19:48 local, continuing); the full-suite run (449 s)
+  returned 33 failed / 1732 passed, every failure theirs: 24 stamped by a
+  SyntaxError from a merged-line save artifact in their app_gui hunk
+  (`layout.setContentsMargins(0, 0, 0, 0)        self.live_panel =
+  LivePanel(lazy=...)`), 7 their own new `test_app_gui_lazy_sections.py`
+  feature tests against their incomplete implementation, and 1 the doctor
+  read-only net catching their write to app_gui.py inside its own window.
+  To restore parse-ability I split that one merged line — disclosed as my
+  only touch of their hunk (one newline; all tokens preserved) — and did not
+  chase their later churn: the post-repair rerun of the affected nets gives
+  99 failed / 89 passed, 91 of 97 failure sections the same mid-flight cause
+  (`gui_sections.QHSectionGroup.content_built` is a Qt signal while their
+  app_gui hunk calls it as a method), the rest their window-assembly
+  relocations (`_monologue_enabled` is theirs — absent at HEAD) and their
+  gui_tooltips.py IndentationError (L533, written 02:47:58 UTC mid-rerun).
+  **State for the next session**: app_gui.py parses but MainWindow cannot be
+  constructed until their refactor lands — do NOT read the 33/99 failure
+  lists as slice-12 regressions. Once it lands, rerun the four gates + the
+  five-file cluster (the seam probe is ephemeral: sentinel THEMES rebind
+  through the suite's window builder). **RETIRED by rerun (2026-10-10, after
+  the lazy-sections refactor settled in the tree): both groups are green on
+  the settled bytes.** The four pre-flight gate files
+  (test_app_gui_patch_surface, test_payload_policy_ownership,
+  test_gui_import_direction, test_gui_tooltips) are **42 passed / 0 failed,
+  exit 0**; the recorded 40 was measured against HEAD, whose patch-surface
+  file carries 12 tests against today's 14, and the two added cases are the
+  latent readership rule and its form proof landing in that same gate file
+  after the reading — so the delta is fully accounted for, not drift. The
+  five-file menu-consumer cluster (profiles 83, recording studio 19, window
+  lifetime 7, theme cert 8, sections chrome 9) is **126 passed / 0 failed,
+  exit 0**, and the single hermeticity-snapshot failure of the recorded run
+  is GONE — that failure was the concurrent session's write to gui_chrome.py
+  landing inside the snapshot window, and the tree has been quiet for over an
+  hour (no src/tests writes since 21:50 local apart from this session's own
+  files). MainWindow construction is restored: every window-building suite in
+  the cluster drives a real window green, and this session's cast-bar seam
+  probe built one through the suite's own `_build_window`.
+  **PROMOTED (2026-10-10, this session): the ephemeral seam probe is now a
+  permanent net — `tests/test_gui_menu_themes_seam.py` (2 tests) — and the
+  ownership record paid the price.** The rebound leg rebinds
+  `app_gui.THEMES` to the real mapping plus one sentinel `ThemeTokens` (built
+  with `replace`, so window construction still sees a complete token set),
+  builds through the suite's `_build_window`, and asserts BOTH that the Theme
+  menu's own action labels carry the sentinel's display name and that the
+  menu's key set equals the rebound mapping EXACTLY — so a hard-coded look
+  list in the moved body fails too; a second baseline leg builds with nothing
+  rebound and asserts the menu is exactly the real mapping with no sentinel,
+  so the first leg cannot pass on a menu that would carry the probe anyway.
+  The promotion is also what moves the name: the patch-couple census is
+  derived FROM this suite, so this file makes `THEMES` patch-coupled by
+  construction — measured before writing anything, not assumed: **census
+  21 → 22 names; latent raw 90 → 89 pairs (the pair `gui_themes.py.THEMES`
+  leaves the latent set, taking the `THEMES` anchor with it); seam raw
+  13 → 14 pairs (that same pair joins and needs adjudication)**. Three record
+  edits, each load-bearing and mutation-checked: the pair moves from
+  `latent_split_readership.gui_themes` (entry PRUNED — the latent net rejects
+  a stale reason) to `sanctioned_exemptions.gui_themes` with the split spelled
+  out (gui_themes DEFINES THEMES and its own stylesheet/theme-application
+  helpers read that definition; the window's menu path is the exception the
+  census exists for, since the delegate resolves the app_gui global and hands
+  it to `build_menu(themes=...)`); and `latent_anchor_names` swaps `THEMES`
+  for `Path` (read by eight gui_* modules' latent pairs), because **a name
+  the census owns can never stay a LATENT anchor** — that reasoning now sits
+  in the manifest's `patch_couple_policy` description beside the anchor list,
+  not only here. **Mutation proofs, run on the real bytes**: manifest
+  mutation A (drop the gui_themes sanction) reddens the seam net naming
+  `gui_themes.py.THEMES`; B (restore the latent entry AND the `THEMES`
+  anchor) reddens the latent net on the lost anchor; C (restore only the
+  latent entry) reddens it as a stale adjudication; D (identity) passes as the
+  control. Source mutation (gui_menu binding its own module-global `THEMES`
+  and iterating it, ignoring the parameter — the exact harm the seam
+  forecloses) makes BOTH the new permanent test and the seam net fail, and
+  the file was restored byte-identical (sha256 compared on both sides) with
+  the nets green again on the restored bytes. **Verified**: the new file plus
+  the four pre-flight gate files 16 passed / 0 failed, exit 0 (14 of those
+  are the gate file itself). One earlier detail is superseded by design: the
+  pick-time line "neither `QAction` … nor `THEMES` (injected) is in the
+  suite's app_gui-rebind census" was true when measured and still holds for
+  `QAction`; `THEMES` left that state here, deliberately, because the census
+  is derived from the suite.
+  Nothing is committed: gui_menu.py is
+  untracked and the delegate hunk rides the same uncommitted app_gui.py as
+  their half-applied refactor — separate the two before any commit takes
+  this slice. Next-ranked candidates unchanged: input/path pickers, then the
+  cast-bar cluster (manifest split-readership notes must be resolved first).
+  **LANDED 2026-10-11: committed as `d5cc554` — and the separation this
+  paragraph asked for did NOT happen.** The GUI work landed as one slice
+  (`d5cc554`) covering the menu extraction, the cast-bar extraction, the
+  deferred-sections refactor and the manifest together, so this entry's
+  "separate the two before any commit takes this slice" is recorded here as
+  guidance that was not followed, not as a step that was taken.
 
 - **2026-10-10: the twelfth extraction slice is picked and armed — the menu
   bar (`_build_menu`) — pre-flight gates green; the tree is settled at
@@ -1418,7 +2240,10 @@ cited when the entry is next touched.
   test_main_window_registers_ctrl_help` asserts the Ctrl+hover registry
   entries for the `new_action` and `download_vulkan_model_action` the menu
   creates; `test_recording_studio.py` pins `recording_studio_action.text()`;
-  `scripts/certify_gui_themes.py` (run by `test_gui_theme_certification.py`)
+  `scripts/certify_gui_themes.py` (run by `test_gui_theme_certification.py` —
+  **a claim that was false when this sentence was written and became true on
+  2026-10-10**, when that certification was made a local gate; see the Done
+  entry on the landing)
   builds real windows and asserts the File menu carries "Save Profile…"/
   "Load Profile…" and that `window._theme_actions` holds six entries — the
   theme-menu loop; `test_gui_window_lifetime.py` builds real windows and
@@ -1683,6 +2508,53 @@ cited when the entry is next touched.
 
 ## Noticed, not yet actioned
 
+- **`scripts/mutation_probe.py` carries a THIRD copy of the reap policy
+  (found 2026-10-11, while factoring the certifier family's preamble into
+  `scripts/certifier_isolation.py`).** Its `_reap_scratch` is the same doctrine
+  by its own description — bounded retries, a survivor reported on stderr
+  instead of swallowed, registered with `atexit` so the exits that skip `finally`
+  do not plant a root for good — and it reaps the tool's per-run throwaway
+  bytecode root and its cache roots. Logged rather than folded in: the request
+  named the GUI certification scripts, and the probe is a standalone tool whose
+  reap has its own wording, its own failure path and tests that pin both, so
+  moving it under the helper is a separate bounded unit with its own red-state
+  check. Its docstring now names the helper's function rather than the
+  per-script name that refactor removed.
+
+- **`scripts/u44_accessibility_harness.py` still plants both of its throwaway
+  roots in /tmp (found 2026-10-10, while reaping the certifier family's
+  litter)**: the harness mkdtemps a config root at import (`u44-config-*`) and
+  a sandbox per run (`u44-sandbox-*`) and removes neither — exactly the shape
+  the two certifiers just lost, in a tool that is not a certifier (a read-only
+  audit harness), which is why it is logged rather than fixed with them. Not
+  actioned here (the request named the certifier family, one bounded unit);
+  the fix is the same two lines — a Qt-free reaper registered with `atexit`,
+  called after the harness's own teardown — and it should land with whichever
+  test file ends up covering that harness.
+  **AMENDED 2026-10-11: that Qt-free reaper now EXISTS as**
+  `scripts/certifier_isolation.py` (`reap_isolated_root`, with the certifier
+  family's own tests in `tests/test_certifier_isolation.py`), so the remedy is
+  no longer "write two lines" but "call the owner" — the entry is still open
+  because u44 is not a certifier and its redirects are `setdefault` at module
+  scope, i.e. a caller-side decision this refactor deliberately did not make
+  for it.
+
+- **The slice-12 menu extraction still has no owner net — only its THEMES
+  seam is pinned (found 2026-10-10, while promoting that probe)**:
+  `gui_menu.py` is the one moved module with no `test_gui_*_owner.py` file at
+  all. Its `build_menu` (187 lines, 24 action attributes, the
+  `inference_wizard_menu` / `templates_menu` menus and three `textEdited`
+  connections) is covered today only by the import-direction net, the
+  patch-couple census and the GUI certifier, and the new
+  `test_gui_menu_themes_seam.py` deliberately pins the one seam the extraction
+  was mutation-proven on rather than the module's shape. Not actioned here
+  (the request was the probe promotion); the work is
+  a `test_gui_menu_owner.py` on the cast/recording owner-test pattern —
+  identity (app_gui holds no module-level `build_menu` binding, every
+  construction site resolves the owner function function-locally), the
+  `moved_owners` listing's currency, and behavior probes against a stub main
+  window for the action attributes and those three connections.
+
 - **The skip audit can be emptied mid-run, so `ORACLE_FAIL_ON_SKIP=1` can exit 0
   with tests skipped (found 2026-10-10, while recording the suite-count
   baseline)**: the audit every run prints — and the strict CI gate that reads the
@@ -1722,6 +2594,22 @@ cited when the entry is next touched.
 
 - **`certify_gui_themes.py` is not wired into CI, and a sibling docstring
   says it is (found 2026-10-10, while extending its section sweep)**:
+  **AMENDED 2026-10-10 (same day): the certifier is executed by the test suite
+  on every push and every local run now** — see the Done entry on the
+  local-gate landing. Neither fix proposed below was taken: no `ci.yml` step
+  was added, but the pytest step CI already runs executes the certifier on both
+  operating systems, and `test_gui_theme_certification.py` really does run it.
+  The "enforced on no push" sentence below is therefore historical, as is the
+  parenthetical claim above this entry that the suite only source-scans it.
+  **AMENDED AGAIN, 2026-10-10: closed for real** — the merged
+  `scripts/certify_gui.py` is a NAMED CI step on both operating systems
+  ("GUI Six-Theme Certification"), so `ci.yml` now wires the certification's
+  content directly as well as through the suite, and the sibling docstring
+  quoted below no longer exists to make the claim.
+  **FURTHER AMENDED 2026-10-11**: the name now carries the aspect — one named
+  step per aspect per OS ("GUI Six-Theme Certification - <aspect>"), four per
+  OS, so the sentence above is true of four steps rather than one; see the Done
+  entry for the measured cost of the split.
   `scripts/certify_section_chrome.py`'s module docstring states "Standalone
   like certify_gui_themes.py — CI runs it as a named step on both operating
   systems", but `.github/workflows/ci.yml` carries no step for
@@ -1951,11 +2839,106 @@ cited when the entry is next touched.
   (tests/test_gui_tooltips.py), the `scope_during_set == [True, True, True]`
   assertion and `test_bulk_restyle_scope_closes_when_setstylesheet_raises`
   (tests/test_gui_theme_certification.py). Remaining ~370 ms is Qt-inherent
-  for this tree; the two open levers are lazy-building collapsed section
-  content (cuts the n×depth term for every restyle *and* startup) and the
-  css selector diet (~130 ms). Widget-level `setStyleSheet` calls at widget
+  for this tree; of the two open levers named here, BOTH are now taken —
+  lazy-building collapsed section content (landed 2026-10-10, slice 12+;
+  the n×depth term) and the css selector diet (landed 2026-10-10, see its
+  own entry below: 59 → 51 rules, pixel-identical, but wall-clock-neutral —
+  the ~130 ms does not scale down with small rule cuts). Widget-level
+  `setStyleSheet` calls at widget
   construction (gui_sections/gui_cast/gui_chrome/gui_widgets) stream their
-  own smaller storms ungated — unmeasured, separate unit of work.
+  own smaller storms ungated — unmeasured, separate unit of work, still
+  open.
+
+- **2026-10-10 (css selector diet, TAKEN and MEASURED: 59 → 51 rules,
+  pixel-identical across all six themes, wall-clock-neutral).** The lever
+  offered ~130 ms (rule matching ∝ rules); the safe cut is eight merges of
+  blocks with byte-identical declaration bodies — `QLabel` (which `QWidget`
+  already matched), the two wizard-muted-label triples, `QCheckBox:disabled`
+  and `QMenu::item:disabled` into `QLabel:disabled`,
+  `QPushButton:disabled` into the inputs-disabled group (its border line
+  duplicated the base `QPushButton` rule; the pseudo-class specificity keeps
+  the merged block winning regardless of its new, earlier position),
+  `QPushButton:pressed` into `QSplitter::handle`, the two scrollbar
+  handle-hover twins, and `QMenuBar::item:selected` into
+  `QMenu::item:selected`. Equivalence proven per theme by a pixel-comparison
+  probe over a widget zoo covering every merged STATE (disabled
+  buttons/inputs/labels/checkboxes, a pressed button, a popped-up menu with
+  a disabled item and a separator) against `git show HEAD`'s builder: all
+  six IDENTICAL — the probe caught one real bug in my own first pass
+  (`QMenuBar::item` accidentally joined the selected-colors list, which
+  would have painted the whole menubar selected). **The honest number:
+  nothing measurable.** Interleaved A/B on one built MainWindow, alternating
+  the two css texts inside one process (11 rounds each, every call a genuine
+  switch): pre-diet median 532.8 ms vs post-diet 545.3 ms, delta +12.5 ms —
+  inside the ±35 ms run spread; the certifier's cross-run 767 → 652 ms was
+  variance, not the diet. The ~130 ms term therefore does NOT scale down
+  with small rule cuts: removing 8 of 59 rules is invisible, while
+  DUPLICATING all 59 added ~79 ms — the cost lives in the matched-set size
+  at this tree's widget count, and the only sub-floor cut (40) would change
+  rendering. Left as a guard, not a gain: `RULE_BUDGET = 51` pinned by
+  `test_stylesheet_stays_within_its_rule_budget`
+  (tests/test_gui_theme_certification.py), pairing the certifier's
+  MIN_REAL_RULES floor (40, against gutting) with a ceiling (against
+  creep). Certifier green after the diet: 51 rules, all contracts held.
+
+- **2026-10-10 (window-lifetime leak from the lazy-sections slice, FIXED:
+  dead section wrappers were pinning every closed MainWindow).** The four
+  `test_gui_window_lifetime` failures plus the payload-policy pair and the
+  chrome-ownership AST pin (7 deterministic, full-suite and isolated) all
+  traced to the deferred-section machinery, verified by gc-referrer probes.
+  Root cause: `QHSectionGroup`'s content factory (`partial(self._build_…)`)
+  and the `content_built` restore/tooltip hooks are non-QObject Python
+  callables; PySide holds them in C-level connection structures the GC
+  cannot trace, and the section wrappers outlive their deleted C++ side, so
+  every factory → bound method → window edge kept the destroyed window's
+  Python wrapper reachable forever (probe: 8 bound methods referr the
+  post-teardown wrapper; releasing factory + connections on the live window
+  collects it, which is exactly the fix). New
+  `QHSectionGroup.release_content_factory()` drops both; `MainWindow`
+  `closeEvent` calls it for every registered section on the accepted-close
+  path (every refusal path returns above it). The other two contract fixes
+  are adjudications the slice-12 entry's caveat asked for: `_monologue_enabled`
+  (reads `monologue_check` only when the shared section is built, else the
+  saved slice) joins the payload record's `sanctioned_readers`, the payload
+  liveness scan's assembly-method set gains `_build_shared_content` /
+  `_build_paths_content` (widget construction moved there), and the
+  chrome-ownership AST pin accepts `_register_lazy_section` (which delegates
+  to `_register_section`) for the Live column. Full suite 1767 passed /
+  0 failed after the fixes.
+
+- **2026-10-10 (widget-construction `setStyleSheet` storms, MEASURED and
+  GATED in gui_sections/gui_cast: the "storms" are one change event per
+  call — the gate is an invariant, not a speedup).** The theme-switch entry's
+  open item, measured on a themed app with the real app-wide Ctrl+hover
+  filter installed (the production state: `MainWindow.__init__` installs it
+  at L320 BEFORE `_build_ui`, so every construction storm is filter-visible).
+  Exact attribution by tracing `QWidget.setStyleSheet` from inside the call
+  (caller file:line + events streamed while inside): `gui_sections`'s
+  collapse toggle 1 call / 1 event / 0.06 ms; `gui_cast`'s three panel
+  dividers 3 / 3 / 0.17 ms; the cast row key label 1 / 1 / 0.06 ms — a full
+  eager SpeakerGroup's entire setStyleSheet footprint is **11 events /
+  ~0.6 ms**, and a whole MainWindow construction streams 10 217 change
+  events of which only a handful come from these calls (the rest is Qt's
+  inherent polish traffic from creating ~350 widgets under a styled app —
+  NOT setStyleSheet storms; the unparented micro-measure over-reads at 3–4
+  events/call because parenting changes propagation). **Gated anyway**: the
+  three sites now run inside `with bulk_restyle():`, which costs nothing at
+  this scale and guarantees no app-wide filter is ever re-entered by a
+  widget-level restyle — a future heavier per-widget style inherits the gate
+  instead of silently taxing every filter. Pinned by the new
+  tests/test_widget_restyle_gate.py, mutation-proven in both halves (the
+  AST net and the runtime trace pin each failed when the toggle's gate was
+  reverted, restored byte-identically, sha256-verified): the AST scan
+  demands every `setStyleSheet` in the two modules sit inside a
+  `bulk_restyle()` with (vacuity floor 3, synthetic self-check incl. the
+  def-boundary case where a `with` outside a nested def must NOT count), and
+  the runtime pin constructs a real eager SpeakerGroup + _CastRow with a
+  traced `QWidget.setStyleSheet`, asserting all 5+ in-scope calls found the
+  gate OPEN. **Noticed, not actioned** (out of the requested scope):
+  `gui_chrome.py` L74 (Live header) and `gui_widgets.py` L68
+  (PerceptualSlider caption — 7 calls per slider panel, the largest
+  construction-time share) carry the same ungated pattern; extending the
+  same net to those two modules is the obvious next slice.
 
 - **2026-10-10 (dialog teardown/config-isolation audit, ACTIONED): all five
   non-MainWindow windows audited against MainWindow's guarantees.**
@@ -1986,7 +2969,10 @@ cited when the entry is next touched.
   `arm_native_capture()` resolved the repo root, so a consent-ON machine
   opens/creates `<repo>/crash_reports/native-crash.txt` (invisible to a
   snapshot once the file exists; a fresh checkout gets it created).
-  Fixed in scripts/certify_section_chrome.py: `app_gui.ensure_repo_default_paths`
+  Fixed in scripts/certify_section_chrome.py **(now `scripts/certify_gui.py`,
+  which absorbed the file on 2026-10-10 with these same layers — the
+  contract, its test and the source anchors below moved with them)**:
+  `app_gui.ensure_repo_default_paths`
   repointed at the throwaway (`_hermetic_paths`, the same seam the suite
   patches), and `handlers.install(root=_CONFIG_ROOT)` before the unchanged
   bare arm so the native dump + exception/Qt-fatal records resolve into the
@@ -2003,11 +2989,53 @@ cited when the entry is next touched.
   config; drop install(root) → source red; add configure_logging → source
   red), each reverted byte-identical. **Noticed, not actioned:**
   `certify_gui_themes.py` has the same three channels (it also builds real
-  MainWindows; its config redirect and record park are in place, but the
+  MainWindows; its config  redirect and record park are in place, but the
   timing logs and the bare arm are unredirected) — separate unit of work,
   same fix shape. Out of contract (stated): OS caches outside the app config
   root (fontconfig/Qt under `HOME`) and the /tmp litter a SIGSEGV leaves
   behind.
+
+- **2026-10-10: the `moved_owners` entry-point inconsistency is RESOLVED
+  in the working tree — the listings are now literally true, and the
+  slice-10 function-local delegate convention is the campaign's settled
+  entry-point convention (landed 2026-10-11 in `d5cc554`, the
+  GUI slice that carries the corrected listings and the settled
+  convention).** Finding (found 2026-10-10
+  while resolving the cast cluster's record):
+  `the_oracle.gui_menu.build_menu` and
+  `the_oracle.gui_tooltips.register_ctrl_help_descriptions` were listed as
+  moved-owned, yet app_gui bound both at module level and the staying
+  delegates called them by bare name, so an app_gui-level patch WAS live for
+  the delegate call while the net's rule-1 offender message pointed the
+  author at the owner module, where the delegate's call did not look
+  (app_gui held its own reference); slice 10's function-local imports were
+  the older clean spelling. Fix — the finding's first candidate: each
+  delegate body imports its owner function function-locally, so app_gui
+  keeps no module-level binding, an app_gui-level patch is a silent no-op,
+  and the owner module is the single call-time resolution point. Verified
+  behaviorally (a raising app_gui-level sentinel is never read; an
+  owner-module recorder intercepts; the app_gui.THEMES and app_gui.cuda_reason
+  seams stay live through the delegates) and by the net's own predicate
+  (`_app_gui_patchable_reads` no longer contains either name). Manifest
+  notes amended (gui_menu, gui_tooltips, gui_cast); the `## Next` entry
+  carries the full trail.
+
+- **The settled entry-point fix has a dormant older-names analogue (found
+  2026-10-10 by the same AST measurement)**: earlier moved-owner listings
+  also keep live bare reads in staying app_gui bodies — `RenderSettings`
+  (`_render_settings`, `_payload_defaults`, the project load/restore flows),
+  `_device_row_text` (the device-combo refreshes), and the gui_settings
+  payload names in their `_*_payload` delegate methods
+  (`current_gui_settings_payload`, `default_gui_settings_payload`,
+  `cast_request_from_payload`, `PayloadDefaults`) — so an app_gui-level
+  patch of those names is live for app_gui's sites while the net's
+  repoint-at-the-owner remedy is inert for those sites. No test patches any
+  of them today (the rebind census shares no name with moved_owners), and
+  unlike the two settled entry points these reads are not uniformly
+  delegate-shaped (builders and consumers are mixed in), so the conversion
+  is not mechanical. Disposition open: separate adjudication
+  (function-local reads, split-readership entries, or an accepted-policy
+  note).
 
 ## Deferred (intentional)
 
