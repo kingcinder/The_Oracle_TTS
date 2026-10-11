@@ -19,6 +19,7 @@ everything else is pure.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -206,15 +207,28 @@ def test_the_three_terms_and_ours_are_named_in_the_contract(certifier) -> None:
 
 
 def test_the_config_redirect_precedes_every_the_oracle_import() -> None:
-    """A ``the_oracle`` import resolved first would read the real config root."""
+    """A ``the_oracle`` import resolved first would read the real config root.
+
+    Since 2026-10-11 the redirect itself is the certifier family's shared helper
+    (``scripts/certifier_isolation.py``), so this pins the order and the
+    delegation: a call to ``isolated_config_root`` above every ``the_oracle``
+    import. That the helper redirects both variables — XDG for POSIX, APPDATA
+    for Windows — and arms the reap is pinned where it lives, in
+    tests/test_certifier_isolation.py.
+    """
     source = SCRIPT.read_text(encoding="utf-8")
     first_import = re.search(r"^(?:from|import) the_oracle", source, re.MULTILINE)
 
     assert first_import is not None, "no the_oracle import found -- the scan went blind"
-    redirect = source.index('os.environ["XDG_CONFIG_HOME"] = _CONFIG_ROOT')
+    assert "from certifier_isolation import isolated_config_root, reap_isolated_root" in source, (
+        "the throwaway root no longer comes from the shared helper — a hand-rolled "
+        "second copy is what this refactor removed, and a copy has no owner"
+    )
+    redirect = source.index("_CONFIG_ROOT = isolated_config_root(")
     assert redirect < first_import.start()
-    # APPDATA covers the Windows leg -- XDG alone would still touch the real one.
-    assert 'os.environ["APPDATA"] = _CONFIG_ROOT' in source
+    assert 'isolated_config_root("oracle_theme_switch_cfg_")' in source, (
+        "the sweep's throwaway root must keep its own prefix, so a leaked root names its sweep"
+    )
 
 
 def test_the_window_paths_are_drained_into_the_throwaway() -> None:
@@ -239,9 +253,54 @@ def test_no_repo_log_entry_points() -> None:
 # --- the run itself -------------------------------------------------------------
 
 
-@pytest.mark.slow
-def test_a_real_run_certifies_and_writes_nothing() -> None:
-    """Run the certifier as CI does, and hold it to the hermeticity promise."""
+def _run_in_scratch(
+    scratch: Path, *args: str
+) -> tuple[subprocess.CompletedProcess, list[str]]:
+    """Run the certifier with ``TMPDIR`` redirected; report what it left there.
+
+    ``tempfile.mkdtemp`` — the script's throwaway config root — honors
+    ``TMPDIR``, so every root a run creates lands under ``scratch``: that is
+    what lets this file say "nothing left behind" about its own run instead of
+    about whatever happens to be sitting in the shared ``/tmp``.
+    """
+    scratch.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env={**os.environ, "TMPDIR": str(scratch)},
+    )
+    return proc, sorted(path.name for path in scratch.iterdir())
+
+
+def test_a_fast_exit_reaps_the_throwaway_config_root(tmp_path: Path) -> None:
+    """``--help`` leaves through ``SystemExit``, before any of the script's
+    own teardown: the config root it made at import must still be reaped.
+
+    Measured on 2026-10-10: the roots this family left in ``/tmp`` were
+    exactly the ones no ``finally`` covered (``--help`` and the aspect-typo
+    exit in the sibling certifier), each carrying the PulseAudio client's own
+    ``pulse/cookie`` from script load.
+    """
+    helped, leftover = _run_in_scratch(tmp_path / "helped", "--help")
+
+    assert helped.returncode == 0, f"--help must exit 0\n{helped.stderr[-800:]}"
+    assert not leftover, (
+        f"--help left its throwaway config root behind: {leftover} — the reap "
+        "has to cover the exits that never reach main()'s teardown"
+    )
+
+
+def test_a_real_run_certifies_and_writes_nothing(tmp_path: Path) -> None:
+    """Run the certifier as CI does, and hold it to the hermeticity promise.
+
+    Deliberately NOT ``slow``-marked: this is the local half of a named CI
+    step, and a ``-m "not slow"`` loop that dropped it would report green
+    without measuring the theme switch at all. tests/test_fast_subset.py asks
+    pytest's own collector whether the fast subset still keeps this gate.
+    """
     from the_oracle.platform_support import user_config_root
 
     from tests.helpers import repo_tree_snapshot, snapshot_differences
@@ -250,19 +309,16 @@ def test_a_real_run_certifies_and_writes_nothing() -> None:
     before_repo = repo_tree_snapshot(REPO_ROOT)
     before_config = repo_tree_snapshot(config_root) if config_root.exists() else {}
 
-    proc = subprocess.run(
-        [sys.executable, str(SCRIPT)],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    proc, leftover = _run_in_scratch(tmp_path / "scratch")
 
     after_repo = repo_tree_snapshot(REPO_ROOT)
     after_config = repo_tree_snapshot(config_root) if config_root.exists() else {}
 
     detail = f"rc={proc.returncode}\nstdout tail:\n{proc.stdout[-2000:]}\nstderr tail:\n{proc.stderr[-2000:]}"
     assert proc.returncode == 0, f"the certifier itself failed\n{detail}"
+    assert not leftover, (
+        f"the run left its throwaway config root behind: {leftover}\n{detail}"
+    )
     for term in ("structure", "propagation", "rule matching", "ours (the gate)"):
         assert term in proc.stdout, f"the report does not mention {term}\n{detail}"
 

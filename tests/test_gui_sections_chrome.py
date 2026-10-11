@@ -2,9 +2,19 @@
 pass): Script & Cast (path rows + cast bar), Review (the table), and Extra
 Voices must be QHSectionGroup sections with registry entries and working
 persistence, per the approved design.
+
+The unit pins below drive a faked window. The last two tests are the
+delivery of the same contract: the CI steps that run the REAL window per
+theme (one named step per aspect, so the job list names the certification
+that broke), and — since 2026-10-10 — that same six-theme certification
+executed by ``pytest`` itself, so a chrome regression fails a developer's run
+and not only the gate.
 """
 
 import os
+import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,7 +25,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QWidget
 
 from the_oracle.gui_sections import QHSectionGroup, _COLLAPSED_HEADER_HEIGHT
+from the_oracle.gui_themes import THEMES
 from tests.test_app_gui_profiles import _build_window
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CERTIFIER = REPO_ROOT / "scripts" / "certify_gui.py"
 
 
 @pytest.fixture(scope="module")
@@ -198,22 +212,147 @@ def test_paths_collapse_and_splitter_survive_persist_round_trip(
         window3.close()
 
 
-# --- CI: the six-theme sweep is a named step on every push --------------------
+# --- CI: every aspect is a named step on every push ---------------------------
 
 
-def test_workflow_runs_the_section_chrome_sweep_on_both_oses() -> None:
-    """The unit pins above drive a faked window; the sweep certifies the
-    same chrome on the REAL MainWindow per theme. Gated only by operating
+def _certification_step(aspect: str, os_name: str) -> str:
+    """The workflow's step name for one aspect on one runner."""
+    return f"GUI Six-Theme Certification - {aspect} ({os_name})"
+
+
+def _harness_aspects() -> tuple[str, ...]:
+    """The harness's own aspect inventory, off its ``ASPECTS`` tuple.
+
+    That tuple is what ``--aspects`` validates against, so it is the contract
+    CI has to cover. Read from the source rather than imported: importing the
+    script makes its throwaway config root and redirects the config environment
+    before any ``the_oracle`` import — the isolation that makes the sweep safe
+    to run on a developer's machine — so an import here would make the test
+    part of what it grades.
+    """
+    source = CERTIFIER.read_text(encoding="utf-8")
+    match = re.search(r"^ASPECTS = \(([^)]*)\)", source, re.MULTILINE)
+    assert match, "scripts/certify_gui.py no longer declares an ASPECTS tuple"
+    return tuple(re.findall(r'"([a-z_]+)"', match.group(1)))
+
+
+def test_workflow_runs_each_gui_certification_aspect_as_its_own_named_step() -> None:
+    """The unit pins above drive a faked window; the certification certifies
+    the same chrome on the REAL MainWindow per theme. Gated only by operating
     system, so it runs on every push and pull_request -- the `on:` block
-    needs no per-step opt-in."""
+    needs no per-step opt-in.
+
+    One NAMED step per aspect per OS, because the job list is where a failure
+    gets read: run as one sweep, a contrast regression and a chrome regression
+    are the same red step and the reason has to be dug out of a log. The step
+    set must match the harness's aspects in both directions — an aspect added
+    to ``certify_gui.py`` fails here until it has a step, and a step for an
+    aspect that no longer exists fails too.
+    """
+    aspects = _harness_aspects()
+    assert aspects == ("contrast", "chrome", "studio", "wizard"), (
+        "the harness's aspects changed: wire the new one into ci.yml as its own "
+        f"named step on both operating systems, then widen this pin: {aspects}"
+    )
+
     workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
     steps = {step.get("name"): step for step in workflow["jobs"]["test"]["steps"]}
-    linux = steps["Section Chrome Six-Theme Sweep (Linux)"]
-    windows = steps["Section Chrome Six-Theme Sweep (Windows)"]
-    assert ".venv/bin/python" in linux["run"]
-    assert "scripts/certify_section_chrome.py" in linux["run"]
-    assert ".venv\\Scripts\\python.exe" in windows["run"]
-    assert "scripts/certify_section_chrome.py" in windows["run"]
-    assert linux["if"] == "runner.os == 'Linux'"
-    assert windows["if"] == "runner.os == 'Windows'"
+
+    named = {name for name in steps if name.startswith("GUI Six-Theme Certification")}
+    expected = {
+        _certification_step(aspect, os_name)
+        for aspect in aspects
+        for os_name in ("Linux", "Windows")
+    }
+    assert named == expected, (
+        "CI certifies a different set of aspects than the harness declares: "
+        f"missing={sorted(expected - named)} extra={sorted(named - expected)}"
+    )
+
+    for aspect in aspects:
+        for os_name, interpreter, guard, shell in (
+            ("Linux", ".venv/bin/python", "runner.os == 'Linux'", "bash"),
+            ("Windows", ".venv\\Scripts\\python.exe", "runner.os == 'Windows'", "pwsh"),
+        ):
+            step = steps[_certification_step(aspect, os_name)]
+            assert "scripts/certify_gui.py" in step["run"]
+            assert f"--aspects {aspect}" in step["run"], (
+                f"the {aspect} step must select its own aspect by name, else it "
+                f"certifies something else under this name: {step['run']}"
+            )
+            assert interpreter in step["run"]
+            assert step["if"] == guard
+            assert step["shell"] == shell
+
+
+# --- ...and the same certification runs locally -------------------------------
+
+#: One theme's summary line: ``  tape_deck: OK - sections render, sliders move,
+#: collapse clips, layout round-trips``. A theme that failed prints
+#: ``FAILED - see the list below`` instead, so it simply will not match.
+_OK_LINE = re.compile(r"^\s+(?P<key>[a-z_]+): OK - sections render", re.MULTILINE)
+
+
+def test_section_chrome_report_parser_cannot_pass_on_a_truncated_report() -> None:
+    """The local gate leans on this parse, so pin it here too: a report cut
+    short must yield fewer keys, never the full six, so an empty or mangled
+    stdout cannot pass the gate vacuously."""
+    sample = (
+        "  tape_deck: OK - sections render, sliders move, collapse clips, layout round-trips\n"
+        "  sephiroth: FAILED - see the list below\n"
+    )
+    keys = _OK_LINE.findall(sample)
+    assert keys == ["tape_deck"], f"a FAILED theme must not be read as certified: {keys}"
+    assert _OK_LINE.findall("") == []
+
+
+def test_section_chrome_certification_runs_locally_and_passes() -> None:
+    """Run the six-theme section-chrome certification as a real subprocess on
+    the real MainWindow — the same script CI runs as a named step — so a
+    chrome regression fails a developer's ``pytest``, not only the gate.
+
+    ``scripts/certify_gui.py`` is one harness with two aspects: this test
+    drives ``chrome`` (~14 s, 13 real windows — the expensive half), and
+    tests/test_gui_theme_certification.py drives ``contrast`` (~8 s). CI runs
+    the default, both, in one 14 s sweep. tests/test_certifier_hermeticity.py
+    executes the same script for its own claim (it must wrap its run in
+    snapshots to do so); this test owns the certification verdict itself, and
+    the duplication is deliberate: if the hermeticity contract is ever
+    re-scoped or deleted, the chrome gate must not disappear with it.
+
+    Exit 0 alone is not the verdict. Every one of the six themes must report
+    its own OK line (a theme that failed the sweep prints ``FAILED``), so a
+    certifier returning 0 without certifying anything cannot pass here.
+
+    Deliberately NOT ``slow``-marked: this is the local half of a named CI
+    step, and a ``-m "not slow"`` loop that dropped it would report green
+    without certifying a single theme. tests/test_fast_subset.py asks pytest's
+    own collector whether the fast subset still keeps this gate.
+    """
+    proc = subprocess.run(
+        [sys.executable, str(CERTIFIER), "--aspects", "chrome"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+    )
+    detail = (
+        f"rc={proc.returncode}\n"
+        f"stdout tail:\n{proc.stdout[-2000:]}\n"
+        f"stderr tail:\n{proc.stderr[-2000:]}"
+    )
+    assert proc.returncode == 0, f"the section-chrome certification failed\n{detail}"
+
+    certified = _OK_LINE.findall(proc.stdout)
+    assert set(certified) == set(THEMES), (
+        f"the sweep did not report every theme as OK (got {sorted(certified)})\n{detail}"
+    )
+    assert "All good across all 6 themes" in proc.stdout, (
+        f"the certification did not print its summary line\n{detail}"
+    )
+    # The chrome aspect's own closing line, not just the prefix: a harness
+    # that printed the contrast line's summary while skipping chrome would
+    # otherwise pass on the shared wording.
+    assert "sections render, sliders move, collapse clips" in proc.stdout, detail

@@ -3,9 +3,9 @@
 The D8 startup branch (``gui_crash.maybe_run_startup_flow``) opens a MODAL
 — the next-session review whenever records exist, the first-run consent ask
 whenever no decision is recorded — and nothing in a headless sweep can
-answer either dialog. The standalone certifiers
-(``scripts/certify_gui_themes.py``, ``scripts/certify_section_chrome.py``)
-build the REAL MainWindow, whose queued crash-flow timer reaches that
+answer either dialog. The standalone certifier (``scripts/certify_gui.py``,
+which absorbed the theme and section-chrome scripts on 2026-10-10) builds
+the REAL MainWindow, whose queued crash-flow timer reaches that
 branch on every launch. Parking renames the whole store out of the D8
 reader's sight (``list_records`` sees an empty root) instead of moving
 records one by one, and the recovery sweep makes a mid-run crash
@@ -14,7 +14,7 @@ repo root where the NEXT parked run finds it and brings it home. Evidence
 is at worst mislaid for one run, never lost — the merge keeps a colliding
 record beside its namesake rather than overwriting either copy.
 
-Mutation contracts: dropping the park (or the restore) from either
+Mutation contracts: dropping the park (or the restore) from the
 certifier fails its source-scan pin; removing the restore call fails the
 raise test; removing the leftover-recovery glob fails the recovery test;
 removing the never-overwrite branch fails the collision test.
@@ -27,10 +27,7 @@ from pathlib import Path
 from the_oracle.crash import bundle
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CERTIFIERS = (
-    REPO_ROOT / "scripts" / "certify_gui_themes.py",
-    REPO_ROOT / "scripts" / "certify_section_chrome.py",
-)
+CERTIFIERS = (REPO_ROOT / "scripts" / "certify_gui.py",)
 
 
 def _seed_record(root: Path, name: str = "crash-20261010T120000-abcdef01.json", body: str = '{"x": 1}') -> Path:

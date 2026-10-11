@@ -61,5 +61,10 @@ the_oracle = ["text_repair/data/*.txt"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
+  # The GUI certification gates are deliberately NOT marked: they are the suite's
+  # only proof that a theme reaches a rendered window, so a `-m "not slow"` run
+  # must not be able to report green without them (pinned in
+  # tests/test_fast_subset.py). This marker is for tests whose cost is the reason
+  # they are absent from that loop, not for the certifications.
   "slow: long-running tests (GUI, integration, or model-heavy) that the fast suite skips",
 ]

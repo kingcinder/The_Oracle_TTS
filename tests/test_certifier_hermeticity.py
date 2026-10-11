@@ -1,8 +1,8 @@
-"""``certify_section_chrome`` is hermetic: no real config, no repo logs.
+"""``certify_gui`` is hermetic: no real config, no repo logs.
 
-The sweep builds twelve REAL MainWindows and rewrites settings six times, so
-"isolation" cannot rest on intent — it is a measurable contract with two
-halves:
+The sweep builds thirteen REAL MainWindows (two per theme plus the menu
+pass) and rewrites settings six times, so "isolation" cannot rest on intent —
+it is a measurable contract with two halves:
 
 1. **Behavioral** — a full subprocess run of the script (the exact shape CI
    runs) must leave the real repo tree AND the real app-config root
@@ -12,6 +12,11 @@ halves:
    ``Output/logs/gui_startup_timing.json`` (every ``MainWindow.__init__``
    writes it) and ``Output/logs/gui_prewarm_timing.json`` (the startup
    prewarm) — those two files are what the path redirect exists to stop.
+   The theme certifier this sweep absorbed had the same two writes AND
+   rewrote the real app settings file once per theme (backed up to disk and
+   restored in ``finally``, so only a crash lost the user's theme, layout and
+   last input — measured before the merge, on a developer machine); the same
+   redirect is what now stops all three writes at the root.
 2. **Source** — the channels no snapshot on a typical machine can observe:
    the native-crash dump arm (consent-ON machines append to an existing
    ``crash_reports/native-crash.txt`` without changing its bytes, and a
@@ -23,7 +28,10 @@ Mutation contract (proven live, reverted byte-identical):
 - dropping the ``ensure_repo_default_paths`` redirect fails the behavioral
   test naming ``Output/logs/gui_startup_timing.json``;
 - dropping the ``XDG_CONFIG_HOME``/``APPDATA`` redirect fails the behavioral
-  test naming real-config files (the sweep rewrites app settings 6×);
+  test naming real-config files (the sweep rewrites app settings 6×) — that
+  redirect is the shared helper's job since 2026-10-11, so the mutation is made
+  in ``scripts/certifier_isolation.py`` and this same behavioral run is the
+  test that catches it;
 - dropping ``install(root=_CONFIG_ROOT)`` or the consent mirror fails
   ``test_crash_channel_stays_in_the_throwaway`` (source-level — the
   behavioral half cannot see this channel on an already-armed machine);
@@ -31,9 +39,13 @@ Mutation contract (proven live, reverted byte-identical):
   ``test_no_repo_log_entry_points``.
 
 Honest limits: the snapshot window is ~20 s wide, so a concurrent writer in
-this shared checkout (another session committing, the developer's own GUI)
-can report a change it did not cause — the failure names every path, which
-makes that diagnosable rather than mysterious. A park left in the repo root
+this shared checkout (another session committing, editing tracked sources,
+or the developer's own GUI) can report a change it did not cause — the
+failure names every path, which makes that diagnosable rather than
+mysterious. One concrete shape of it, hit while merging the two certifiers
+into this one: a sibling agent's in-flight edit to ``gui_sections.py`` lands
+inside the window and the behavioral test reports it, correctly, as a change
+this run did not make. A park left in the repo root
 by a crashed predecessor is merged home *by* the run, which the snapshot
 will rightly report: that is recovery writing, not sweep noise. The
 throwaway ``/tmp`` litter a SIGSEGV leaves behind and OS-level caches
@@ -52,7 +64,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "scripts" / "certify_section_chrome.py"
+SCRIPT = REPO_ROOT / "scripts" / "certify_gui.py"
 
 pytestmark = pytest.mark.slow
 
@@ -81,7 +93,7 @@ def test_sweep_never_touches_the_real_repo_or_config() -> None:
     before_config = repo_tree_snapshot(config_root) if config_root.exists() else {}
 
     proc = subprocess.run(
-        [sys.executable, "scripts/certify_section_chrome.py"],
+        [sys.executable, "scripts/certify_gui.py"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -116,15 +128,27 @@ def test_sweep_never_touches_the_real_repo_or_config() -> None:
 def test_config_root_redirect_precedes_every_the_oracle_import() -> None:
     """The env redirect is the first thing the module does after its
     docstring: a ``the_oracle`` import resolved before it would read (and
-    potentially cache) the real config root."""
+    potentially cache) the real config root.
+
+    The redirect itself moved to the certifier family's shared helper on
+    2026-10-11, so what this pins is the ORDER and the delegation: a call to the
+    shared ``isolated_config_root``, above every ``the_oracle`` import. The
+    substance — that the helper redirects BOTH ``XDG_CONFIG_HOME`` and
+    ``%APPDATA%`` and arms the reap — is pinned where it lives, in
+    tests/test_certifier_isolation.py.
+    """
     source = _source()
     first_import = re.search(r"^(?:from|import) the_oracle", source, re.MULTILINE)
     assert first_import is not None, "no the_oracle import found — the scan went blind"
-    redirect = source.index('os.environ["XDG_CONFIG_HOME"] = _CONFIG_ROOT')
+    assert "from certifier_isolation import isolated_config_root, reap_isolated_root" in source, (
+        "the throwaway root no longer comes from the shared helper — a hand-rolled "
+        "second copy is what this refactor removed, and a copy has no owner"
+    )
+    redirect = source.index("_CONFIG_ROOT = isolated_config_root(")
     assert redirect < first_import.start(), "config redirect must precede every the_oracle import"
-    # APPDATA covers the Windows leg — XDG alone would still read and write
-    # the developer's real %APPDATA%\\the_oracle.
-    assert 'os.environ["APPDATA"] = _CONFIG_ROOT' in source
+    assert 'isolated_config_root("oracle_gui_cert_cfg_")' in source, (
+        "the sweep's throwaway root must keep its own prefix, so a leaked root names its sweep"
+    )
 
 
 def test_window_default_paths_are_rooted_at_the_throwaway() -> None:
