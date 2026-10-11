@@ -1295,7 +1295,9 @@ cited when the entry is next touched.
   silent wrong-tree load would report counts for code that never ran), runs the
   full suite, and compares it against the counts recorded for that commit: exit 0
   match, 1 drift (both values, plus any skip id that appeared or disappeared), 2
-  could not run — and an unrecorded commit is 2, never a pass. `--record` writes
+  could not run — and an unrecorded commit is 2, never a pass (the one exception,
+  where a recorded commit checks out the same suite, is the inheritance below).
+  `--record` writes
   the counts for the resolved sha and prints every field it changed, so
   re-baselining is visible rather than reflexive; `--capture-output` keeps the
   run's raw bytes so a mismatch can be read instead of re-run.
@@ -1307,7 +1309,34 @@ cited when the entry is next touched.
   Recorded for `40b8ddbd6058`: **1684 passed / 3 skipped / 0 failed / exit 0**,
   the 3 being the audio-gated smokes the absent native build explains; three
   independent fresh-worktree runs of that commit agree, and the verify path exits
-  0 reporting "reproduces its recorded suite counts". Drift was proven to fail
+  0 reporting "reproduces its recorded suite counts".
+  **Re-recorded 2026-10-11 for the pushed tip `dbee3289628`: 1796 passed / 3
+  skipped / 0 failed / exit 0** — the same 3 audio-gated skips, and the count
+  moved 1684 → 1796 because the campaign's own committed tests and gates ride
+  that tip, and the entry is committed and pushed — it rode the recording commit
+  that is now the branch tip, with `dbee328` as its parent, so the reference point
+  reaches a clone rather than living in one working tree. An entry keys a commit,
+  so the commit that *carries* the entry can never be recorded — a tree cannot
+  contain a hash of its own content — and **that gap is closed by inheritance
+  rather than by a run** (2026-10-11, this change): when nothing is recorded
+  under the target's sha, the check looks for a recorded commit whose tree is
+  identical apart from `scripts/suite_counts_baseline.json`, because the suite
+  reads that file in exactly one place — test_suite_counts.py's shape audit — and
+  both files pass it. So `certify_suite_counts.py` with no args at the carrier tip
+  now exits 0, reporting `PASS (inherited)` with `dbee328` as the witness and
+  running no suite and building no worktree (the comparison is a two-tree
+  `git diff`, and "could not compare" is never read as "same tree"); a commit
+  that really changed the suite still exits 2, and a baseline file whose entries
+  the audit would reject inherits nothing — the guard, pinned from both sides.
+  `--record` still measures: it never inherits a copied entry. 7 new tests, 38 in
+  the file. The ancestors under the recorded commit stay
+  unrecorded on purpose too, so an older commit gets recorded on demand rather
+  than by pre-emptively running six full suites.
+  **Re-verification is not deterministic yet, measured:** three fresh-worktree
+  full-suite runs at this tip gave one green (the recorded 1796) and two failures,
+  both the chrome aspect of the merged certifier dying with `rc=-11` after 1795
+  passed. The entry is from the green run; the crash is logged under Noticed
+  rather than folded into this record. Drift was proven to fail
   rather than assumed: `--pytest-args "-k test_skip_audit"` exits 1 naming
   `passed 1684 → 27` and `skipped 3 → 0`. Skip-id comparison is gated on the audit
   being complete, so a truncated list can neither invent drift nor hide behind
@@ -2507,6 +2536,25 @@ cited when the entry is next touched.
   voices as live verification of the assembly fix (hardware-dependent).
 
 ## Noticed, not yet actioned
+
+- **The merged GUI certifier's chrome aspect can SEGFAULT inside a full-suite run
+  in a fresh worktree (found 2026-10-11, while re-recording the suite-count
+  baseline).** Three fresh-worktree full-suite runs at `dbee3289628`: one green
+  (1796 passed / 3 skipped / 0 failed — the entry the baseline now records) and
+  two failing at
+  `tests/test_gui_sections_chrome.py::test_section_chrome_certification_runs_locally_and_passes`
+  with `rc=-11` (SIGSEGV in the certifier subprocess) after 1795 passed. The gate
+  is not obviously broken on its own: the same aspect passes 3/3 standalone in a
+  fresh worktree of that same commit, and working-tree runs are green — so the
+  difference is the context it runs in (a full suite of ~1800 tests, on a shared
+  checkout other sessions are also driving), not anything the certification
+  checks. Left unfixed on purpose as a bounded unit of its own, not a footnote to
+  a baseline record: the crashing tree is deleted by the tool before its
+  `crash_reports/` can be read, so the next step is one `--keep` run to capture
+  the faulting frame. Consequences today: the commit-keyed baseline's
+  re-verification can fail non-deterministically (a count-preserving crash reads
+  as drift), and `tests/test_fast_subset.py` lists this gate as of `58cf7c9`, so a
+  local `pytest -m "not slow"` loop can segv for the same reason.
 
 - **`scripts/mutation_probe.py` carries a THIRD copy of the reap policy
   (found 2026-10-11, while factoring the certifier family's preamble into
