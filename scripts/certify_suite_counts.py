@@ -34,12 +34,32 @@ would be a baseline of a tree nobody actually gets from a clone.
     python scripts/certify_suite_counts.py --pytest-args "-k vulkan"
     python scripts/certify_suite_counts.py --capture-output /tmp/run.txt
 
+The one commit this file cannot key is the commit that carries it, and closing
+that dead end is what the inheritance below is for. ``--record`` measures a
+commit, writes the entry into the working tree, and commits; the follower -- the
+one a reader actually has checked out -- is not what was measured, and no run
+can ever record it, because an entry cannot name a commit whose content contains
+the entry. So that case is settled by comparison instead of by measuring: when the
+target's tree is identical to a recorded commit's apart from
+``scripts/suite_counts_baseline.json``, the suite it checks out is the same
+suite, and the target *inherits* the recorded counts. The comparison is a
+two-tree ``git diff``, not a run, and the verdict says so rather than claiming a
+re-derivation it did not perform.
+
+Why inheriting is sound rather than a shortcut: the two trees differ in exactly
+one file, and the suite reads that file in exactly one place -- the shape audit
+in ``tests/test_suite_counts.py``, which asks about the file's shape and not its
+contents. So an inherited verdict is only as good as the file's shape, and a file
+whose entries the audit would reject inherits nothing: that stays the exit-2
+refusal below, where a question belongs.
+
 Exit 0 means the counts matched the recorded baseline. Exit 1 means they did
 not: the drift is printed field by field with both values, and any skip that
 appeared or disappeared is named by node id. Exit 2 means the check could not
-run at all -- no such ref, no baseline recorded for that commit, no interpreter,
-or no readable pytest summary. There is deliberately no "no baseline, carry on"
-path: an unrecorded commit is a question, not a pass.
+run at all -- no such ref, no baseline recorded for that commit and no recorded
+commit with the same tree to inherit from, no interpreter, or no readable pytest
+summary. There is deliberately no "no baseline, carry on" path: an unrecorded
+commit is a question, not a pass.
 
 Re-recording is reported, not silent: ``--record`` prints every field it
 *changed* from the previous entry, so accepting drift is a visible act rather
@@ -456,6 +476,114 @@ def _render(value: Any) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Inheriting the entry for the commit that carries it
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class Inheritance:
+    """A recorded entry that also covers a commit nothing was recorded for."""
+
+    recorded_for: str
+    because: str
+
+
+def _baseline_path_in_tree(repo_root: Path, baseline: Path) -> str | None:
+    """The baseline file's path inside the repository, or ``None`` when it is not in it.
+
+    The exclusion below is a git pathspec, so it has to be a path relative to the
+    repository root. A baseline kept outside the repository (a test's temp copy,
+    a scratch checkout) has no tree entry to ignore, and the comparison then asks
+    for the whole tree -- stricter, never looser.
+    """
+    try:
+        return baseline.resolve().relative_to(repo_root).as_posix()
+    except ValueError:
+        return None
+
+
+def tree_diff_ignoring(
+    repo_root: Path, left: str, right: str, ignore: str | None
+) -> bool | None:
+    """Whether the two commits' trees differ in any path other than ``ignore``.
+
+    ``None`` means the comparison could not be made at all -- most often a commit
+    git cannot read here (a shallow clone, or an entry recorded in a checkout
+    this one has not fetched). ``None`` is deliberately not ``False``: reading "I
+    could not tell" as "the same tree" is how a check starts certifying trees it
+    never looked at.
+    """
+    pathspec = [f":(top,exclude){ignore}"] if ignore else []
+    completed = subprocess.run(
+        ["git", "-C", str(repo_root), "diff", "--quiet", left, right, "--", ".", *pathspec],
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode == 0:
+        return False
+    if completed.returncode == 1:
+        return True
+    return None
+
+
+def entries_satisfy_the_recorded_shape(counts: Mapping[str, Mapping[str, Any]]) -> bool:
+    """Whether every entry is one ``tests/test_suite_counts.py``'s audit accepts.
+
+    That audit is the only place the suite reads the baseline file, so this is
+    what an inherited verdict actually rests on: an entry the audit would fail
+    would make the follower commit's run differ from the recorded one by that
+    failure, and inheriting would hand back a PASS the commit never earned. The
+    rules are the audit's -- a full sha, exactly the recorded fields, a boolean
+    completeness flag, a green exit code -- with the sha's hex digits made
+    explicit; refusing where the audit would accept can only ever cost a
+    refusal, never a green.
+    """
+    expected = {*COUNT_FIELDS, SKIP_ID_FIELD, SKIP_ID_COMPLETE_FIELD}
+    for commit, entry in counts.items():
+        if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+            return False
+        if not isinstance(entry, Mapping) or set(entry) != expected:
+            return False
+        if entry.get("exit_code") != 0:
+            return False
+        if not isinstance(entry.get(SKIP_ID_COMPLETE_FIELD), bool):
+            return False
+        if not isinstance(entry.get(SKIP_ID_FIELD), list):
+            return False
+    return True
+
+
+def inherited_entry(
+    repo_root: Path, commit: str, counts: Mapping[str, Mapping[str, Any]], baseline: Path
+) -> Inheritance | None:
+    """A recorded entry that also covers ``commit``, or ``None`` to refuse.
+
+    Only ever reached when nothing is recorded for ``commit`` itself, and never a
+    substitute for measuring: it answers for a commit whose suite inputs are
+    byte-identical to a recorded one's apart from this file (see the module
+    docstring). Candidates are tried in sha order so the answer does not depend
+    on dict order, and one git cannot read is skipped rather than treated as a
+    match.
+    """
+    if not entries_satisfy_the_recorded_shape(counts):
+        return None
+    ignore = _baseline_path_in_tree(repo_root, baseline)
+    for recorded_for in sorted(counts):
+        if recorded_for == commit:
+            continue
+        if tree_diff_ignoring(repo_root, recorded_for, commit, ignore) is False:
+            return Inheritance(
+                recorded_for=recorded_for,
+                because=(
+                    f"its tree is identical to {commit[:12]}'s apart from {ignore}"
+                    if ignore
+                    else f"its tree is identical to {commit[:12]}'s"
+                ),
+            )
+    return None
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -500,16 +628,36 @@ def main(argv: list[str] | None = None) -> int:
     added = False
     try:
         commit = resolve_commit(repo_root, args.ref)
-        interpreter = resolve_interpreter(repo_root, args.interpreter)
         counts = load_baseline(args.baseline)
         recorded = counts.get(commit)
+        inherited: Inheritance | None = None
         if not args.record and recorded is None:
-            raise SuiteCountsError(
-                f"no baseline is recorded for {commit[:12]} ({args.ref}). Record it with "
-                f"`python scripts/certify_suite_counts.py {args.ref} --record` -- an unrecorded "
-                "commit is a question, not a pass."
+            # Nothing is recorded under this sha. Before refusing, ask whether a
+            # recorded commit checks out the same suite: that is the case for the
+            # commit that carries a recording, which can never be recorded itself.
+            inherited = inherited_entry(repo_root, commit, counts, args.baseline)
+            if inherited is None:
+                raise SuiteCountsError(
+                    f"no baseline is recorded for {commit[:12]} ({args.ref}), and no recorded commit "
+                    "checks out the same suite as it does, so there is nothing to inherit either. "
+                    f"Record it with `python scripts/certify_suite_counts.py {args.ref} --record` -- "
+                    "an unrecorded commit is a question, not a pass."
+                )
+            recorded = counts[inherited.recorded_for]
+            print(f"Checking {args.ref} -> {commit[:12]} by inheritance, without running the suite")
+            print(f"  inherited   : {inherited.recorded_for[:12]}  ({inherited.because})")
+            print("  recorded    : " + " ".join(f"{field}={recorded[field]}" for field in COUNT_FIELDS))
+            print(
+                "  note        : the suite reads that file in tests/test_suite_counts.py's shape "
+                "audit only,\n                and every entry in it is one that audit accepts"
             )
+            print(
+                f"PASS (inherited): {commit[:12]} checks out the suite {inherited.recorded_for[:12]} "
+                "was measured on, so it inherits those counts; nothing was re-derived here."
+            )
+            return 0
 
+        interpreter = resolve_interpreter(repo_root, args.interpreter)
         add_fresh_worktree(repo_root, fresh_root, commit)
         added = True
         imported = assert_imports_the_tree_under_test(fresh_root, interpreter)
@@ -559,7 +707,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: {error}", file=sys.stderr)
         return 2
     finally:
-        if args.keep:
+        if added and args.keep:
             print(f"Fresh worktree kept at {fresh_root}", file=sys.stderr)
         elif not added:
             # Nothing was checked out (the run refused first); drop the empty

@@ -437,3 +437,174 @@ def test_both_fresh_tree_checks_read_a_summary_line_the_same_way(counts, accepta
     summary = "1 test(s) did not run here:\n\n1684 passed, 3 skipped in 378.72s\n"
 
     assert counts.parse_suite_counts(summary) == acceptance.parse_pytest_summary(summary)
+
+
+# --- inheriting the entry for the commit that carries it ------------------------
+
+
+def _git_in(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _repo_whose_tip_carries_a_recording(root: Path) -> tuple[Path, Path, str]:
+    """The shape of the real dead end: a measured commit, and the commit carrying its entry.
+
+    Commit A is what the recording names; its entry is then written into the
+    working tree and committed as B. B can never be recorded itself -- an entry
+    cannot name a commit whose content contains the entry -- so B is the commit
+    the check has to be able to answer for without a run.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    _git_in(root, "init", "-q")
+    _git_in(root, "config", "user.email", "t@t")
+    _git_in(root, "config", "user.name", "t")
+    baseline = root / "scripts" / "suite_counts_baseline.json"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text(json.dumps({"about": "x", "counts": {}}), encoding="utf-8")
+    (root / "suite_test.py").write_text("def test_one(): pass\n", encoding="utf-8")
+    _git_in(root, "add", "suite_test.py", "scripts/suite_counts_baseline.json")
+    _git_in(root, "commit", "-qm", "a: the tree that was measured")
+    measured = _git_in(root, "rev-parse", "HEAD")
+    baseline.write_text(
+        json.dumps({"about": "x", "counts": {measured: _entry()}}), encoding="utf-8"
+    )
+    _git_in(root, "add", "scripts/suite_counts_baseline.json")
+    _git_in(root, "commit", "-qm", "b: carries a's entry")
+    return root, baseline, measured
+
+
+def _check_scratch(tmp_path: Path) -> Path:
+    return tmp_path / "scratch"
+
+
+def test_the_commit_that_carries_a_recording_inherits_that_recording(
+    counts, tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """Measured on this repository: the tip that carried `dbee328`'s entry exited 2.
+
+    ``--record`` measures a commit, writes the entry, and commits; the follower is
+    what a reader has checked out, and no run can ever record it, because an entry
+    cannot name a commit whose content contains the entry. So the check has to
+    answer for this commit by comparing trees rather than by running -- which is
+    what this pins: the suite is replaced with a hard failure here, so a green
+    verdict can only have come from the comparison.
+    """
+    repo, baseline, measured = _repo_whose_tip_carries_a_recording(tmp_path / "repo")
+
+    def _no_run(*args, **kwargs):
+        raise AssertionError("an inherited verdict must not run the suite")
+
+    monkeypatch.setattr(counts, "run_suite", _no_run)
+
+    code = counts.main(
+        [
+            "--repo-root",
+            str(repo),
+            "--baseline",
+            str(baseline),
+            "--scratch",
+            str(_check_scratch(tmp_path)),
+            "--keep",
+        ]
+    )
+
+    assert code == 0
+    captured = capsys.readouterr()
+    assert measured[:12] in captured.out and "inherit" in captured.out.lower()
+    # Nothing was built, and nothing was left registered: a refusal or a green
+    # that ran no suite must not leave a worktree behind, nor claim it kept one.
+    assert len(_git_in(repo, "worktree", "list").splitlines()) == 1
+    assert list(_check_scratch(tmp_path).iterdir()) == []
+    assert "kept at" not in captured.err
+
+
+def test_a_commit_that_really_changed_the_suite_still_refuses(
+    counts, tmp_path: Path, capsys
+) -> None:
+    """Inheritance is tree equality, not "a recorded commit is close enough"."""
+    repo, baseline, _ = _repo_whose_tip_carries_a_recording(tmp_path / "repo")
+    (repo / "suite_test.py").write_text(
+        "def test_one(): pass\ndef test_two(): pass\n", encoding="utf-8"
+    )
+    _git_in(repo, "add", "suite_test.py")
+    _git_in(repo, "commit", "-qm", "c: one more test")
+
+    code = counts.main(
+        [
+            "--repo-root",
+            str(repo),
+            "--baseline",
+            str(baseline),
+            "--scratch",
+            str(_check_scratch(tmp_path)),
+        ]
+    )
+
+    assert code == 2
+    assert "no baseline is recorded" in capsys.readouterr().err
+
+
+def test_an_entry_the_audit_would_reject_inherits_nothing(
+    counts, tmp_path: Path, capsys
+) -> None:
+    """An inherited verdict is only as sound as the file's shape, so a broken entry refuses.
+
+    An entry the shape audit would fail at this commit makes this commit's run
+    differ from the recorded one by that failure, which is drift -- the one thing
+    an inherited PASS must never paper over.
+    """
+    repo, baseline, measured = _repo_whose_tip_carries_a_recording(tmp_path / "repo")
+    broken = _entry()
+    broken.pop("skipped_ids_complete")
+    baseline.write_text(
+        json.dumps({"about": "x", "counts": {measured: broken}}), encoding="utf-8"
+    )
+    _git_in(repo, "add", "scripts/suite_counts_baseline.json")
+    _git_in(repo, "commit", "-qm", "b: an entry with a field missing")
+
+    code = counts.main(
+        [
+            "--repo-root",
+            str(repo),
+            "--baseline",
+            str(baseline),
+            "--scratch",
+            str(_check_scratch(tmp_path)),
+        ]
+    )
+
+    assert code == 2
+    assert "no baseline is recorded" in capsys.readouterr().err
+
+
+def test_the_shape_guard_refuses_the_entries_the_audit_refuses(counts) -> None:
+    assert counts.entries_satisfy_the_recorded_shape({"a" * 40: _entry()}) is True
+    assert counts.entries_satisfy_the_recorded_shape({"a" * 40: _entry(exit_code=1)}) is False
+    assert counts.entries_satisfy_the_recorded_shape({"A" * 40: _entry()}) is False
+    assert counts.entries_satisfy_the_recorded_shape({"HEAD": _entry()}) is False
+    short = _entry()
+    short.pop("skipped_ids")
+    assert counts.entries_satisfy_the_recorded_shape({"a" * 40: short}) is False
+
+
+def test_the_shape_guard_agrees_with_the_audit_on_the_real_file(counts) -> None:
+    """One file, two readers: the guard must not disagree with the pinned audit."""
+    assert counts.entries_satisfy_the_recorded_shape(counts.load_baseline(BASELINE)) is True
+
+
+def test_the_tree_comparison_admits_when_it_cannot_compare(counts, tmp_path: Path) -> None:
+    """'Could not tell' must not read as 'the same tree'; a missing commit is no witness."""
+    repo = _scratch_repo(tmp_path / "repo", commits=2)
+
+    assert counts.tree_diff_ignoring(repo, "HEAD", "HEAD~1", None) is True
+    assert counts.tree_diff_ignoring(repo, "HEAD", "HEAD~1", "tracked.txt") is False
+    assert counts.tree_diff_ignoring(repo, "HEAD", "0" * 40, "tracked.txt") is None
+
+
+def test_recording_is_the_measuring_path_and_never_inherits(counts) -> None:
+    """``--record`` promises a measurement, so it must not hand back a copied entry."""
+    source = (SCRIPTS_DIR / "certify_suite_counts.py").read_text(encoding="utf-8")
+
+    assert "if not args.record and recorded is None:" in source
