@@ -7,9 +7,9 @@ audit — the whole list, every time, not first-match-only. Dropping any arm
 pin by name.
 
 Coverage of the audit:
-- scripts/certify_gui_themes.py   — real MainWindow offscreen, 6 themes
-- scripts/certify_section_chrome.py — real MainWindow offscreen, 6 themes,
-  section chrome (Script & Cast / Review / Extra Voices) — pinned below
+- scripts/certify_gui.py           — real MainWindow offscreen, 6 themes,
+  contrast + section chrome; merged on 2026-10-10 from certify_gui_themes.py
+  and certify_section_chrome.py, and pinned once here
 - scripts/gui_drive.py            — real MainWindow + QMediaPlayer cycles
 - scripts/u44_accessibility_harness.py — real gui_crash/gui_license dialogs
 - scripts/u42_crash_repro.py      — enable_faulthandler_catch BEFORE MainWindow
@@ -63,21 +63,13 @@ def _assert_armed_before(source: str, relative: str, before_marker: str) -> None
     )
 
 
-def test_certify_gui_themes_arms_before_mainwindow() -> None:
+def test_certify_gui_arms_before_mainwindow() -> None:
+    """The GUI certification builds 13 real MainWindows (two per theme plus
+    the menu pass): the whole native-crash surface, one arm contract, pinned
+    by name so dropping the arm fails here."""
     _assert_armed_before(
-        _source("scripts/certify_gui_themes.py"),
-        "certify_gui_themes.py",
-        "app = QApplication.instance()",
-    )
-
-
-def test_certify_section_chrome_arms_before_mainwindow() -> None:
-    """The section-chrome sweep builds 12 real MainWindows (2 per theme):
-    same native-crash surface as certify_gui_themes, same arm contract,
-    pinned by name so dropping the arm fails here."""
-    _assert_armed_before(
-        _source("scripts/certify_section_chrome.py"),
-        "certify_section_chrome.py",
+        _source("scripts/certify_gui.py"),
+        "certify_gui.py",
         "app = QApplication.instance()",
     )
 

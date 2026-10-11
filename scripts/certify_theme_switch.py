@@ -46,8 +46,11 @@ which is where the line-by-line contract lives.
 
 Writes nothing: the app config root is redirected to a throwaway before any
 ``the_oracle`` import, and the window's default paths are drained into it, so the
-settings rewrites and the ``Output/logs`` timing writes land there. Exit 0 means
-every term held.
+settings rewrites and the ``Output/logs`` timing writes land there. That
+directory is removed again on every exit path (``main``'s window teardown plus
+the ``atexit`` hook ``scripts/certifier_isolation.py`` registers with the root),
+so a run leaves no trace anywhere — not in the repo, not in the real config, and
+not in /tmp. Exit 0 means every term held.
 """
 
 from __future__ import annotations
@@ -56,7 +59,6 @@ import argparse
 import os
 import statistics
 import sys
-import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -65,9 +67,15 @@ from pathlib import Path
 # Offscreen before Qt is imported, and the throwaway config root before any
 # the_oracle import (both must precede their readers, not merely be intended).
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-_CONFIG_ROOT = tempfile.mkdtemp(prefix="oracle_theme_switch_cfg_")
-os.environ["XDG_CONFIG_HOME"] = _CONFIG_ROOT
-os.environ["APPDATA"] = _CONFIG_ROOT
+
+# The throwaway root, its environment redirect and the reap that covers every
+# exit path are the certifier family's shared preamble — policy, retries and the
+# measurements behind them in scripts/certifier_isolation.py. The one rule that
+# stays at this call site is the order: above any the_oracle import.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from certifier_isolation import isolated_config_root, reap_isolated_root  # noqa: E402
+
+_CONFIG_ROOT = isolated_config_root("oracle_theme_switch_cfg_")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -543,6 +551,10 @@ def main(argv: list[str] | None = None) -> int:
         measured = measure(app, window, counter, warnings)
     finally:
         _destroy_window(app, window)
+        # The audio stack has settled with the window: remove the throwaway
+        # root here rather than leaving it to interpreter exit, where the
+        # PulseAudio client's own ``$XDG_CONFIG_HOME`` write is out of reach.
+        reap_isolated_root(_CONFIG_ROOT)
 
     if not args.quiet:
         _report(measured)

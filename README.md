@@ -624,6 +624,19 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\pytest.exe
 ```
 
+A bare `pytest` runs everything. For the faster loop between changes, exclude the
+`slow` marker:
+
+```bash
+./.venv/bin/pytest -m "not slow"
+```
+
+The six-theme GUI certifications run in that loop rather than behind the marker:
+they are the only tests that prove a theme reaches a rendered window, so a green
+fast run must not be possible without them. What stays behind the marker is the
+model-heavy work and the sweeps that cost minutes. `tests/test_fast_subset.py`
+holds that contract by asking pytest's own collector what the subset keeps.
+
 ## Generic Voices And Voice Blending
 
 **Generic voices.** The repo ships a small bundled generic voice library under

@@ -134,22 +134,68 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\python.exe scripts/smoke_render.py
 
-      # The suite pins the section chrome (Script & Cast / Review / Extra
-      # Voices) through a faked window; this script certifies the same
-      # contract on the REAL MainWindow for every theme, so a theme
-      # stylesheet regression that only shows in rendered chrome fails here.
-      # It needs no model and no network, redirects the app settings to a
-      # throwaway config root, neutralizes the modal startup dialogs per
-      # window, and exits nonzero the moment a theme fails a check.
-      - name: Section Chrome Six-Theme Sweep (Linux)
+      # The suite pins contrast against a token table, section chrome through
+      # a faked window, and the recording-studio and inference-tour dialogs not
+      # at all; this certifies all of it on the REAL MainWindow and the REAL
+      # dialogs for every theme, so a theme regression that only shows in a
+      # rendered window fails here. It needs no model and no network, redirects
+      # the app settings to a throwaway config root, neutralizes the modal
+      # startup dialogs per window, and exits nonzero the moment a theme fails
+      # a check or a theme carries no certification entry. One named step PER
+      # ASPECT per OS, each selecting its aspect by name, so the job list says
+      # WHICH certification broke: a contrast regression and a chrome
+      # regression are two differently named red steps instead of one red
+      # "certification" whose reason lives in a log. The steps are the harness's
+      # four aspects in its own order and each runs one process; that costs
+      # more than the merged sweep (measured on this machine: 8.1 + 13.8 + 9.3
+      # + 8.9 = 40.1 s of the four, against 17.5 s for one process running all
+      # four), because every aspect rebuilds the six-theme window loop it
+      # needs. The attribution is what the time buys. The aspects are pinned
+      # against the harness's own ASPECTS tuple by
+      # tests/test_gui_sections_chrome.py, so adding an aspect without a step
+      # here fails the suite rather than certifying nowhere. The suite's local
+      # gates select one aspect at a time the same way (`contrast` and
+      # `studio,wizard` from tests/test_gui_theme_certification.py, `chrome`
+      # from tests/test_gui_sections_chrome.py).
+      - name: GUI Six-Theme Certification - contrast (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: ./.venv/bin/python scripts/certify_section_chrome.py
+        run: ./.venv/bin/python scripts/certify_gui.py --aspects contrast
 
-      - name: Section Chrome Six-Theme Sweep (Windows)
+      - name: GUI Six-Theme Certification - contrast (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .\.venv\Scripts\python.exe scripts/certify_section_chrome.py
+        run: .\.venv\Scripts\python.exe scripts/certify_gui.py --aspects contrast
+
+      - name: GUI Six-Theme Certification - chrome (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./.venv/bin/python scripts/certify_gui.py --aspects chrome
+
+      - name: GUI Six-Theme Certification - chrome (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe scripts/certify_gui.py --aspects chrome
+
+      - name: GUI Six-Theme Certification - studio (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./.venv/bin/python scripts/certify_gui.py --aspects studio
+
+      - name: GUI Six-Theme Certification - studio (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe scripts/certify_gui.py --aspects studio
+
+      - name: GUI Six-Theme Certification - wizard (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./.venv/bin/python scripts/certify_gui.py --aspects wizard
+
+      - name: GUI Six-Theme Certification - wizard (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe scripts/certify_gui.py --aspects wizard
 
       # The suite pins the bulk-restyle gate against a duck-typed app stand-in
       # and a synthetic event; this certifies it on the REAL window under a real
