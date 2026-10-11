@@ -13,7 +13,11 @@ Usage:
         pyproject/banners agree with ``__version__`` AND CHANGELOG.md has a
         section for the current version dated the release day (today), with
         the file structurally sound: exactly one ``[Unreleased]`` placeholder,
-        released sections newest-first, and no empty shipped section.
+        released sections newest-first, and no empty shipped section. The
+        release-day date rule is told apart from drift: a section dated before
+        today for a version whose tracked checksum manifest exists is the
+        by-design post-cut state, reported as a note and still exiting 0, so
+        day-after verification needs no pinned date.
 
     python scripts/release.py --sync-changelog
         Stamp the release into CHANGELOG.md: retitle the ``## [Unreleased]``
@@ -47,6 +51,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -98,6 +103,35 @@ _BUILD_SNIPPET = (
     f"print('{_ARTIFACT_PREFIX}' + build_meta.build_sdist(outdir))\n"
     f"print('{_ARTIFACT_PREFIX}' + build_meta.build_wheel(outdir))\n"
 )
+
+
+def checksums_filename(version: str) -> str:
+    """The manifest filename ``write_checksums`` produces and Step 4 commits.
+
+    One owner, because the tracked path ``--check`` reads to tell a shipped
+    version from an unshipped one has to be the name the release actually
+    wrote -- two spellings that drift apart would silently un-ship a release.
+    """
+    return f"checksums-{version}.sha256"
+
+
+def tracked_checksums_path(repo_root: Path, version: str) -> Path:
+    """Where this repository's tracked record of ``version``'s manifest lives."""
+    return repo_root / RELEASE_CHECKSUMS_DIR / checksums_filename(version)
+
+
+def shipped_manifest(repo_root: Path, version: str) -> Path | None:
+    """The tracked manifest for ``version``, or ``None`` if it never shipped.
+
+    Its presence is the in-repo evidence that the version's release already
+    ran -- the cut checklist commits that copy (Step 4) -- which is what makes
+    a CHANGELOG section dated before today the by-design post-cut state rather
+    than a stale heading. Deliberately a repository fact and not a calendar
+    guess: a bumped version whose notes were hand-dated early has no manifest
+    yet, so it stays drift and the pre-cut gate is not weakened.
+    """
+    manifest = tracked_checksums_path(repo_root, version)
+    return manifest if manifest.is_file() else None
 
 
 def read_version(repo_root: Path) -> str:
@@ -169,7 +203,7 @@ def _changelog_version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
 
 
-def changelog_problems(repo_root: Path, version: str, today: date) -> list[str]:
+def changelog_report(repo_root: Path, version: str, today: date) -> CheckReport:
     """Structural + current-version drift between CHANGELOG.md and the release.
 
     Beyond the current version's exactly-one-dated-section rule, the gate
@@ -185,13 +219,21 @@ def changelog_problems(repo_root: Path, version: str, today: date) -> list[str]:
     * a shipped (non-Unreleased) section with no entries — a version stamped
       into the changelog without recording anything. ``###`` sub-headings and
       blockquote prose don't count as entries.
+
+    The date rule is classified rather than reported flat: a section dated
+    BEFORE today for a version whose tracked checksum manifest exists is the
+    by-design post-cut state (that release already ran, so the heading carries
+    the day it ran) and comes back in ``CheckReport.post_cut``, not in
+    ``problems``.
     """
     path = repo_root / "CHANGELOG.md"
     if not path.is_file():
-        return [
-            "CHANGELOG.md: missing (expected a '## [<version>] — <YYYY-MM-DD>' "
-            "heading for the release)"
-        ]
+        return CheckReport(
+            problems=[
+                "CHANGELOG.md: missing (expected a '## [<version>] — <YYYY-MM-DD>' "
+                "heading for the release)"
+            ]
+        )
     lines = path.read_text(encoding="utf-8").splitlines()
 
     # Every section in file order: released versions with their stamped date,
@@ -216,6 +258,7 @@ def changelog_problems(repo_root: Path, version: str, today: date) -> list[str]:
         return len(lines)
 
     problems: list[str] = []
+    post_cut: list[str] = []
 
     if unreleased_count > 1:
         problems.append(
@@ -256,13 +299,13 @@ def changelog_problems(repo_root: Path, version: str, today: date) -> list[str]:
             f"CHANGELOG.md: no section for version {version} — add a heading "
             f"'## [{version}] — {today.isoformat()}' above the release notes"
         )
-        return problems
+        return CheckReport(problems=problems)
     if len(sections) > 1:
         problems.append(
             f"CHANGELOG.md: {len(sections)} sections for version {version} "
             f"(lines {', '.join(str(lineno + 1) for lineno, _ in sections)}); expected exactly one"
         )
-        return problems
+        return CheckReport(problems=problems)
     lineno, stamped = sections[0]
     try:
         stamped_date = date.fromisoformat(stamped)
@@ -271,14 +314,24 @@ def changelog_problems(repo_root: Path, version: str, today: date) -> list[str]:
             f"CHANGELOG.md:{lineno + 1}: {stamped!r} is not a valid calendar date "
             f"(expected YYYY-MM-DD, e.g. {today.isoformat()})"
         )
-        return problems
+        return CheckReport(problems=problems)
     if stamped_date != today:
-        problems.append(
-            f"CHANGELOG.md:{lineno + 1}: the {version} section is dated {stamped} but today is "
-            f"{today.isoformat()}; a release section must be dated the day the release "
-            f"runs — update the heading to '## [{version}] — {today.isoformat()}'"
-        )
-    return problems
+        shipped = shipped_manifest(repo_root, version)
+        if shipped is not None and stamped_date < today:
+            post_cut.append(
+                f"CHANGELOG.md:{lineno + 1}: the {version} section is dated {stamped} and today "
+                f"is {today.isoformat()} — the by-design post-cut state, not drift: "
+                f"{shipped.relative_to(repo_root).as_posix()} is tracked, so that release already "
+                "ran and its section carries the day it ran. Nothing to fix; "
+                "--sync-changelog stamps a NEW release, not this one."
+            )
+        else:
+            problems.append(
+                f"CHANGELOG.md:{lineno + 1}: the {version} section is dated {stamped} but today is "
+                f"{today.isoformat()}; a release section must be dated the day the release "
+                f"runs — update the heading to '## [{version}] — {today.isoformat()}'"
+            )
+    return CheckReport(problems=problems, post_cut=post_cut)
 
 
 def sync_changelog(repo_root: Path, version: str, *, today: date | None = None) -> list[str]:
@@ -345,25 +398,59 @@ def sync_changelog(repo_root: Path, version: str, *, today: date | None = None) 
     return changed
 
 
-def check(repo_root: Path, *, today: date | None = None) -> list[str]:
-    """Every way the tracked tree disagrees about the version.
+@dataclass(frozen=True)
+class CheckReport:
+    """``--check``'s verdict, with drift and the by-design note kept apart.
 
-    ``today`` defaults to ``date.today()``: the CHANGELOG section for the
-    current version must be dated the release day, so --check passes only on
-    a release day (or with an explicitly injected date, which is what the
-    tests pin the invariant with between releases).
+    ``problems`` are things to fix. ``post_cut`` is the one finding that looks
+    like drift and is not: a CHANGELOG section dated before today for a version
+    whose release already shipped, which the release-day rule would otherwise
+    flag forever. Reading that distinction off the report is what retires the
+    pinned-date workaround: day-after verification sees "green, and here is why
+    the date looks stale" from one run, instead of a MISMATCH that can only be
+    dismissed by re-running with ``today=<cut day>``.
+    """
+
+    problems: list[str] = field(default_factory=list)
+    post_cut: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems
+
+
+def check_report(repo_root: Path, *, today: date | None = None) -> CheckReport:
+    """Every way the tracked tree disagrees about the version, classified.
+
+    ``today`` defaults to ``date.today()``. Everything except the post-cut date
+    is drift; that one state is carried in ``CheckReport.post_cut`` with the
+    evidence that makes it by-design.
     """
     if today is None:
         today = date.today()
-    problems: list[str] = []
+    report = CheckReport()
     version = read_version(repo_root)
     if not version:
-        problems.append("src/the_oracle/__init__.py: no __version__ string literal found")
-    problems.extend(pyproject_problems(repo_root))
+        report.problems.append("src/the_oracle/__init__.py: no __version__ string literal found")
+    report.problems.extend(pyproject_problems(repo_root))
     if version:
-        problems.extend(banner_problems(repo_root, version))
-        problems.extend(changelog_problems(repo_root, version, today))
-    return problems
+        report.problems.extend(banner_problems(repo_root, version))
+        changelog = changelog_report(repo_root, version, today)
+        report.problems.extend(changelog.problems)
+        report.post_cut.extend(changelog.post_cut)
+    return report
+
+
+def check(repo_root: Path, *, today: date | None = None) -> list[str]:
+    """Every way the tracked tree disagrees about the version (drift only).
+
+    The post-cut date is deliberately absent: it is the release-day rule firing
+    on a release that already ran, not a disagreement to fix, and
+    ``check_report`` carries it as a note. Callers that want both use
+    ``check_report``; this stays the drift-only view so a caller cannot act on
+    a note as if it were damage.
+    """
+    return check_report(repo_root, today=today).problems
 
 
 def sync_banners(repo_root: Path, version: str) -> list[str]:
@@ -449,7 +536,7 @@ def write_checksums(outdir: Path, version: str, artifacts: list[Path]) -> Path:
     """
     if not artifacts:
         raise ReleaseError(f"no artifacts to checksum in {outdir}")
-    manifest = outdir / f"checksums-{version}.sha256"
+    manifest = outdir / checksums_filename(version)
     manifest.write_text(
         "".join(f"{_sha256(path)}  {path.name}\n" for path in sorted(artifacts, key=lambda p: p.name)),
         encoding="utf-8",
@@ -497,9 +584,17 @@ def _require_version(repo_root: Path) -> str:
     return version
 
 
-def _report(problems: list[str]) -> int:
-    if problems:
-        for problem in problems:
+def _report(report: CheckReport) -> int:
+    """Render a verdict: notes first, then drift, then the success line.
+
+    The note goes to stderr beside MISMATCH rather than stdout, so the success
+    line stays the one thing a script reads off stdout and "a note" is never
+    mistaken for the verdict.
+    """
+    for note in report.post_cut:
+        print(f"POST-CUT: {note}", file=sys.stderr)
+    if report.problems:
+        for problem in report.problems:
             print(f"MISMATCH: {problem}", file=sys.stderr)
         return 1
     print("single-source version invariant holds")
@@ -507,7 +602,7 @@ def _report(problems: list[str]) -> int:
 
 
 def _release(repo: Path, outdir_arg: str, *, skip_tests: bool) -> int:
-    status = _report(check(repo))
+    status = _report(check_report(repo))
     if status != 0:
         return status
     version = _require_version(repo)
@@ -540,7 +635,7 @@ def _release(repo: Path, outdir_arg: str, *, skip_tests: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build verified release artifacts for The Oracle.")
-    parser.add_argument("--check", action="store_true", help="verify the version invariant: pyproject/banners/CHANGELOG heading (dated today) match __version__")
+    parser.add_argument("--check", action="store_true", help="verify the version invariant: pyproject/banners/CHANGELOG heading match __version__; a shipped version's older section date reports as the by-design post-cut note, not drift")
     parser.add_argument("--sync-banners", action="store_true", help="rewrite README/STATE release banners from __version__")
     parser.add_argument("--sync-changelog", action="store_true", help="stamp/insert the CHANGELOG.md section for the current version, dated today")
     parser.add_argument("--outdir", default="release_artifacts", help="artifact output directory, relative to the repo root")
@@ -551,17 +646,17 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.check:
-            return _report(check(repo))
+            return _report(check_report(repo))
         if args.sync_changelog:
             version = _require_version(repo)
             changed = sync_changelog(repo, version)
             print(f"stamped CHANGELOG.md for {version}" if changed else f"CHANGELOG.md already carries the {version} section dated today")
-            return _report(check(repo))
+            return _report(check_report(repo))
         if args.sync_banners:
             version = _require_version(repo)
             changed = sync_banners(repo, version)
             print(f"synced {', '.join(changed)} to V{version}" if changed else f"banners already at V{version}")
-            return _report(check(repo))
+            return _report(check_report(repo))
         return _release(repo, args.outdir, skip_tests=args.skip_tests)
     except ReleaseError as exc:
         print(f"release: {exc}", file=sys.stderr)

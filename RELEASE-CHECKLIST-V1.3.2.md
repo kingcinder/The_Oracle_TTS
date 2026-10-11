@@ -100,7 +100,17 @@ House shape, modeled on `0e68df6`:
    copy in `release_checksums/`. Commit that tracked copy (the script prints
    the path). Never rewrite an existing record for the version.
 2. Verify `sha256sum -c` against the tracked manifest from an unrelated
-   downloads directory (the fresh-clone verifiability premise).
+   downloads directory (the fresh-clone verifiability premise). **Run it with
+   the artifact directory as the working directory**, naming the manifest by
+   path — `cd <downloads> && sha256sum -c <repo>/release_checksums/checksums-1.3.2.sha256`.
+   The path requirement is the manifest's format, not a preference:
+   `write_checksums` records bare artifact filenames with no directory prefix,
+   and `sha256sum -c` resolves each name against the **current** directory,
+   never the manifest's own. Measured on the tracked 1.3.2 record: from a
+   directory holding both artifacts, both lines read `OK` and the command
+   exits 0; from the repository root, the same command exits 1 printing
+   `FAILED open or read` (`No such file or directory`) for both — a cwd
+   mistake that reads as a checksum failure.
 3. Append the `JUNO_FIXES.log` release entry as a separate docs commit,
    house style — record the numbers from THIS run's suite, not an earlier
    one. Route it through the tool so the entry is refused before it touches

@@ -50,9 +50,62 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
 ## [Unreleased]
 
+### Added
+
+- **Crash capture is now armed on every launch path, not on a consent
+  transition.** With crash consent on, native-crash capture arms at the console
+  entry point (every command, and the GUI, routes through it), at both GUI
+  launch paths, in the spawned clean render child
+  (`python -m the_oracle.render_subprocess`), in the doctor process and its
+  probe children, and at the smoke and perf-baseline entry points. A session
+  that *started* with consent already on used to run unarmed, which is why the
+  08:06:51 GUI segfault left `crash_reports/native-crash.txt` at 0 bytes. Every
+  arm keeps the same contract: idempotent, and fail-closed — with consent off
+  it creates no file and no directory.
+- **The crash-hunt acceptance gate fails when the net is unarmed.** For
+  `--mode acceptance`, a fresh probe child through the real entry point reports
+  whether the launch path arms capture under the current consent state; the
+  gate fails on the regression shape (consent on, net unarmed) and fails closed
+  when the probe itself cannot run, because a readiness check that silently
+  does not run *is* the regression it guards. Consent-off stays visible but
+  passing.
+- Release tooling gained a checked suite count: `certify_suite_counts.py`
+  checks a commit out into a fresh worktree, runs the full suite, and compares
+  it against the counts recorded in `suite_counts_baseline.json`, so drift, an
+  unrecorded commit, or a silent wrong-tree load each fail loudly. The one
+  commit that can never carry its own recording — the commit that holds it,
+  since a tree cannot contain a hash of its own content — is answered by
+  comparison instead of by measuring: when its tree is identical to a recorded
+  commit's apart from the baseline file, it inherits those counts and says so.
+- A mutation probe and one hermetic GUI certifier family replace two hand-run
+  disciplines. `mutation_probe.py` applies a source mutation, runs the named
+  proof command, and reverts it under hash guards with per-run bytecode
+  isolation, so the whole-second-mtime stale-bytecode trap cannot make a
+  measurement silently wrong. The certifiers are one harness,
+  `certify_gui.py --aspects contrast,chrome,studio,wizard`, with the recording
+  studio and inference tour covered for the first time.
+- The doctor names mixed-encoding subtitle files instead of folding them into
+  the fallback count: files whose guarded-UTF-8 reading differs from their
+  CP1252 reading report as "mixed-encoding, recovered per cue", which states
+  the per-cue salvage behavior as the report's contract.
+
 ### Changed
 
-- (nothing yet)
+- **The fast test loop can no longer report green without rendering a theme.**
+  The GUI certification gates leave the slow marker, so `-m "not slow"` runs
+  them, and CI runs one named step per aspect per operating system — a failed
+  job names which certification broke.
+
+### Fixed
+
+- The theme certifiers no longer write into the repository or the user's
+  config: the startup and prewarm timing logs and the native-crash dump handle
+  are contained, and the crash-records startup review is parked so its modal
+  cannot block a headless sweep.
+- The theme sweep certifies all eight registered sections instead of the five
+  its tuple listed — the three that had gained chrome were registered but
+  unverified — and measures the hidden Extra Voices section for what it
+  legitimately is.
 
 ## [1.3.1] — 2026-09-28
 
