@@ -660,15 +660,19 @@ def _release_metadata_status(repo_root: Path) -> dict[str, Any]:
     the current version must all agree (the changelog dated the release day)
     — is exactly the kind of per-project drift a doctor should surface before
     a release attempt fails on it. The probes are reused, not reimplemented:
-    ``release.py`` is loaded from beside this script and its ``check()`` runs
-    read-only (ast/toml/text reads; no writes, no imports of the package).
+    ``release.py`` is loaded from beside this script and its
+    ``check_report()`` runs read-only (ast/toml/text reads; no writes, no
+    imports of the package).
 
     Verdict policy: problems make ``ok`` False and drive next-steps, but the
     check deliberately does NOT join ``required_checks`` — a changelog not
     dated today is expected between releases (the release-day gate), not a
-    broken install.
+    broken install. That by-design state arrives in ``post_cut`` and is
+    rendered as a note beside the PASS line, so the doctor says which of the
+    two it is instead of leaving the reader to re-run the check by hand with
+    the cut day pinned.
     """
-    report: dict[str, Any] = {"ok": True, "problems": [], "version": "", "error": ""}
+    report: dict[str, Any] = {"ok": True, "problems": [], "post_cut": [], "version": "", "error": ""}
     release_script = Path(__file__).resolve().parent / "release.py"
     spec = importlib.util.spec_from_file_location("oracle_release_tool", release_script)
     if spec is None or spec.loader is None:
@@ -676,10 +680,16 @@ def _release_metadata_status(repo_root: Path) -> dict[str, Any]:
         report["error"] = f"release.py could not be loaded from {release_script}"
         return report
     release = importlib.util.module_from_spec(spec)
+    # Register before executing: release.py's dataclasses resolve their own
+    # module through ``sys.modules`` while the class body runs, so a module
+    # loaded but not yet registered dies at import with a bare AttributeError.
+    sys.modules[spec.name] = release
     try:
         spec.loader.exec_module(release)
+        verdict = release.check_report(repo_root)
         report["version"] = release.read_version(repo_root)
-        report["problems"] = release.check(repo_root)
+        report["problems"] = verdict.problems
+        report["post_cut"] = verdict.post_cut
     except Exception as exc:  # a broken probe must never crash the doctor
         report["ok"] = False
         report["error"] = f"release check failed to run: {exc}"
@@ -1759,10 +1769,21 @@ def _print_human_report(report: dict[str, Any]) -> None:
     release_meta = report.get("release_metadata")
     if release_meta is not None:
         if release_meta.get("ok"):
+            post_cut = release_meta.get("post_cut") or []
+            # The parenthetical has to stay true in both states: a release
+            # section dated today is the cut-day shape, one dated its release
+            # day after the fact is the post-cut shape, and neither is drift.
+            dated = (
+                "CHANGELOG section dated its release day; post-cut"
+                if post_cut
+                else "CHANGELOG section dated today"
+            )
             print(
                 f"PASS Release metadata: version {release_meta.get('version') or '?'} "
-                "consistent (pyproject, banners, CHANGELOG section dated today)"
+                f"consistent (pyproject, banners, {dated})"
             )
+            for note in post_cut:
+                print(f"      post-cut: {note}")
         elif release_meta.get("problems"):
             print("WARN Release metadata drift:")
             for problem in release_meta["problems"]:

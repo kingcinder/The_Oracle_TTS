@@ -5,17 +5,21 @@ invariant that ``scripts/release.py --check`` enforces (pyproject, the
 README/STATE banners, and the CHANGELOG section for the current version,
 dated the release day) — so a release attempt fails on prepared ground
 instead of mid-flight. The probes are reused, never reimplemented:
-``release.py`` is loaded from beside ``doctor.py`` and its ``check()``
-runs read-only. These tests pin the probe, the read-only contract, the
-human-report rendering (including older reports missing the key), the
-next-steps wiring, and the verdict policy: the check deliberately does
-NOT join ``required_checks``, because a changelog not dated today is the
-release-day gate working as designed — not a broken install.
+``release.py`` is loaded from beside ``doctor.py`` and its
+``check_report()`` runs read-only. These tests pin the probe, the
+read-only contract, the human-report rendering (including older reports
+missing the key), the next-steps wiring, and the verdict policy: the
+check deliberately does NOT join ``required_checks``, because a changelog
+not dated today is the release-day gate working as designed — not a
+broken install. The one shape that would otherwise look like drift, the
+post-cut date, arrives in the report's ``post_cut`` list and is rendered
+as a note beside the PASS line.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -36,8 +40,16 @@ def _load_release():
     spec = importlib.util.spec_from_file_location("oracle_release_tool_probe", RELEASE_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    # Registered first: release.py's dataclasses look their module up in
+    # sys.modules while the class body executes.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+#: The release module, for the constants the fixture has to agree with (the
+#: tracked checksums directory) rather than re-spelling them here.
+RELEASE = _load_release()
 
 
 # --- fake repo ----------------------------------------------------------------
@@ -49,8 +61,13 @@ def _write_consistent_repo(
     version: str = "9.9.9",
     readme_version: str | None = None,
     changelog_date: str | None = None,
+    shipped: bool = False,
 ) -> Path:
-    """A minimal tree that satisfies the full release invariant (dated today)."""
+    """A minimal tree that satisfies the full release invariant (dated today).
+
+    ``shipped`` adds the tracked checksum manifest, which is how a tree says
+    this version's release already ran (the post-cut shape).
+    """
     (tmp_path / "src" / "the_oracle").mkdir(parents=True)
     (tmp_path / "src" / "the_oracle" / "__init__.py").write_text(
         f'__version__ = "{version}"\n', encoding="utf-8"
@@ -74,6 +91,10 @@ def _write_consistent_repo(
         f"## [{version}] — {changelog_date or date.today().isoformat()}\n\n### Added\n\n- Something.\n",
         encoding="utf-8",
     )
+    if shipped:
+        manifest = tmp_path / RELEASE.RELEASE_CHECKSUMS_DIR / f"checksums-{version}.sha256"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(f"{'0' * 64}  the_oracle-{version}-py3-none-any.whl\n", encoding="utf-8")
     return tmp_path
 
 
@@ -116,6 +137,22 @@ def test_probe_surfaces_banner_drift_too(tmp_path: Path) -> None:
     assert any("README.md" in problem for problem in status["problems"])
 
 
+def test_probe_reports_a_post_cut_date_as_a_note_not_drift(tmp_path: Path) -> None:
+    """The day-after shape: a shipped version's section keeps the day it ran.
+    That is not drift, so the probe stays green and carries the reason."""
+    doctor = _load_doctor()
+    yesterday = date.fromordinal(date.today().toordinal() - 1).isoformat()
+    repo = _write_consistent_repo(tmp_path, changelog_date=yesterday, shipped=True)
+
+    status = doctor._release_metadata_status(repo)
+
+    assert status["ok"] is True
+    assert status["problems"] == []
+    assert len(status["post_cut"]) == 1
+    assert "checksums-9.9.9.sha256" in status["post_cut"][0]
+    assert yesterday in status["post_cut"][0]
+
+
 def test_probe_agrees_with_release_check_on_the_real_repo() -> None:
     """Cross-module pin: the doctor's verdict is byte-identical to running
     release.check() directly against this repo."""
@@ -126,6 +163,7 @@ def test_probe_agrees_with_release_check_on_the_real_repo() -> None:
 
     assert status["version"] == release.read_version(REPO_ROOT)
     assert status["problems"] == release.check(REPO_ROOT)
+    assert status["post_cut"] == release.check_report(REPO_ROOT).post_cut
 
 
 def test_probe_survives_a_broken_release_module(tmp_path: Path, monkeypatch) -> None:
@@ -227,6 +265,33 @@ def test_human_report_pass_line(capsys) -> None:
 
     assert "PASS Release metadata: version 9.9.9" in out
     assert "CHANGELOG section dated today" in out
+
+
+def test_human_report_renders_the_post_cut_note(capsys) -> None:
+    """The green path still has to say which green it is: a section dated its
+    release day is not a section dated today, and the PASS line must not claim
+    the wrong one."""
+    doctor = _load_doctor()
+    report = _full_report(
+        {
+            "ok": True,
+            "version": "9.9.9",
+            "problems": [],
+            "post_cut": [
+                "CHANGELOG.md:6: the 9.9.9 section is dated 2026-09-20 and today is 2026-09-21 "
+                "— the by-design post-cut state, not drift"
+            ],
+            "error": "",
+        }
+    )
+
+    doctor._print_human_report(report)
+    out = capsys.readouterr().out
+
+    assert "PASS Release metadata: version 9.9.9" in out
+    assert "CHANGELOG section dated its release day; post-cut" in out
+    assert "post-cut: CHANGELOG.md:6" in out
+    assert "CHANGELOG section dated today" not in out
 
 
 def test_human_report_renders_drift_detail(capsys) -> None:

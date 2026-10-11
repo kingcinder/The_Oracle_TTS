@@ -8,6 +8,11 @@ invariant also covers CHANGELOG.md: the current version must have exactly one
 section, dated the release day, and the file's structure is audited too —
 exactly one ``[Unreleased]`` placeholder, released sections newest-first, and
 no empty shipped section.
+
+One finding is not drift: a section dated before today for a version whose
+tracked checksum manifest exists is the by-design post-cut state. It comes
+back in ``check_report().post_cut`` — reported, and still exit 0 — so the
+day-after verdict does not need the cut day pinned to read as green.
 """
 
 from __future__ import annotations
@@ -31,6 +36,9 @@ def _load_release():
     spec = importlib.util.spec_from_file_location("release_tool", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    # Registered first: release.py's dataclasses look their module up in
+    # sys.modules while the class body executes.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -49,12 +57,15 @@ def _write_fake_repo(
     changelog_version: str | None = None,
     changelog_date: str | None = None,
     changelog_text: str | None = None,
+    shipped: bool = False,
 ) -> Path:
     """A minimal tracked tree with the same shape the script expects.
 
     The CHANGELOG defaults to a section for ``version`` dated *today*, which
     is what a release-morning tree looks like; the date parameters let tests
-    build yesterday's tree and drift scenarios.
+    build yesterday's tree and drift scenarios. ``shipped`` writes the tracked
+    checksum manifest Step 4 commits, which is the repository fact that says
+    this version's release already ran.
     """
     (tmp_path / "src" / "the_oracle").mkdir(parents=True)
     (tmp_path / "src" / "the_oracle" / "__init__.py").write_text(
@@ -87,6 +98,12 @@ def _write_fake_repo(
         )
     if changelog_text != "":
         (tmp_path / "CHANGELOG.md").write_text(changelog_text, encoding="utf-8")
+    if shipped:
+        manifest = tmp_path / release.RELEASE_CHECKSUMS_DIR / release.checksums_filename(version)
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            f"{'0' * 64}  the_oracle-{version}-py3-none-any.whl\n", encoding="utf-8"
+        )
     return tmp_path
 
 
@@ -124,6 +141,20 @@ def test_check_passes_on_this_repo_on_its_own_release_day() -> None:
     assert release.check(REPO_ROOT, today=date.fromisoformat(stamped[version])) == []
 
 
+def test_check_passes_undated_on_this_repo_after_its_cut_day() -> None:
+    """The workaround this classification retires, measured on the real tree:
+    the UNDATED --check (no injected ``today``) is green after the cut, because
+    the shipped version's section date is classified against the tracked
+    manifest instead of the calendar. Before, this same call was a MISMATCH
+    that could only be dismissed by re-running with the cut day pinned."""
+    version = release.read_version(REPO_ROOT)
+    assert version, "the real repo must carry a __version__"
+
+    verdict = release.check_report(REPO_ROOT)
+
+    assert verdict.problems == [], verdict.problems
+
+
 def test_check_flags_banner_drift(tmp_path: Path) -> None:
     repo = _write_fake_repo(tmp_path, readme_version="8.8.8")
     problems = release.check(repo)
@@ -152,7 +183,8 @@ def test_check_flags_missing_changelog_section(tmp_path: Path) -> None:
 
 
 def test_check_flags_stale_changelog_date(tmp_path: Path) -> None:
-    """The section exists but is not dated the release day."""
+    """The section exists but is not dated the release day, and the version has
+    never shipped — so this is the pre-cut mistake, not the post-cut state."""
     yesterday = date.today().toordinal() - 1
     yesterday_iso = date.fromordinal(yesterday).isoformat()
     repo = _write_fake_repo(tmp_path, changelog_date=yesterday_iso)
@@ -160,6 +192,107 @@ def test_check_flags_stale_changelog_date(tmp_path: Path) -> None:
     assert len(problems) == 1
     assert yesterday_iso in problems[0]
     assert date.today().isoformat() in problems[0]
+
+
+def test_check_reports_the_post_cut_date_as_by_design_not_drift(tmp_path: Path) -> None:
+    """The day-after state: the release already ran, so its section keeps the day
+    it ran. That is the release-day rule firing on a correct tree, and it must
+    not read as drift — otherwise every post-cut verification needs the date
+    pinned by hand to come back green."""
+    yesterday = date.fromordinal(date.today().toordinal() - 1).isoformat()
+    repo = _write_fake_repo(tmp_path, changelog_date=yesterday, shipped=True)
+
+    verdict = release.check_report(repo)
+
+    assert verdict.problems == []
+    assert verdict.ok is True
+    assert len(verdict.post_cut) == 1
+    note = verdict.post_cut[0]
+    assert "CHANGELOG.md" in note
+    assert yesterday in note and date.today().isoformat() in note
+    assert "release_checksums/checksums-9.9.9.sha256" in note
+    # The drift-only view is empty too: there is nothing here to fix.
+    assert release.check(repo) == []
+
+
+def test_a_past_date_without_a_shipped_manifest_stays_drift(tmp_path: Path) -> None:
+    """The discriminator from the other side: the identical date on a version
+    that never shipped is the pre-cut mistake the rule exists for (notes
+    stamped with a stale day, or a heading copied from the last release), and
+    it stays a problem rather than becoming a note."""
+    yesterday = date.fromordinal(date.today().toordinal() - 1).isoformat()
+    repo = _write_fake_repo(tmp_path, changelog_date=yesterday, shipped=False)
+
+    verdict = release.check_report(repo)
+
+    assert verdict.post_cut == []
+    assert len(verdict.problems) == 1
+    assert "must be dated the day the release runs" in verdict.problems[0]
+
+
+def test_a_future_date_is_drift_even_when_the_version_shipped(tmp_path: Path) -> None:
+    """The manifest excuses a past date, never a future one: a heading dated
+    ahead of its own release is wrong whichever release it belongs to."""
+    tomorrow = date.fromordinal(date.today().toordinal() + 1).isoformat()
+    repo = _write_fake_repo(tmp_path, changelog_date=tomorrow, shipped=True)
+
+    verdict = release.check_report(repo)
+
+    assert verdict.post_cut == []
+    assert len(verdict.problems) == 1
+    assert tomorrow in verdict.problems[0]
+
+
+def test_the_exemption_is_per_version_not_per_repository(tmp_path: Path) -> None:
+    """A shipped *previous* version's manifest cannot excuse the current
+    version's stale date: the exemption is keyed to the version under check, so
+    a bump retires it and the next cut cannot inherit last cut's reasoning."""
+    yesterday = date.fromordinal(date.today().toordinal() - 1).isoformat()
+    repo = _write_fake_repo(tmp_path, changelog_date=yesterday, shipped=False)
+    older = repo / release.RELEASE_CHECKSUMS_DIR / "checksums-9.9.8.sha256"
+    older.parent.mkdir(parents=True, exist_ok=True)
+    older.write_text(f"{'0' * 64}  the_oracle-9.9.8-py3-none-any.whl\n", encoding="utf-8")
+
+    verdict = release.check_report(repo)
+
+    assert verdict.post_cut == []
+    assert len(verdict.problems) == 1
+    assert "9.9.9" in verdict.problems[0]
+
+
+def test_main_check_exits_zero_with_the_post_cut_note_on_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CLI verdict a script reads: exit 0, the success line on stdout, and
+    the reason the date looks stale on stderr as a note rather than a MISMATCH."""
+    yesterday = date.fromordinal(date.today().toordinal() - 1).isoformat()
+    repo = _write_fake_repo(tmp_path, changelog_date=yesterday, shipped=True)
+
+    status = release.main(["--check", "--repo-root", str(repo)])
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert "single-source version invariant holds" in captured.out
+    assert "POST-CUT:" in captured.err
+    assert "MISMATCH" not in captured.err
+
+
+def test_main_check_still_exits_one_on_real_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The distinction must not soften drift: a banner that disagrees is still
+    a MISMATCH and still exit 1, note or no note."""
+    yesterday = date.fromordinal(date.today().toordinal() - 1).isoformat()
+    repo = _write_fake_repo(
+        tmp_path, changelog_date=yesterday, shipped=True, readme_version="8.8.8"
+    )
+
+    status = release.main(["--check", "--repo-root", str(repo)])
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert "MISMATCH:" in captured.err
+    assert "README.md" in captured.err
 
 
 def test_check_flags_duplicate_changelog_sections(tmp_path: Path) -> None:
@@ -397,7 +530,7 @@ def test_main_sync_changelog_stamps_and_then_check_passes(tmp_path: Path, monkey
     main stamps with the real calendar)."""
     repo = _write_fake_repo(tmp_path, changelog_date="2026-01-01")
     reports: list[list[str]] = []
-    monkeypatch.setattr(release, "_report", lambda problems: reports.append(problems) or 0)
+    monkeypatch.setattr(release, "_report", lambda report: reports.append(report.problems) or 0)
 
     status = release.main(["--sync-changelog", "--repo-root", str(repo)])
 
