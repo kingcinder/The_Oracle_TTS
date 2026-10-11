@@ -1,13 +1,35 @@
-"""The cast-management cluster (2026-10-05, slice 9).
+"""The cast-management cluster (2026-10-05, slice 9) and the main window's
+cast bar (extraction slice 13, 2026-10-10).
 
-:class:`SpeakerGroup` — one speaker's full voice panel (reference picker,
-hybrid second voice, dominance weight, combine mode, and the perceptual
-sliders) — and :class:`CastManagementDialog`, the modal window that edits the
-whole cast as a snapshot handed back on close, plus their shared helpers
-(``_speaker_settings_from_group``, ``_apply_speaker_settings_to_group``,
-``_CastRow``). Extracted from ``app_gui`` in the extraction campaign; the main
-window re-imports the names so its construction sites and existing imports
-resolve to identical objects.
+Slice 9: :class:`SpeakerGroup` — one speaker's full voice panel (reference
+picker, hybrid second voice, dominance weight, combine mode, and the
+perceptual sliders) — and :class:`CastManagementDialog`, the modal window
+that edits the whole cast as a snapshot handed back on close, plus their
+shared helpers (``_speaker_settings_from_group``,
+``_apply_speaker_settings_to_group``, ``_CastRow``). The main window
+re-imports the split-readership names so its construction sites and existing
+imports resolve to identical objects.
+
+Slice 13: the ten ``MainWindow`` cast-bar methods' bodies moved here
+verbatim as module-level functions — ``cast_keys``, ``speaker_names``,
+``_all_speaker_groups``, ``apply_cast``, ``_update_speaker_group_title``,
+``_refresh_cast_bar``, ``open_cast_manager``, ``_sync_extra_speaker_groups``,
+``_speaker_settings``, ``_speaker_config_from_payload`` — with the main
+window crossing the seam as the ``main_window`` parameter (the
+``gui_ingest_tools`` direction rule). ``app_gui`` keeps each method as a
+thin delegate whose body imports the owner function FUNCTION-LOCALLY (the
+settled entry-point delegate convention), so app_gui holds no module-level
+binding for any of them and this module is the single patch point.
+
+Four names cross the moved bodies as INJECTIONS at the delegate boundary,
+resolved from app_gui's globals at call time, because a staying app_gui site
+still reads each one (``_build_ui`` builds panels A/B; ``_widget_snapshot``;
+``_restore_speaker_section``; ``_load_project_into_ui`` and
+``prepare_project``): ``speaker_group_cls`` into ``_sync_extra_speaker_groups``,
+``settings_from_group_fn`` into ``_speaker_settings``, and
+``apply_settings_fn`` + ``normalize_keys_fn`` into ``apply_cast`` (the
+``find_audiocpp_binary`` seam). A module-global read here would turn every
+app_gui-level rebind of those names into a silent no-op for the moved path.
 
 Dependency direction: this module never imports ``app_gui`` — the main
 window's collaborators cross the seam as values (the ``main_window``
@@ -35,7 +57,8 @@ from PySide6.QtWidgets import (
 )
 
 from the_oracle.gui_sections import QHSectionGroup
-from the_oracle.gui_settings import load_recent_reference_paths
+from the_oracle.gui_settings import load_recent_reference_paths, speaker_config_from_payload
+from the_oracle.gui_themes import bulk_restyle
 from the_oracle.gui_utils import MAX_CAST_SPEAKERS, CastModel, next_speaker_key
 from the_oracle.gui_widgets import PerceptualSlider
 from the_oracle.models.project import VoiceSettings
@@ -53,10 +76,40 @@ class SpeakerGroup(QHSectionGroup):
         speaker: str,
         custom_reference_dir: Path,
         on_save_blend: Callable[["SpeakerGroup"], None] | None = None,
+        *,
+        lazy: bool = False,
     ) -> None:
         super().__init__(f"Speaker {speaker}")
         self.custom_reference_dir = custom_reference_dir
         self.on_save_blend = on_save_blend
+        self._available_reference_paths: set[str] = set()
+        if lazy:
+            # Restored-collapsed speaker sections register the whole panel as
+            # their content factory (the group IS the section here): no
+            # widget exists until the first expand or the first read of a
+            # panel attribute (__getattr__ below ensures). The cast dialog's
+            # panels stay eager — they are configured the moment they appear.
+            self.set_content_factory(self._build_panel)
+        else:
+            self._build_panel()
+
+    def __getattr__(self, name: str):
+        """Ensure-on-access for a lazily deferred panel.
+
+        A missing public attribute on a SpeakerGroup is a panel widget, so
+        build the panel once and re-read it. Underscore internals and names
+        that are still missing after the build keep the normal AttributeError
+        semantics — typos stay loud, nothing is masked.
+        """
+        if name.startswith("_") or "_content_factory" not in self.__dict__:
+            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+        self.ensure_content()
+        return object.__getattribute__(self, name)
+
+    def _build_panel(self) -> None:
+        """Construct the full voice panel (reference/blend pickers, language,
+        perceptual sliders). Runs eagerly at construction unless the group
+        was created with ``lazy=True``."""
         self.reference_path = QLineEdit()
         self.reference_picker = QComboBox()
         # activated alone (not currentIndexChanged): a user pick fires BOTH
@@ -64,7 +117,7 @@ class SpeakerGroup(QHSectionGroup):
         # stacked modal file dialogs. activated also covers the
         # already-current custom option that currentIndexChanged would miss.
         self.reference_picker.activated.connect(self._handle_reference_selection)
-        self._available_reference_paths: set[str] = set()
+        self._available_reference_paths = set()
 
         # Voice blending: optionally derive this speaker's conditioning
         # reference from TWO clips (base + blend target), with a preference
@@ -223,7 +276,11 @@ class SpeakerGroup(QHSectionGroup):
 
         def _section_divider(text: str) -> QLabel:
             label = QLabel(text)
-            label.setStyleSheet("font-weight: 700; letter-spacing: 1px; padding-top: 8px; color: palette(mid);")
+            # Gated like every widget-level restyle (gui_sections' toggle):
+            # measured 1 change event / ~0.06 ms per call, so this is the
+            # invariant — no app-wide filter re-entered — not a speedup.
+            with bulk_restyle():
+                label.setStyleSheet("font-weight: 700; letter-spacing: 1px; padding-top: 8px; color: palette(mid);")
             return label
 
         form.addRow("Voice Reference", self.reference_picker)
@@ -451,7 +508,8 @@ class _CastRow:
         layout.setContentsMargins(0, 0, 0, 0)
         header = QHBoxLayout()
         self.key_label = QLabel(f"Speaker {key}")
-        self.key_label.setStyleSheet("font-weight: 700;")
+        with bulk_restyle():
+            self.key_label.setStyleSheet("font-weight: 700;")
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Character name (optional)")
         self.name_edit.setToolTip(
@@ -685,3 +743,154 @@ class CastManagementDialog(QDialog):
             self._main.apply_cast(keys, names, settings)
         finally:
             super().closeEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# The main window's cast bar (extraction slice 13, 2026-10-10)
+# ---------------------------------------------------------------------------
+
+
+def cast_keys(main_window) -> list[str]:
+    """Ordered speaker keys of the current cast (["A", "B"] by default)."""
+    return list(main_window._cast)
+
+
+def speaker_names(main_window) -> dict[str, str]:
+    """Optional character names per speaker key."""
+    return dict(main_window._speaker_names)
+
+
+def _all_speaker_groups(main_window) -> dict[str, SpeakerGroup]:
+    """Every speaker group in the current cast, in cast order."""
+    groups = {"A": main_window.speaker_a, "B": main_window.speaker_b, **main_window.extra_speaker_groups}
+    return {key: groups[key] for key in main_window._cast if key in groups}
+
+
+def apply_cast(
+    main_window,
+    keys: list[str],
+    names: dict[str, str] | None,
+    settings: dict[str, SpeakerSettings] | None,
+    *,
+    only_built: bool = False,
+    apply_settings_fn: Callable[..., None],
+    normalize_keys_fn: Callable[..., list[str]],
+) -> None:
+    """Replace the speaker cast and rebuild the panels to match.
+
+    Called by the cast-management dialog and by settings/profile load, so
+    a cast of any size always leaves exactly the right panels behind (no
+    stale speaker panels contaminating later renders).
+
+    ``only_built`` is the lazy-startup mode: panel settings for a
+    deferred (unbuilt) speaker group are skipped — its restore hook
+    replays the same saved state when the panel builds — so restoring a
+    workspace never forces a collapsed speaker section alive.
+    """
+    cast = normalize_keys_fn(keys)
+    main_window._cast = cast
+    names = names if isinstance(names, dict) else {}
+    main_window._speaker_names = {key: str(names.get(key, "") or "").strip() for key in cast}
+    settings = settings if isinstance(settings, dict) else {}
+    main_window._sync_extra_speaker_groups([key for key in cast if key not in ("A", "B")])
+    # Speakers beyond A/B are configured in the cast dialog; the main
+    # window keeps their widgets alive (the render path reads them) but
+    # does not show them inline.
+    main_window.extra_voices_section.hide()
+    groups = {"A": main_window.speaker_a, "B": main_window.speaker_b, **main_window.extra_speaker_groups}
+    for key in cast:
+        group = groups.get(key)
+        if group is None:
+            continue
+        panel_settings = settings.get(key)
+        if panel_settings is not None and not (only_built and not group.is_content_built()):
+            apply_settings_fn(group, panel_settings)
+        main_window._update_speaker_group_title(key, group)
+    # Monologue layout: with a single speaker only the narrator's panel
+    # shows; a cast of one is monologue, more than one is dialogue.
+    main_window.speaker_b.setVisible(len(cast) > 1)
+    if not (only_built and not main_window._section_content_built("shared")):
+        main_window.monologue_check.setChecked(len(cast) == 1)
+    main_window._refresh_cast_bar()
+    main_window._refresh_reference_pickers()
+    main_window._refresh_language_options()
+
+
+def _update_speaker_group_title(main_window, key: str, group: SpeakerGroup) -> None:
+    name = (main_window._speaker_names.get(key) or "").strip()
+    group.setTitle(f"Speaker {key} — {name}" if name else f"Speaker {key}")
+
+
+def _refresh_cast_bar(main_window) -> None:
+    # The cast bar's widgets live in the paths section; a deferred one
+    # re-runs this from its restore hook.
+    if not main_window._section_content_built("paths"):
+        return
+    parts = []
+    for key in main_window._cast:
+        name = (main_window._speaker_names.get(key) or "").strip()
+        parts.append(f"{key} ({name})" if name else key)
+    count = len(main_window._cast)
+    noun = "speaker" if count == 1 else "speakers"
+    text = f"{', '.join(parts)} — {count} {noun}"
+    if count == 1 and main_window._monologue_enabled():
+        text += " (monologue)"
+    main_window.cast_summary_label.setText(text)
+
+
+def open_cast_manager(main_window) -> None:
+    """Open the cast-management dialog (modal).
+
+    Tracked per-instance like the recording-studio dialogs so a second
+    open can never orphan the first one's completion handling.
+    """
+    for dialog in list(main_window._cast_dialogs):
+        dialog.raise_()
+        dialog.activateWindow()
+        return
+    dialog = CastManagementDialog(main_window)
+    main_window._cast_dialogs.add(dialog)
+    dialog.finished.connect(lambda _result, dlg=dialog: main_window._cast_dialogs.discard(dlg))
+    try:
+        dialog.exec()
+    finally:
+        main_window._cast_dialogs.discard(dialog)
+
+
+def _sync_extra_speaker_groups(
+    main_window, speakers: list[str], *, speaker_group_cls: type
+) -> None:
+    """Create/refresh SpeakerGroup widgets for characters beyond A and B
+    (up to the engine's voice capacity) so an audiobook cast gets one
+    voice panel each. Panels beyond A/B are configured in the cast dialog;
+    this only keeps the widgets in sync, it never shows them inline."""
+    extras = sorted(speaker for speaker in speakers if speaker not in ("A", "B"))
+    for key in extras:
+        if key not in main_window.extra_speaker_groups:
+            group = speaker_group_cls(key, main_window.paths.voice_dir, on_save_blend=main_window._save_blend_as_voice)
+            main_window.extra_speaker_groups[key] = group
+            main_window.extra_speaker_layout.addWidget(group)
+            main_window._update_speaker_group_title(key, group)
+    stale = [key for key in main_window.extra_speaker_groups if key not in extras]
+    for key in stale:
+        group = main_window.extra_speaker_groups.pop(key)
+        main_window.extra_speaker_layout.removeWidget(group)
+        group.deleteLater()
+    main_window._refresh_reference_pickers()
+    main_window._refresh_language_options()
+
+
+def _speaker_settings(
+    main_window, *, settings_from_group_fn: Callable[..., SpeakerSettings]
+) -> dict[str, SpeakerSettings]:
+    variant = main_window.variant_combo.currentText()
+    crossfade_ms = main_window.crossfade_spin.value()
+    return {
+        key: settings_from_group_fn(group, variant, crossfade_ms)
+        for key, group in main_window._all_speaker_groups().items()
+    }
+
+
+def _speaker_config_from_payload(key: str, data: dict) -> SpeakerSettings:
+    """Decode via the policy owner, then construct the engine dataclass."""
+    return SpeakerSettings(**speaker_config_from_payload(data))

@@ -31,12 +31,42 @@ class LivePanel(QWidget):
     so the user always sees the last backend/render state without a modal.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, lazy: bool = False) -> None:
         super().__init__(parent)
         # Resizable, not fixed: the Live column is now one arm of the main
         # splitter, so users can widen it (or collapse it via its section
         # header) without losing the rest of the layout.
         self.setMinimumWidth(240)
+        self._retry_count = 0
+        self._content_is_built = not lazy
+        if not lazy:
+            self._build_panel()
+
+    def is_content_built(self) -> bool:
+        """True once the progress labels exist (immediately, unless the panel
+        was created with ``lazy=True`` for a restored-collapsed Live
+        section)."""
+        return self._content_is_built
+
+    def ensure_content(self) -> None:
+        """Build the deferred progress labels once; later calls are no-ops."""
+        if self._content_is_built:
+            return
+        self._content_is_built = True
+        self._build_panel()
+
+    def __getattr__(self, name: str):
+        """Ensure-on-access for a lazily deferred panel: a missing public
+        attribute is one of the progress labels, so build once and re-read.
+        Underscore internals and post-build misses stay plain AttributeErrors.
+        """
+        if name.startswith("_") or "_content_is_built" not in self.__dict__:
+            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+        self.ensure_content()
+        return object.__getattribute__(self, name)
+
+    def _build_panel(self) -> None:
+        """Construct the sidebar's labels and progress bar."""
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
@@ -53,8 +83,8 @@ class LivePanel(QWidget):
         # the preview that follows in the same session) and deliberately
         # survives set_idle — a self-heal is part of the session's record,
         # not a transient frame. reset_retry_tally clears it when the next
-        # render or preview starts.
-        self._retry_count = 0
+        # render or preview starts. (The counter itself is initialized in
+        # __init__ so it survives a deferred panel.)
         self.retry_label = QLabel("")
         self.retry_label.setWordWrap(True)
         self.stage_label = QLabel("")

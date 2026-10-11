@@ -232,7 +232,20 @@ def _minimal_plan(paths: OraclePaths | None) -> RenderPlan:
     )
 
 
-def _build_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def _build_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    preseed_app_settings: dict | None = None,
+):
+    """Build the real MainWindow with heavyweight collaborators faked and the
+    user config isolated into ``tmp_path``.
+
+    ``preseed_app_settings`` writes an app-settings file into that isolated
+    config BEFORE the window is constructed — the relaunch scenarios (a
+    previous session's saved workspace) that the lazy-section work pins need
+    exactly that: settings on disk, then a fresh window reading them.
+    """
     import the_oracle.app_gui as app_gui
 
     paths = ensure_repo_default_paths(tmp_path / "repo")
@@ -258,6 +271,10 @@ def _build_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # Isolate the app-level settings file (remembered backend + audio.cpp
     # paths) so tests never read or write the developer's real config.
     isolate_user_config(monkeypatch, tmp_path / "config")
+    if preseed_app_settings is not None:
+        from the_oracle.gui_settings import save_app_settings
+
+        save_app_settings(preseed_app_settings)
     window = app_gui.MainWindow()
     # The startup crash flow (consent ask / next-session review) is modal and
     # machine-state-dependent — it reads the real crash root, where reports

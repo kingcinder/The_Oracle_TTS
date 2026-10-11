@@ -17,7 +17,7 @@ any test patches a name through the ``app_gui`` module object that the moved
 owner modules now define for themselves. ``app_gui`` re-exports those names,
 so patching them *there* is a silent no-op for the owner's code.
 
-Three rules, all born from real slices:
+Four rules, all born from real slices:
 
 1. MOVED_OWNERS — a name one owner module defines for itself and nothing in
    ``app_gui`` reads anymore. ANY app_gui-level patch of it is a silent
@@ -30,6 +30,15 @@ Three rules, all born from real slices:
 3. PARTIAL_OWNED — a name with construction/read sites in two modules after
    the gui_chrome slice: an app_gui-level patch is not a no-op but is
    PARTIAL, covering app_gui's sites and silently missing the owner's.
+4. LATENT SPLIT — a name read in a runtime position by BOTH a staying
+   app_gui function body and a gui_* module, with no test patching it yet.
+   The day a test (or a fix) first rebinds it at app_gui level, the owner's
+   half of the flow silently misses the rebind. Every such pair must be
+   adjudicated in ``patch_couple_policy.latent_split_readership`` with a
+   reason, so the split is a recorded decision rather than a surprise
+   awaiting its first patch. The latent set is the non-census remainder by
+   construction — a name the suite already rebinds is the seam net's
+   business — so no pair is adjudicated twice.
 
 An offender must be fixed by repointing the patch at the owner module (or by
 un-moving the name). Adding names to the maps as slices land keeps the net
@@ -631,8 +640,9 @@ def test_a_malformed_manifest_fails_loudly(tmp_path: Path) -> None:
 
     The dangerous shape is the quiet one: an empty or restructured section
     that loads fine and simply stops matching, leaving every offender
-    untested while the suite stays green. Both loaders — ``moved_owners``
-    and ``payload_policy`` — are proven here.
+    untested while the suite stays green. All four loaders —
+    ``moved_owners``, ``payload_policy``, ``writer_manifest`` and
+    ``patch_couple_policy`` — are proven here.
     """
     bad = tmp_path / "patch_surface_manifest.json"
 
@@ -733,6 +743,64 @@ def test_a_malformed_manifest_fails_loudly(tmp_path: Path) -> None:
     with pytest.raises(AssertionError, match="owners must be bare source file names"):
         load_writer_manifest(bad)
 
+    # The patch-couple policy (seam census + latent adjudications) gets the
+    # same rule; each case breaks exactly one field of a complete valid
+    # section, so the reported error is the one the case means to prove.
+    def couple_json(**overrides: object) -> str:
+        couple: dict[str, object] = {
+            "census_noise_names": ["name"],
+            "census_anchor_names": ["QMessageBox"],
+            "min_census_names": 1,
+            "min_modules_scanned": 1,
+            "min_bare_pairs": 1,
+            "sanctioned_exemptions": {"gui_render.py": {"OraclePipeline": "why"}},
+            "latent_split_readership": {"gui_themes.py": {"THEMES": "why"}},
+            "latent_anchor_names": ["THEMES"],
+            "min_latent_pairs": 1,
+        }
+        couple.update(overrides)
+        return json.dumps(
+            {
+                "moved_owners": {"the_oracle.gui_render": {"names": ["x"]}},
+                "patch_couple_policy": couple,
+            }
+        )
+
+    bad.write_text(couple_json(latent_split_readership={}), encoding="utf-8")
+    with pytest.raises(AssertionError, match="latent_split_readership must be a non-empty object"):
+        load_patch_couple_policy(bad)
+
+    bad.write_text(
+        couple_json(latent_split_readership={"gui_themes.py": {"THEMES": "   "}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        AssertionError,
+        match=r"latent_split_readership gui_themes\.py\.THEMES needs a reason",
+    ):
+        load_patch_couple_policy(bad)
+
+    bad.write_text(
+        couple_json(latent_split_readership={"app_gui.py": {"THEMES": "why"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        AssertionError,
+        match=r"latent_split_readership module 'app_gui\.py' must be a gui_\*\.py module",
+    ):
+        load_patch_couple_policy(bad)
+
+    bad.write_text(couple_json(latent_anchor_names=[]), encoding="utf-8")
+    with pytest.raises(AssertionError, match="latent_anchor_names must not be empty"):
+        load_patch_couple_policy(bad)
+
+    bad.write_text(couple_json(min_latent_pairs=0), encoding="utf-8")
+    with pytest.raises(
+        AssertionError,
+        match=r"patch_couple_policy\.min_latent_pairs must be a positive integer",
+    ):
+        load_patch_couple_policy(bad)
+
 
 def test_moved_owner_names_are_current() -> None:
     """The manifest's moved-owner entries must match what the owners define.
@@ -775,7 +843,9 @@ def load_patch_couple_policy(manifest_path: Path = MANIFEST_PATH) -> dict[str, o
     The seam net's rule data lives in the ownership record beside the other
     rule sets (the writer-manifest consolidation precedent). Shapes: census
     noise names, anchor names that must stay in the census, blindness floors,
-    and the sanctioned per-module exemption map with a reason on every entry.
+    the sanctioned per-module exemption map with a reason on every entry, and
+    the latent split-readership adjudications (the same name-map shape) with
+    their anchors and blindness floor.
     """
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -812,29 +882,52 @@ def load_patch_couple_policy(manifest_path: Path = MANIFEST_PATH) -> dict[str, o
     positive_int("min_modules_scanned")
     positive_int("min_bare_pairs")
 
-    exemptions = policy.get("sanctioned_exemptions")
-    if not isinstance(exemptions, dict) or not exemptions:
+    def exemption_map(field: str) -> None:
+        """Validate a ``{gui_*.py: {name: reason}}`` adjudication map.
+
+        Both the census seam exemptions and the latent split-readership
+        adjudications take this shape: every module's map non-empty, every
+        name an identifier, every entry carrying a reason.
+        """
+        exemptions = policy.get(field)
+        if not isinstance(exemptions, dict) or not exemptions:
+            raise AssertionError(
+                f"{manifest_path.name}: {field} must be a non-empty object"
+            )
+        for module, names in exemptions.items():
+            if not (module.startswith("gui_") and module.endswith(".py")):
+                raise AssertionError(
+                    f"{manifest_path.name}: {field} module {module!r} must be a gui_*.py module"
+                )
+            if not isinstance(names, dict) or not names:
+                raise AssertionError(
+                    f"{manifest_path.name}: {field} entries for {module} must be a non-empty name map"
+                )
+            for name, reason in names.items():
+                if not isinstance(name, str) or not name.isidentifier():
+                    raise AssertionError(
+                        f"{manifest_path.name}: {field} name {name!r} is not an identifier"
+                    )
+                if not isinstance(reason, str) or not reason.strip():
+                    raise AssertionError(
+                        f"{manifest_path.name}: {field} {module}.{name} needs a reason"
+                    )
+
+    exemption_map("sanctioned_exemptions")
+    exemption_map("latent_split_readership")
+
+    anchors = string_list("latent_anchor_names")
+    if not anchors:
         raise AssertionError(
-            f"{manifest_path.name}: sanctioned_exemptions must be a non-empty object"
+            f"{manifest_path.name}: latent_anchor_names must not be empty"
         )
-    for module, names in exemptions.items():
-        if not (module.startswith("gui_") and module.endswith(".py")):
+    for anchor in anchors:
+        if not anchor.isidentifier():
             raise AssertionError(
-                f"{manifest_path.name}: exemption module {module!r} must be a gui_*.py module"
+                f"{manifest_path.name}: latent anchor {anchor!r} is not an identifier"
             )
-        if not isinstance(names, dict) or not names:
-            raise AssertionError(
-                f"{manifest_path.name}: exemptions for {module} must be a non-empty name map"
-            )
-        for name, reason in names.items():
-            if not isinstance(name, str) or not name.isidentifier():
-                raise AssertionError(
-                    f"{manifest_path.name}: exemption name {name!r} is not an identifier"
-                )
-            if not isinstance(reason, str) or not reason.strip():
-                raise AssertionError(
-                    f"{manifest_path.name}: exemption {module}.{name} needs a reason"
-                )
+
+    positive_int("min_latent_pairs")
     return policy
 
 
@@ -981,3 +1074,226 @@ def test_moved_gui_modules_resolve_every_patch_coupled_name_by_the_seam_rule():
             "from the record"
         )
     assert not problems, "\n\n".join(problems)
+
+
+# ---------------------------------------------------------------------------
+# Latent split readership: names both sides read, before their first patch
+# ---------------------------------------------------------------------------
+
+
+class _RuntimeReads(ast.NodeVisitor):
+    """Name loads in runtime positions — annotations are not reads.
+
+    A name used solely as an annotation has no runtime effect, so an
+    app_gui-level rebind of it cannot silently miss a flow; counting
+    annotations would flood the latent net with typing-only names and force
+    reasons onto pairs that carry no hazard.
+    """
+
+    def __init__(self) -> None:
+        self.loads: set[str] = set()
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load):
+            self.loads.add(node.id)
+
+    def visit_arg(self, node: ast.arg) -> None:
+        """An argument's annotation is not a runtime read."""
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.visit(node.target)
+        if node.value is not None:
+            self.visit(node.value)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self.visit(node.args)  # defaults count; annotations skip via visit_arg
+        for child in node.body:
+            self.visit(child)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+
+def _runtime_reads(tree: ast.AST) -> set[str]:
+    """Names a tree loads in a runtime position (annotation-only reads skipped)."""
+    visitor = _RuntimeReads()
+    visitor.visit(tree)
+    return visitor.loads
+
+
+def _app_gui_patchable_reads(source: str) -> frozenset[str]:
+    """Names an app_gui-level rebind can actually reach in a staying function.
+
+    The intersection of (a) names bound at app_gui module level — so
+    ``setattr(app_gui, name, fake)`` is possible at all — and (b) names read
+    in runtime position inside some function body: a MainWindow method or a
+    module-level function. Module-level reads are excluded on purpose: they
+    ran at import, before any app_gui-level rebind could land, so rebinding
+    them cannot miss a later flow. Builtins need no filter, they are never
+    module-level bindings. Function-local shadowing of a module binding
+    would false-positive here; if that ever fires, rename the local or
+    adjudicate the pair in the record (the bare-use scanner's stance).
+    """
+    tree = ast.parse(source)
+    bound: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            bound.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            bound.update(
+                alias.asname or alias.name for alias in node.names if alias.name != "*"
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                bound.update(n.id for n in ast.walk(target) if isinstance(n, ast.Name))
+    reads: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            reads |= _runtime_reads(node)
+    return frozenset(bound & reads)
+
+
+def _latent_split_names(
+    gui_source: str,
+    app_gui_side: frozenset[str],
+    excluded: frozenset[str],
+) -> set[str]:
+    """Names a gui_* module reads in runtime position that both sides share.
+
+    ``excluded`` carries the already-adjudicated names: the suite's rebind
+    census (the seam net's business) and its noise list, so the two nets
+    partition the space and no name is adjudicated twice.
+    """
+    return (_runtime_reads(ast.parse(gui_source)) & app_gui_side) - excluded
+
+
+def test_latent_split_readership_pairs_are_adjudicated() -> None:
+    """The latent net: names read on both sides, before their first patch.
+
+    The census net sees only what the suite rebinds today. A name read by a
+    staying app_gui function body AND by a gui_* module is a split waiting
+    for its first app_gui-level rebind — and if that first rebind is a fix
+    under time pressure, the silently-missed half IS the bug. Every pair
+    must be adjudicated in ``patch_couple_policy.latent_split_readership``
+    with a reason, and the raw set must equal the sanctioned set EXACTLY: a
+    pair whose split disappears (an injection landed, an owner moved, a
+    call site left) must prune its reason rather than rot.
+    """
+    root = Path(__file__).resolve().parents[1]
+    policy = load_patch_couple_policy()
+    census = _app_gui_rebind_census(root / "tests") - set(policy["census_noise_names"])
+    app_gui_side = _app_gui_patchable_reads(
+        (root / "src" / "the_oracle" / "app_gui.py").read_text(encoding="utf-8")
+    )
+
+    modules = sorted((root / "src" / "the_oracle").glob("gui_*.py"))
+    assert len(modules) >= policy["min_modules_scanned"], (
+        f"only {len(modules)} gui_* modules found (floor {policy['min_modules_scanned']})"
+    )
+    excluded = census | frozenset(policy["census_noise_names"])
+    raw: set[tuple[str, str]] = {
+        (path.name, name)
+        for path in modules
+        for name in _latent_split_names(
+            path.read_text(encoding="utf-8"), app_gui_side, excluded
+        )
+    }
+    assert len(raw) >= policy["min_latent_pairs"], (
+        f"the latent scan went blind: {len(raw)} pairs found (floor "
+        f"{policy['min_latent_pairs']}); fix the scanner, not this assertion"
+    )
+    seen_names = {name for _module, name in raw}
+    for anchor in policy["latent_anchor_names"]:
+        assert anchor in seen_names, (
+            f"the latent scan lost {anchor} — the split disappeared or the "
+            "scanner broke; adjudicate before removing the anchor"
+        )
+
+    adjudications = policy["latent_split_readership"]
+    assert isinstance(adjudications, dict)
+    sanctioned = {
+        (module, name) for module, names in adjudications.items() for name in names
+    }
+    problems = []
+    for module, name in sorted(raw - sanctioned):
+        problems.append(
+            f"{module} reads {name!r} that a staying app_gui function body "
+            "also reads — the day a rebind lands at app_gui level it covers "
+            "only app_gui's half of the flow; inject the name at the call "
+            "boundary, repoint callers at the owner, or adjudicate the pair "
+            "in patch_couple_policy.latent_split_readership with a reason"
+        )
+    for module, name in sorted(sanctioned - raw):
+        problems.append(
+            f"stale latent adjudication {module}.{name}: no split read "
+            "remains — prune it from the record"
+        )
+    assert not problems, "\n\n".join(problems)
+
+
+def test_latent_scan_flags_real_splits_and_skips_non_runtime_reads() -> None:
+    """Form proofs for the latent scanner, on synthetic sources.
+
+    The net above is only as sound as these cases, each one a distinct harm
+    class: a real split is flagged; an annotation-only read is not (no
+    runtime effect, no missed flow); a function-local binding is not
+    (``setattr(app_gui, ...)`` cannot reach it); a name read only at module
+    level is not (the read ran at import, before any rebind could land);
+    and the exclusion passthrough honors the census.
+    """
+    app_gui_source = dedent(
+        """\
+        from PySide6.QtWidgets import QLabel
+
+        THEMES = {"oracle_light": ("body", "accent")}
+        DECORATION = QLabel
+
+        def helper():
+            import json
+
+            return json.dumps([])
+
+
+        class Window:
+            def build(self):
+                return QLabel, THEMES
+        """
+    )
+    side = _app_gui_patchable_reads(app_gui_source)
+    # QLabel and THEMES are module bindings read in function bodies; json is
+    # a function-local binding; DECORATION is only read at module level.
+    assert side == frozenset({"QLabel", "THEMES"}), sorted(side)
+
+    def latent(source: str, *, excluded: frozenset[str] = frozenset()) -> set[str]:
+        return _latent_split_names(dedent(source), side, excluded)
+
+    assert latent(
+        """\
+        from PySide6.QtWidgets import QLabel
+        from the_oracle.gui_themes import THEMES
+
+        widget = QLabel(THEMES)
+        """
+    ) == {"QLabel", "THEMES"}
+
+    assert latent(
+        '''\
+        from PySide6.QtWidgets import QLabel
+
+        def render(label: QLabel, themes: "THEMES") -> QLabel:
+            return label
+        '''
+    ) == set(), "annotation-only reads must not count as reads"
+
+    assert latent(
+        """\
+        from PySide6.QtWidgets import QLabel
+
+        widget = QLabel()
+        """,
+        excluded=frozenset({"QLabel"}),
+    ) == set(), "excluded names (the census) are the seam net's business"

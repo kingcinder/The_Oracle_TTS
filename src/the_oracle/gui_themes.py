@@ -308,11 +308,10 @@ def build_stylesheet(tokens: ThemeTokens) -> str:
 QMainWindow, QDialog {{
     background-color: {tokens.bg};
 }}
-QWidget {{
-    color: {tokens.text};
-    background-color: transparent;
-}}
-QLabel {{
+/* QWidget carries the base text/transparent pair; QLabel — which every one
+   of these rules also matches as a QWidget — repeated it verbatim. Merged
+   in the 2026-10-10 selector diet (see RULE_BUDGET in the tests). */
+QWidget, QLabel {{
     color: {tokens.text};
     background-color: transparent;
 }}
@@ -324,7 +323,7 @@ QWidget[wizardFocus="true"] {{
     border-radius: {tokens.radius}px;
     background-color: {tokens.panel_alt};
 }}
-QLabel#wizardHardwareSummary, QLabel#wizardProgress, QLabel#wizardHelpNote {{
+QLabel#wizardHardwareSummary, QLabel#wizardProgress, QLabel#wizardHelpNote, QLabel#recordingWizardSummary, QLabel#recordingWizardProgress, QLabel#recordingWizardNote {{
     color: {tokens.text_muted};
 }}
 QPlainTextEdit#wizardExplanation, QPlainTextEdit#recordingWizardExplanation {{
@@ -332,10 +331,7 @@ QPlainTextEdit#wizardExplanation, QPlainTextEdit#recordingWizardExplanation {{
     color: {tokens.text};
     border: 1px solid {tokens.accent};
 }}
-QLabel#recordingWizardSummary, QLabel#recordingWizardProgress, QLabel#recordingWizardNote {{
-    color: {tokens.text_muted};
-}}
-QLabel:disabled {{
+QLabel:disabled, QCheckBox:disabled, QMenu::item:disabled {{
     color: {tokens.text_disabled};
 }}
 
@@ -374,7 +370,7 @@ QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QComboBox {{
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus {{
     border: 1px solid {tokens.accent};
 }}
-QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QComboBox:disabled {{
+QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled, QSpinBox:disabled, QComboBox:disabled, QPushButton:disabled {{
     color: {tokens.text_disabled};
     background-color: {tokens.bg};
 }}
@@ -407,13 +403,8 @@ QPushButton:hover {{
     border: 1px solid {tokens.accent};
     color: {tokens.accent};
 }}
-QPushButton:pressed {{
+QPushButton:pressed, QSplitter::handle {{
     background-color: {tokens.border};
-}}
-QPushButton:disabled {{
-    color: {tokens.text_disabled};
-    background-color: {tokens.bg};
-    border: 1px solid {tokens.border};
 }}
 QPushButton[accent="true"] {{
     background-color: {tokens.accent};
@@ -440,9 +431,6 @@ QPushButton[buttonRole="action"] {{
 QCheckBox {{
     color: {tokens.text};
     spacing: 6px;
-}}
-QCheckBox:disabled {{
-    color: {tokens.text_disabled};
 }}
 QCheckBox::indicator {{
     width: 15px;
@@ -531,7 +519,7 @@ QMenuBar::item {{
     background: transparent;
     padding: 5px 10px;
 }}
-QMenuBar::item:selected {{
+QMenuBar::item:selected, QMenu::item:selected {{
     background-color: {tokens.selection_bg};
     color: {tokens.selection_text};
 }}
@@ -544,13 +532,6 @@ QMenu {{
 QMenu::item {{
     padding: 5px 24px 5px 12px;
     border-radius: {max(2, tokens.radius - 2)}px;
-}}
-QMenu::item:selected {{
-    background-color: {tokens.selection_bg};
-    color: {tokens.selection_text};
-}}
-QMenu::item:disabled {{
-    color: {tokens.text_disabled};
 }}
 QMenu::separator {{
     height: 1px;
@@ -570,7 +551,7 @@ QScrollBar::handle:vertical {{
     min-height: 30px;
     margin: 2px;
 }}
-QScrollBar::handle:vertical:hover {{
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
     background-color: {tokens.accent};
 }}
 QScrollBar:horizontal {{
@@ -584,15 +565,9 @@ QScrollBar::handle:horizontal {{
     min-width: 30px;
     margin: 2px;
 }}
-QScrollBar::handle:horizontal:hover {{
-    background-color: {tokens.accent};
-}}
 QScrollBar::add-line, QScrollBar::sub-line {{
     width: 0;
     height: 0;
-}}
-QSplitter::handle {{
-    background-color: {tokens.border};
 }}
 QSplitter::handle:hover {{
     background-color: {tokens.accent};

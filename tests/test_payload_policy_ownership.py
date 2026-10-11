@@ -81,6 +81,22 @@ SCHEMA_EXEMPT_MODULES: frozenset[str] = _PAYLOAD_POLICY["schema_exempt_modules"]
 _MIN_WIDGETS = 9  # one per payload-relevant control in the window
 _MIN_SANCTIONED = 25  # the single reader + construction/apply/refresh cluster
 
+#: MainWindow methods whose assignments count as window assembly for the
+#: liveness scan below. The deferred-sections slice (2026-10-10) moved the
+#: shared-settings and paths widget construction out of _build_ui into the
+#: sections' content factories; those builders are still window assembly,
+#: just lazier — a payload widget assigned there is as live as one assigned
+#: inline.
+_ASSEMBLY_METHODS = frozenset(
+    {
+        "__init__",
+        "_build_ui",
+        "_build_project_settings",
+        "_build_shared_content",
+        "_build_paths_content",
+    }
+)
+
 
 def _mainwindow_methods(tree: ast.AST) -> dict[str, ast.FunctionDef]:
     for node in ast.walk(tree):
@@ -137,10 +153,7 @@ def test_payload_policy_record_is_live_in_the_window() -> None:
         in_ctor = False
         parent = node._parent  # type: ignore[attr-defined]
         while parent is not None:
-            if (
-                isinstance(parent, ast.FunctionDef)
-                and parent.name in {"__init__", "_build_ui", "_build_project_settings"}
-            ):
+            if isinstance(parent, ast.FunctionDef) and parent.name in _ASSEMBLY_METHODS:
                 in_ctor = True
                 break
             parent = getattr(parent, "_parent", None)
@@ -158,8 +171,8 @@ def test_payload_policy_record_is_live_in_the_window() -> None:
                 assigned.add(target.attr)
     missing = sorted(PAYLOAD_WIDGETS - assigned)
     assert not missing, (
-        f"the record's payload widgets not assigned in MainWindow's window-assembly "
-        f"methods (__init__/_build_ui/_build_project_settings): {missing} — "
+        f"the record's payload widgets not assigned in the window-assembly "
+        f"methods ({'/'.join(sorted(_ASSEMBLY_METHODS))}): {missing} — "
         "the record and the window have drifted; correct the record deliberately "
         "if a control was genuinely removed."
     )
