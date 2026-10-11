@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from time import perf_counter, time
 import difflib
@@ -73,7 +74,6 @@ from the_oracle.gui_settings import (
     save_app_settings,
     save_gui_settings,
     save_template,
-    speaker_config_from_payload,
 )
 from the_oracle.gui_utils import (
     MAX_CAST_SPEAKERS,
@@ -91,7 +91,14 @@ from the_oracle.gui_utils import (
 from the_oracle.gui_recording import RecordingStudioDialog
 from the_oracle.device_support import CUDADeviceInfo, cuda_devices, cuda_reason
 from the_oracle.gui_themes import DEFAULT_THEME, THEMES, apply_theme
-from the_oracle.gui_tooltips import install_ctrl_hover_help, register_ctrl_help_descriptions
+# build_menu (gui_menu) and register_ctrl_help_descriptions (gui_tooltips) are
+# entry-point delegates: each delegate body imports its owner function
+# function-locally (the slice-10 gui_ingest_tools convention, settled as the
+# campaign's single entry-point convention on 2026-10-10), so app_gui keeps NO
+# module-level binding for either - an app_gui-level patch is a silent no-op
+# and the owner module is the single patch point, exactly as their
+# moved_owners listings record (rule 1).
+from the_oracle.gui_tooltips import install_ctrl_hover_help
 from the_oracle.inference_wizard import InferenceSetupWizard
 from the_oracle.recording_wizard import RecordingStudioSetupWizard
 from the_oracle.gui_widgets import PerceptualSlider
@@ -157,17 +164,65 @@ def _vulkan_preflight_report(device_index: int | None) -> str:
 # identical objects are re-exported here so MainWindow constructs them from
 # app_gui globals and app_gui-level class patches stay live for this module's
 # sites. SpeakerGroup, _speaker_settings_from_group and
-# _apply_speaker_settings_to_group now have read sites on BOTH sides — the
+# _apply_speaker_settings_to_group have read sites on BOTH sides — the
 # patch-surface net's PARTIAL_OWNED records that an app_gui-level patch of
-# them covers only this module's sites. _CastRow is dialog-only and is NOT
-# re-exported: an app_gui-level patch of it would be a silent no-op, so it
-# is listed in moved_owners.
+# them covers only this module's sites; the cast-bar slice's delegates inject
+# each from these globals so the moved bodies stay covered too. _CastRow and
+# CastManagementDialog are NOT re-exported as of the cast-bar cluster slice
+# (2026-10-10): the moved open_cast_manager constructs the dialog from
+# gui_cast's globals and nothing in app_gui reads either name at runtime, so
+# an app_gui-level patch would be a silent no-op — both are listed in
+# moved_owners.
 from the_oracle.gui_cast import (
-    CastManagementDialog,
     SpeakerGroup,
     _apply_speaker_settings_to_group,
     _speaker_settings_from_group,
 )
+
+
+#: Attributes whose widgets live inside lazily buildable sections, mapped to
+#: the owning section key. ``MainWindow.__getattr__`` ensures a section's
+#: content before handing out its widgets, so code that touches
+#: ``self.variant_combo`` (or any name here) transparently builds a deferred
+#: section, while a section nobody touches stays unbuilt for the whole
+#: session (smaller startup tree, less for Qt to re-polish per theme switch).
+#: Completeness is pinned by tests/test_app_gui_lazy_sections.py (AST): every
+#: attribute the section builders assign must appear here.
+_SECTION_OWNED_ATTRS: dict[str, str] = {
+    # shared — Shared Render Settings
+    "_project_settings_form": "shared",
+    "variant_combo": "shared",
+    "correction_mode_combo": "shared",
+    "loudness_combo": "shared",
+    "crossfade_spin": "shared",
+    "export_srt_check": "shared",
+    "monologue_check": "shared",
+    "inference_backend_combo": "shared",
+    "pytorch_device_combo": "shared",
+    "test_vulkan_button": "shared",
+    "vulkan_prerequisite_warning": "shared",
+    "audio_cpp_device_combo": "shared",
+    "audio_cpp_device_label": "shared",
+    "audio_cpp_threads_spin": "shared",
+    "audio_cpp_timeout_spin": "shared",
+    "audio_cpp_max_batch_spin": "shared",
+    "_inference_backend_row": "shared",
+    # paths — Script & Cast
+    "input_path": "paths",
+    "outdir_path": "paths",
+    "output_name": "paths",
+    "output_name_label": "paths",
+    "cast_summary_label": "paths",
+    "manage_cast_button": "paths",
+    # table — Review
+    "table": "table",
+    # status — Status / Errors
+    "error_panel": "status",
+    # extra_voices — the Extra Voices column
+    "extra_speaker_scroll": "extra_voices",
+    "extra_speaker_container": "extra_voices",
+    "extra_speaker_layout": "extra_voices",
+}
 
 
 class MainWindow(QMainWindow):
@@ -269,7 +324,10 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._register_ctrl_help_descriptions()
         self.delete_confirm_enabled = True
-        self._apply_gui_settings_payload(self._default_gui_settings_payload())
+        # only_built: sections the saved workspace starts collapsed stay
+        # deferred through the default apply too (they replay their slice on
+        # first build); a fresh window builds everything, as before.
+        self._apply_gui_settings_payload(self._default_gui_settings_payload(), only_built=True)
         self._mark_startup("mainwindow_init_end")
         self._write_startup_timeline()
         # Arm the deferred startup callbacks from single-shot children of the
@@ -287,6 +345,24 @@ class MainWindow(QMainWindow):
 
     def _mark_startup(self, label: str) -> None:
         self._startup_marks.append((label, perf_counter() - self._startup_t0))
+
+    def __getattr__(self, name: str):
+        """Ensure-on-access for section-owned widgets (lazy collapsed
+        sections, 2026-10-10).
+
+        A missing attribute that a lazily buildable section owns triggers
+        that section's content build (a no-op once built) and re-reads.
+        Everything else — including underscore internals before ``__init__``
+        finishes — keeps normal AttributeError semantics, so typos stay loud
+        and nothing is masked.
+        """
+        key = _SECTION_OWNED_ATTRS.get(name)
+        registry = self.__dict__.get("_section_registry")
+        entry = registry.get(key) if key is not None and registry is not None else None
+        if entry is None:
+            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+        entry[0].ensure_content()
+        return object.__getattribute__(self, name)
 
     def _write_startup_timeline(self) -> None:
         try:
@@ -367,63 +443,48 @@ class MainWindow(QMainWindow):
         left.setMinimumWidth(880)
         layout = QVBoxLayout(left)
         layout.setContentsMargins(0, 0, 0, 0)
+        self.live_panel = LivePanel(lazy=self._section_starts_collapsed("live"))
 
-        self.live_panel = LivePanel()
-
-        controls = QGridLayout()
-        self.input_path = QLineEdit()
-        self.outdir_path = QLineEdit()
-        self.output_name = QLineEdit()
-        self.output_name.setPlaceholderText("Auto-derived from the input file; a caution appears before using the generic name")
+        # Plain, widget-free state stays eager; the widgets themselves live in
+        # lazily buildable sections (see _SECTION_OWNED_ATTRS).
         self._output_name_edited = False
-        self.input_path.textChanged.connect(self._handle_outdir_changed)
-        self.outdir_path.textChanged.connect(self._handle_outdir_changed)
-        self.output_name.textEdited.connect(self._mark_output_name_edited)
         self._path_row_labels: list[QLabel | None] = [None, None]
         self._path_row_buttons: list[QPushButton | None] = [None, None]
-        self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
-        self._add_path_row(controls, 1, "Output Folder", self.outdir_path, self._pick_outdir)
-        self.output_name_label = QLabel("Output Filename")
-        controls.addWidget(self.output_name_label, 2, 0)
-        controls.addWidget(self.output_name, 2, 1, 1, 2)
-        # The controls grid joins the Script & Cast section further down
-        # (phase-3 section chrome), not the bare left-column layout.
         # Default input on a fresh install (or when the remembered input file
         # no longer exists): the user's pain-point test file. A remembered
         # input from a previous session wins over this default (see
-        # _apply_workspace_layout).
+        # _restore_last_input_file).
         self._default_input_path = self._default_input_dir / "What is, reality.txt"
         if not self._default_input_path.exists():
-            bundled_default = self.paths.input_dir / "What is, reality.txt"
-            self._default_input_path = bundled_default
-        if self._default_input_path.exists():
-            self.input_path.setText(str(self._default_input_path))
+            self._default_input_path = self.paths.input_dir / "What is, reality.txt"
 
         # Section chrome: every settings area is a QHSectionGroup (collapse
         # toggle + Section Size slider) laid out inside a QSplitter, so each
         # section can be resized by dragging its slider or the splitter
-        # handle. Positions are persisted in the app settings file.
-        shared_settings = self._build_project_settings()
-        self.speaker_a = SpeakerGroup("A", self.paths.voice_dir, on_save_blend=self._save_blend_as_voice)
-        self.speaker_b = SpeakerGroup("B", self.paths.voice_dir, on_save_blend=self._save_blend_as_voice)
+        # handle. Positions are persisted in the app settings file. Content
+        # is registered as a factory: a saved-collapsed section stays
+        # unbuilt until first demand (lazy collapsed sections, 2026-10-10).
+        shared_settings = QHSectionGroup("Shared Render Settings", collapsible=True, resizable=True)
+        self.speaker_a = SpeakerGroup(
+            "A",
+            self.paths.voice_dir,
+            on_save_blend=self._save_blend_as_voice,
+            lazy=self._section_starts_collapsed("speaker_a"),
+        )
+        self.speaker_b = SpeakerGroup(
+            "B",
+            self.paths.voice_dir,
+            on_save_blend=self._save_blend_as_voice,
+            lazy=self._section_starts_collapsed("speaker_b"),
+        )
         # Extra character voices (C..X) for audiobook casts. They are created
         # lazily when a plan detects more than two speakers; the layout holds
         # them in a scrollable column so a 24-voice cast stays usable.
         self.extra_speaker_groups: dict[str, SpeakerGroup] = {}
-        self.extra_speaker_scroll = QScrollArea()
-        self.extra_speaker_scroll.setWidgetResizable(True)
-        self.extra_speaker_scroll.setMinimumWidth(300)
-        self.extra_speaker_container = QWidget()
-        self.extra_speaker_layout = QVBoxLayout(self.extra_speaker_container)
-        self.extra_speaker_layout.setContentsMargins(0, 0, 0, 0)
-        self.extra_speaker_scroll.setWidget(self.extra_speaker_container)
         # Wrapped in section chrome: the column never shows inline (the cast
         # dialog owns characters beyond A/B), so the whole section stays
         # hidden exactly as the bare scroll area did.
         self.extra_voices_section = QHSectionGroup("Extra Voices", collapsible=True, resizable=True)
-        extra_voices_layout = QVBoxLayout(self.extra_voices_section)
-        extra_voices_layout.setContentsMargins(0, 0, 0, 0)
-        extra_voices_layout.addWidget(self.extra_speaker_scroll)
         self.extra_voices_section.hide()
 
         self._sections_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -431,30 +492,25 @@ class MainWindow(QMainWindow):
         self._sections_splitter.setChildrenCollapsible(False)
         for widget in (shared_settings, self.speaker_a, self.speaker_b, self.extra_voices_section):
             self._sections_splitter.addWidget(widget)
-        self._register_section("shared", shared_settings, self._sections_splitter, 0)
-        self._register_section("speaker_a", self.speaker_a, self._sections_splitter, 1)
-        self._register_section("speaker_b", self.speaker_b, self._sections_splitter, 2)
-        self._register_section("extra_voices", self.extra_voices_section, self._sections_splitter, 3)
+        self._register_lazy_section(
+            "shared",
+            shared_settings,
+            self._sections_splitter,
+            0,
+            partial(self._build_shared_content, shared_settings),
+        )
+        self._register_lazy_section("speaker_a", self.speaker_a, self._sections_splitter, 1)
+        self._register_lazy_section("speaker_b", self.speaker_b, self._sections_splitter, 2)
+        self._register_lazy_section(
+            "extra_voices",
+            self.extra_voices_section,
+            self._sections_splitter,
+            3,
+            partial(self._build_extra_voices_content, self.extra_voices_section),
+        )
         self._sections_splitter.setSizes([460, 360, 360, 160])
-        # Cast summary bar: the full cast lives here (count + names); the
-        # dialog owns add/remove/configure, the main window mirrors it.
-        cast_bar = QHBoxLayout()
-        cast_bar.addWidget(QLabel("Cast:"))
-        self.cast_summary_label = QLabel()
-        self.cast_summary_label.setToolTip(
-            "The current speaker cast. Speakers beyond A/B are managed in the cast dialog."
-        )
-        cast_bar.addWidget(self.cast_summary_label, 1)
-        self.manage_cast_button = QPushButton("Manage cast...")
-        self.manage_cast_button.setToolTip(
-            "Open the cast manager: add/remove speakers, name characters, and "
-            "configure each voice. One speaker left returns to monologue mode."
-        )
-        self.manage_cast_button.clicked.connect(self.open_cast_manager)
-        cast_bar.addWidget(self.manage_cast_button)
-        self._refresh_cast_bar()
-        # cast_bar and the sections splitter are assembled into the Script &
-        # Cast section / paths splitter further down.
+        # cast_bar lives inside the Script & Cast section; its builder
+        # assembles it with the path rows further down.
 
         actions = QHBoxLayout()
         actions.setSpacing(12)
@@ -471,47 +527,29 @@ class MainWindow(QMainWindow):
         # it would hide the primary actions. It is assembled into the rest
         # container below.
 
-        self.table = QTableWidget(0, 9)
-        # Floor for the review table: splitters can shrink it, but never to
-        # an unreadable sliver (the settings sections above are tall).
-        self.table.setMinimumHeight(140)
-        self.table.setHorizontalHeaderLabels([
-            "Index",
-            "Speaker",
-            "Original Text",
-            "Repaired Text",
-            "Emotion",
-            "Duration",
-            "Status",
-            "Preview",
-            "+/-",
-        ])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
-
         # The review table and the status/error panel share a vertical
         # splitter; the status panel is a section with its own size slider.
         self._lower_splitter = QSplitter(Qt.Orientation.Vertical)
         self._lower_splitter.setHandleWidth(6)
         self._lower_splitter.setChildrenCollapsible(False)
         review_section = QHSectionGroup("Review", collapsible=True, resizable=True)
-        review_layout = QVBoxLayout(review_section)
-        review_layout.setContentsMargins(0, 0, 0, 0)
-        review_layout.addWidget(self.table)
         self._lower_splitter.addWidget(review_section)
-        self._register_section("table", review_section, self._lower_splitter, 0)
+        self._register_lazy_section(
+            "table",
+            review_section,
+            self._lower_splitter,
+            0,
+            partial(self._build_review_content, review_section),
+        )
         status_section = QHSectionGroup("Status / Errors", collapsible=True, resizable=True)
-        status_layout = QVBoxLayout(status_section)
-        status_layout.setContentsMargins(0, 0, 0, 0)
-        self.error_panel = QTextEdit()
-        self.error_panel.setReadOnly(True)
-        self.error_panel.setMinimumHeight(70)
-        self.error_panel.setPlaceholderText("Status and model errors appear here.")
-        status_layout.addWidget(self.error_panel)
         self._lower_splitter.addWidget(status_section)
-        self._register_section("status", status_section, self._lower_splitter, 1)
+        self._register_lazy_section(
+            "status",
+            status_section,
+            self._lower_splitter,
+            1,
+            partial(self._build_status_content, status_section),
+        )
         # The section header replaces the old plain label; kept as the
         # Ctrl+hover registration target for the status area.
         self.status_label = status_section
@@ -522,10 +560,6 @@ class MainWindow(QMainWindow):
         # inside a splitter), sharing height with the settings/table stack —
         # mirroring how Status/Errors shares _lower_splitter with the table.
         self.paths_section = QHSectionGroup("Script & Cast", collapsible=True, resizable=True)
-        paths_layout = QVBoxLayout(self.paths_section)
-        paths_layout.setContentsMargins(0, 0, 0, 0)
-        paths_layout.addLayout(controls)
-        paths_layout.addLayout(cast_bar)
         self._paths_splitter = QSplitter(Qt.Orientation.Vertical)
         self._paths_splitter.setHandleWidth(6)
         self._paths_splitter.setChildrenCollapsible(False)
@@ -538,7 +572,13 @@ class MainWindow(QMainWindow):
         rest_layout.addWidget(self._lower_splitter, stretch=1)
         self._paths_splitter.addWidget(rest)
         layout.addWidget(self._paths_splitter)
-        self._register_section("paths", self.paths_section, self._paths_splitter, 0)
+        self._register_lazy_section(
+            "paths",
+            self.paths_section,
+            self._paths_splitter,
+            0,
+            partial(self._build_paths_content, self.paths_section),
+        )
 
         # Live progress column: its own section so it can be resized (slider
         # or handle) and collapsed like every other section. The section
@@ -549,7 +589,7 @@ class MainWindow(QMainWindow):
         self._main_splitter.setChildrenCollapsible(False)
         self._main_splitter.addWidget(left)
         self._main_splitter.addWidget(live_section)
-        self._register_section("live", live_section, self._main_splitter, 1)
+        self._register_lazy_section("live", live_section, self._main_splitter, 1)
         self._main_splitter.setSizes([1040, 280])
         hbox.addWidget(self._main_splitter)
         for splitter in (
@@ -561,197 +601,33 @@ class MainWindow(QMainWindow):
             splitter.splitterMoved.connect(lambda _pos, _index: self._persist_workspace_layout())
 
         self.setCentralWidget(root)
-        self.outdir_path.setText(str(self._default_output_dir))
+        # The default output-folder text is set by the paths builder; these
+        # two refreshes skip sections whose content is still deferred (they
+        # re-run from the section restore hooks when those build).
         self._refresh_language_options()
         self._refresh_reference_pickers()
 
     def _build_menu(self) -> None:
-        file_menu = self.menuBar().addMenu("File")
-        new_action = QAction("New Project", self)
-        new_action.triggered.connect(self.new_project)
-        open_action = QAction("Open Project", self)
-        open_action.triggered.connect(self.open_project)
-        save_action = QAction("Save Project", self)
-        save_action.triggered.connect(self.save_project)
-        save_as_action = QAction("Save Project As", self)
-        save_as_action.triggered.connect(self.save_project_as)
-        for action in (new_action, open_action, save_action, save_as_action):
-            file_menu.addAction(action)
-        file_menu.addSeparator()
-        save_profile_action = QAction("Save Profile…", self)
-        save_profile_action.setToolTip(
-            "Save every current GUI option and slider position (shared render "
-            "settings and all speaker voice settings) to a reusable profile "
-            "file. Same as Settings → Save Settings..."
-        )
-        save_profile_action.triggered.connect(self.save_settings_profile)
-        file_menu.addAction(save_profile_action)
-        load_profile_action = QAction("Load Profile…", self)
-        load_profile_action.setToolTip(
-            "Load a saved profile file, restoring all options and slider "
-            "positions. Same as Settings → Load Settings..."
-        )
-        load_profile_action.triggered.connect(self.load_settings_profile)
-        file_menu.addAction(load_profile_action)
-        file_menu.addSeparator()
-        batch_fix_action = QAction("Batch Fix Input Folder...", self)
-        batch_fix_action.setToolTip(
-            "Scan a folder of input scripts for formatting problems the engine "
-            "would misread, show one combined preview of every proposed "
-            "correction, and fix all accepted files in place (each original "
-            "backed up)."
-        )
-        batch_fix_action.triggered.connect(self._batch_fix_input_folder)
-        file_menu.addAction(batch_fix_action)
+        """Delegate to :func:`the_oracle.gui_menu.build_menu`.
 
-        settings_menu = self.menuBar().addMenu("Settings")
-        reset_defaults_action = QAction("Reset to Defaults", self)
-        reset_defaults_action.triggered.connect(self.reset_settings_to_defaults)
-        save_settings_action = QAction("Save Settings...", self)
-        save_settings_action.triggered.connect(self.save_settings_profile)
-        load_settings_action = QAction("Load Settings...", self)
-        load_settings_action.triggered.connect(self.load_settings_profile)
-        save_template_action = QAction("Save Current as Template...", self)
-        save_template_action.triggered.connect(self.save_template_profile)
-        settings_menu.addAction(reset_defaults_action)
-        settings_menu.addSeparator()
-        settings_menu.addAction(save_settings_action)
-        settings_menu.addAction(load_settings_action)
-        settings_menu.addSeparator()
-        settings_menu.addAction(save_template_action)
-        settings_menu.addSeparator()
-        self.inference_wizard_menu = settings_menu.addMenu("Replay Setup & Tutorial")
-        self.replay_full_wizard_action = QAction("Replay Entire Setup & Tutorial", self)
-        self.replay_full_wizard_action.triggered.connect(lambda: self._start_inference_wizard("full", force=True))
-        self.replay_discovery_wizard_action = QAction("Replay Hardware Discovery Only", self)
-        self.replay_discovery_wizard_action.triggered.connect(lambda: self._start_inference_wizard("discovery", force=True))
-        self.replay_main_wizard_action = QAction("Replay Main GUI Tour Only", self)
-        self.replay_main_wizard_action.triggered.connect(lambda: self._start_inference_wizard("main", force=True))
-        for wizard_action in (self.replay_full_wizard_action, self.replay_discovery_wizard_action, self.replay_main_wizard_action):
-            self.inference_wizard_menu.addAction(wizard_action)
-        self.recording_wizard_action = QAction("Replay Recording Studio Setup & Guide", self)
-        self.recording_wizard_action.triggered.connect(lambda: self._start_recording_wizard(force=True))
-        settings_menu.addAction(self.recording_wizard_action)
-        self.output_filename_warning_action = QAction("Warn before generic output filenames", self)
-        self.output_filename_warning_action.setCheckable(True)
-        self.output_filename_warning_action.setChecked(self.output_filename_warning_enabled)
-        self.output_filename_warning_action.setToolTip(
-            "Show a caution before a render uses the automatically derived input-based "
-            "filename. Re-enable this setting here after disabling it in the warning."
-        )
-        self.output_filename_warning_action.toggled.connect(self._on_output_filename_warning_toggled)
-        settings_menu.addAction(self.output_filename_warning_action)
+        The menu bar lives in the gui_menu owner (extraction slice 12,
+        2026-10-10); this method is the call-site delegate and passes
+        ``THEMES`` resolved from app_gui's globals, so app_gui stays the single
+        resolution point for a mapping its own ``_apply_theme_selection`` also
+        reads. Resolving the mapping here rather than inside the owner is what
+        keeps an app_gui-level ``THEMES`` rebind live for the moved body (the
+        seam this slice is mutation-proven on).
 
-        self.templates_menu = settings_menu.addMenu("Load Template")
-        self.templates_menu.aboutToShow.connect(self._rebuild_templates_menu)
-        self.confirmation_action = QAction("Re-enable delete confirmations", self)
-        self.confirmation_action.triggered.connect(self._enable_delete_confirmation)
-        clear_trust_action = QAction("Forget remembered auto-fix approvals", self)
-        clear_trust_action.setToolTip(
-            "Files approved via 'Remember this choice' in the fix preview will "
-            "prompt for review again before any automatic correction."
-        )
-        clear_trust_action.triggered.connect(self._clear_trusted_input_files)
-        restore_backup_action = QAction("Restore most recent input-file backup", self)
-        restore_backup_action.setToolTip(
-            "Undo the most recent input-formatting fix by restoring the file from "
-            "the timestamped backup taken before the correction. Regret a fix? "
-            "This puts the original back."
-        )
-        restore_backup_action.triggered.connect(self._restore_most_recent_format_backup)
-        settings_menu.addSeparator()
-        settings_menu.addAction(self.confirmation_action)
-        settings_menu.addAction(clear_trust_action)
-        settings_menu.addAction(restore_backup_action)
-        settings_menu.addSeparator()
-        self.remember_backend_action = QAction("Remember GPU/CPU choice", self)
-        self.remember_backend_action.setCheckable(True)
-        self.remember_backend_action.setChecked(bool(self._app_settings.get("remember_backend", True)))
-        self.remember_backend_action.setToolTip(
-            "Remember which inference backend was chosen (PyTorch CPU or Vulkan "
-            "GPU) plus the audiocpp_cli and Chatterbox model paths, and restore "
-            "them automatically at next launch so the GPU needs no setup again. "
-            "Uncheck to always start on PyTorch (CPU)."
-        )
-        # toggled (not triggered): PySide6's triggered binding here takes no
-        # checked argument, so a real menu click would not deliver the bool to
-        # the handler. toggled(bool) always does, and nothing programmatically
-        # toggles the action after the setChecked above (which precedes the
-        # connect), so no spurious early emission is possible.
-        self.remember_backend_action.toggled.connect(self._on_remember_backend_toggled)
-        settings_menu.addAction(self.remember_backend_action)
-        self.download_vulkan_model_action = QAction("Download Vulkan Model...", self)
-        self.download_vulkan_model_action.setToolTip(
-            "Run scripts/download_audio_cpp_model.sh in the background and report "
-            "the resulting ORACLE_AUDIOCPP_MODEL path to use for the Vulkan backend."
-        )
-        self.download_vulkan_model_action.triggered.connect(self.download_vulkan_model)
-        settings_menu.addAction(self.download_vulkan_model_action)
+        The owner function is imported function-locally (the slice-10
+        gui_ingest_tools delegate convention, settled as the campaign's single
+        entry-point convention on 2026-10-10): app_gui holds no module-level
+        ``build_menu``, so an app_gui-level patch is a silent no-op and
+        gui_menu is the one patch point - literally what ``moved_owners``
+        records by listing this name.
+        """
+        from the_oracle.gui_menu import build_menu
 
-        # Top-of-window Recording Studio: a plain menu-bar action (not a menu)
-        # that opens the voice-recording window in its own dialog.
-        self.recording_studio_action = QAction("Recording Studio…", self)
-        self.recording_studio_action.setToolTip(
-            "Open the Custom Voice Recording Studio: record a new reference "
-            "voice (a 'Seashell') from a microphone with a teleprompter, then "
-            "pick it for any speaker."
-        )
-        self.recording_studio_action.triggered.connect(self.open_recording_studio)
-        self.menuBar().addAction(self.recording_studio_action)
-
-        # Help menu: privacy/crash reports, license activation, About (U3).
-        help_menu = self.menuBar().addMenu("Help")
-        self.privacy_action = QAction("Privacy && Crash Reports…", self)
-        self.privacy_action.setToolTip(
-            "Review crash reports from last session, change crash-report consent, "
-            "and open the privacy policy. Reports never leave this machine unless "
-            "you share one yourself."
-        )
-        self.privacy_action.triggered.connect(self._open_crash_privacy_dialog)
-        help_menu.addAction(self.privacy_action)
-        self.activate_license_action = QAction("Activate License…", self)
-        self.activate_license_action.setToolTip(
-            "Paste your license token (offline activation — no server is contacted)."
-        )
-        self.activate_license_action.triggered.connect(self._open_license_activation)
-        help_menu.addAction(self.activate_license_action)
-        self.about_action = QAction("About The Oracle…", self)
-        self.about_action.setToolTip("Which edition this install runs, and the privacy posture in one glance.")
-        self.about_action.triggered.connect(self._open_about_panel)
-        help_menu.addAction(self.about_action)
-
-        # Keep references for Ctrl+hover help registration (see
-        # _register_ctrl_help_descriptions).
-        self.new_action = new_action
-        self.open_action = open_action
-        self.save_action = save_action
-        self.save_as_action = save_as_action
-        self.reset_defaults_action = reset_defaults_action
-        self.save_settings_action = save_settings_action
-        self.load_settings_action = load_settings_action
-        self.save_template_action = save_template_action
-        self.save_profile_action = save_profile_action
-        self.load_profile_action = load_profile_action
-
-        # Theme menu: six built-in looks; the choice is persisted immediately.
-        theme_menu = self.menuBar().addMenu("Theme")
-        self._theme_actions: dict[str, QAction] = {}
-        for key in THEMES:
-            tokens = THEMES[key]
-            action = QAction(tokens.name, self)
-            action.setCheckable(True)
-            action.setToolTip(f"{tokens.description} Contrast-checked for legibility.")
-            action.triggered.connect(lambda _checked=False, current=key: self._apply_theme_selection(current))
-            theme_menu.addAction(action)
-            self._theme_actions[key] = action
-
-        # Workspace persistence: the input file joins backend choice, theme,
-        # splitters, section states, and the configured default folders in the
-        # app settings file.  textEdited deliberately excludes programmatic
-        # restore/default changes during startup.
-        self.input_path.textEdited.connect(self._remember_input_file_edit)
-        self.outdir_path.textEdited.connect(lambda: self._persist_workspace_layout())
-        self.output_name.textEdited.connect(lambda: self._persist_workspace_layout())
+        build_menu(self, themes=THEMES)
 
     # --------------------
     # Themes
@@ -781,12 +657,31 @@ class MainWindow(QMainWindow):
         from app_gui's globals at call time so the suite's app_gui-level
         rebinds stay live for the moved text (the
         ``_vulkan_prerequisite_missing`` seam).
+
+        The owner function is imported function-locally (the slice-10
+        gui_ingest_tools delegate convention, settled as the campaign's single
+        entry-point convention on 2026-10-10): app_gui holds no module-level
+        binding for it, so an app_gui-level patch is a silent no-op and
+        gui_tooltips is the one patch point - literally what ``moved_owners``
+        records by listing this name.
         """
+        from the_oracle.gui_tooltips import register_ctrl_help_descriptions
+
         register_ctrl_help_descriptions(self, cuda_reason_fn=cuda_reason)
 
-    def _build_project_settings(self) -> QGroupBox:
-        box = QHSectionGroup("Shared Render Settings", collapsible=True, resizable=True)
-        form = QFormLayout(box)
+    # -- section content builders (lazy collapsed sections) ------------------
+    #
+    # Each builder populates exactly one section. _register_lazy_section runs
+    # it at startup (eager, today's behavior) or — for a section whose saved
+    # state is collapsed — on first demand: the expand click or the first
+    # access to one of its widgets. The saved workspace state for a
+    # lazily built section is replayed by its restore hook
+    # (_restore_section_state), never by these builders.
+
+    def _build_shared_content(self, section: QHSectionGroup) -> None:
+        """The Shared Render Settings form (extracted from the former
+        ``_build_project_settings``)."""
+        form = QFormLayout(section)
         self._project_settings_form = form  # kept so Ctrl+hover help can register row labels
         self.variant_combo = QComboBox()
         self.variant_combo.addItems(list(SUPPORTED_VARIANTS))
@@ -953,7 +848,104 @@ class MainWindow(QMainWindow):
         form.addRow("Crossfade (ms)", self.crossfade_spin)
         form.addRow("", self.export_srt_check)
         form.addRow("", self.monologue_check)
-        return box
+
+    def _build_paths_content(self, section: QHSectionGroup) -> None:
+        """The path rows + cast bar (Script & Cast section)."""
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        controls = QGridLayout()
+        self.input_path = QLineEdit()
+        self.outdir_path = QLineEdit()
+        self.output_name = QLineEdit()
+        self.output_name.setPlaceholderText("Auto-derived from the input file; a caution appears before using the generic name")
+        self._output_name_edited = False
+        self.input_path.textChanged.connect(self._handle_outdir_changed)
+        self.outdir_path.textChanged.connect(self._handle_outdir_changed)
+        self.output_name.textEdited.connect(self._mark_output_name_edited)
+        # Workspace persistence: the input file joins backend choice, theme,
+        # splitters, section states, and the configured default folders in
+        # the app settings file. textEdited deliberately excludes
+        # programmatic restore/default changes during startup. (These used to
+        # live in gui_menu.build_menu; they moved with the fields they wire
+        # so a deferred section isn't built by menu construction.)
+        self.input_path.textEdited.connect(self._remember_input_file_edit)
+        self.outdir_path.textEdited.connect(lambda: self._persist_workspace_layout())
+        self.output_name.textEdited.connect(lambda: self._persist_workspace_layout())
+        self._add_path_row(controls, 0, "Input", self.input_path, self._pick_input)
+        self._add_path_row(controls, 1, "Output Folder", self.outdir_path, self._pick_outdir)
+        self.output_name_label = QLabel("Output Filename")
+        controls.addWidget(self.output_name_label, 2, 0)
+        controls.addWidget(self.output_name, 2, 1, 1, 2)
+        layout.addLayout(controls)
+        # Cast summary bar: the full cast lives here (count + names); the
+        # dialog owns add/remove/configure, the main window mirrors it.
+        cast_bar = QHBoxLayout()
+        cast_bar.addWidget(QLabel("Cast:"))
+        self.cast_summary_label = QLabel()
+        self.cast_summary_label.setToolTip(
+            "The current speaker cast. Speakers beyond A/B are managed in the cast dialog."
+        )
+        cast_bar.addWidget(self.cast_summary_label, 1)
+        self.manage_cast_button = QPushButton("Manage cast...")
+        self.manage_cast_button.setToolTip(
+            "Open the cast manager: add/remove speakers, name characters, and "
+            "configure each voice. One speaker left returns to monologue mode."
+        )
+        self.manage_cast_button.clicked.connect(self.open_cast_manager)
+        cast_bar.addWidget(self.manage_cast_button)
+        layout.addLayout(cast_bar)
+        if self._default_input_path.exists():
+            self.input_path.setText(str(self._default_input_path))
+        self.outdir_path.setText(str(self._default_output_dir))
+        self._refresh_cast_bar()
+
+    def _build_review_content(self, section: QHSectionGroup) -> None:
+        """The review table (Review section)."""
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.table = QTableWidget(0, 9)
+        # Floor for the review table: splitters can shrink it, but never to
+        # an unreadable sliver (the settings sections above are tall).
+        self.table.setMinimumHeight(140)
+        self.table.setHorizontalHeaderLabels([
+            "Index",
+            "Speaker",
+            "Original Text",
+            "Repaired Text",
+            "Emotion",
+            "Duration",
+            "Status",
+            "Preview",
+            "+/-",
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        layout.addWidget(self.table)
+
+    def _build_status_content(self, section: QHSectionGroup) -> None:
+        """The status/error panel (Status / Errors section)."""
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.error_panel = QTextEdit()
+        self.error_panel.setReadOnly(True)
+        self.error_panel.setMinimumHeight(70)
+        self.error_panel.setPlaceholderText("Status and model errors appear here.")
+        layout.addWidget(self.error_panel)
+
+    def _build_extra_voices_content(self, section: QHSectionGroup) -> None:
+        """The scrollable extra-speakers column (Extra Voices section)."""
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.extra_speaker_scroll = QScrollArea()
+        self.extra_speaker_scroll.setWidgetResizable(True)
+        self.extra_speaker_scroll.setMinimumWidth(300)
+        self.extra_speaker_container = QWidget()
+        self.extra_speaker_layout = QVBoxLayout(self.extra_speaker_container)
+        self.extra_speaker_layout.setContentsMargins(0, 0, 0, 0)
+        self.extra_speaker_scroll.setWidget(self.extra_speaker_container)
+        layout.addWidget(self.extra_speaker_scroll)
 
     def _set_correction_mode(self, value: str) -> None:
         normalized = normalize_correction_mode(value)
@@ -1111,10 +1103,14 @@ class MainWindow(QMainWindow):
             self.outdir_path.setText(path)
 
     def _refresh_language_options(self) -> None:
-        variant = self.variant_combo.currentText() if hasattr(self, "variant_combo") else "standard"
+        # Built-check, not hasattr: a deferred shared section must not be
+        # forced alive by a refresh (it re-runs from the restore hooks).
+        variant = self.variant_combo.currentText() if self._section_content_built("shared") else "standard"
         languages = {"en": "English"} if variant != "multilingual" else ChatterboxEngine(variant).supported_languages()
         is_multilingual = variant == "multilingual"
         for group in self._all_speaker_groups().values():
+            if not group.is_content_built():
+                continue
             group.set_language_options(languages, is_multilingual)
 
     def _refresh_inference_backend_options(self) -> None:
@@ -1124,7 +1120,7 @@ class MainWindow(QMainWindow):
         backend rejects it with a clear error. Blocking it here keeps the GUI
         from offering an unusable combination.
         """
-        if not hasattr(self, "inference_backend_combo"):
+        if not self._section_content_built("shared"):
             return
         is_turbo = self.variant_combo.currentText() == "turbo"
         vulkan_index = self.inference_backend_combo.findData("vulkan")
@@ -1142,7 +1138,7 @@ class MainWindow(QMainWindow):
         Selecting Vulkan also kicks off the background device probe that
         populates the device list under the picker, and surfaces a warning if
         the backend's prerequisites are not configured yet."""
-        if not hasattr(self, "audio_cpp_device_combo"):
+        if not self._section_content_built("shared"):
             return
         is_vulkan = self.inference_backend_combo.currentData() == "vulkan"
         self.audio_cpp_device_combo.setEnabled(is_vulkan)
@@ -1722,6 +1718,16 @@ class MainWindow(QMainWindow):
         # close, including controls without a per-widget persistence signal.
         # This is the last checkpoint before the process exits.
         self._persist_workspace_layout()
+        # Release the lazy sections' content factories and their
+        # content_built restore/tooltip hooks: they are Python closures over
+        # this window held by the section wrappers in C-level connection
+        # structures the GC cannot trace, so a destroyed window whose
+        # sections kept them would stay pinned alive forever (the window-
+        # lifetime leak suite). Close is accepted by the time we get here
+        # (every refusal path returned above), so nothing needs a factory
+        # after this point; built content is untouched.
+        for _key, (section, _splitter, _index) in self._section_registry.items():
+            section.release_content_factory()
         super().closeEvent(event)
 
     def _audio_cpp_device_value(self) -> int | None:
@@ -1865,6 +1871,19 @@ class MainWindow(QMainWindow):
                 os.environ["ORACLE_AUDIOCPP_MODEL"] = str(resolved_model)
             else:
                 self.error_panel.append(f"Remembered Chatterbox model path no longer exists: {model_path}")
+        if self._section_content_built("shared"):
+            self._apply_remembered_backend_widgets()
+
+    def _apply_remembered_backend_widgets(self) -> None:
+        """Select the remembered backend + Vulkan knobs in the shared
+        section's widgets (the widget half of :meth:`_apply_remembered_backend`).
+
+        Split out because a restored-collapsed shared section has no widgets
+        yet: the env half still runs at startup, and the shared restore hook
+        replays this half when the section builds.
+        """
+        if not self._app_settings.get("remember_backend", True):
+            return
         backend = self._app_settings.get("inference_backend", "pytorch")
         if backend == "vulkan":
             index = self.inference_backend_combo.findData("vulkan")
@@ -1890,6 +1909,10 @@ class MainWindow(QMainWindow):
         blends = blend_voice_choices(self.paths.profile_dir)
         recents = [path for path in load_recent_reference_paths() if Path(path).exists()]
         for group in self._all_speaker_groups().values():
+            # Deferred panels re-run this from their restore hook; touching
+            # them here would force their build.
+            if not group.is_content_built():
+                continue
             group.set_reference_choices(defaults, recents, group.reference_path.text(), blends=blends)
             group.set_blend_choices(defaults, recents, group.blend_target_path(), blends=blends)
 
@@ -2241,7 +2264,15 @@ class MainWindow(QMainWindow):
         # Keep the UI responsive: disable heavy actions while warmup runs, but do not block the event loop.
         self.analyze_button.setEnabled(False)
         self.render_button.setEnabled(False)
-        self._prewarm_thread = PrewarmThread(device=self._pytorch_device_selection()[0])
+        # A deferred shared section has no device picker yet; fall back to
+        # the persisted device mode (the picker would read the same value
+        # once the section builds).
+        device = (
+            self._pytorch_device_selection()[0]
+            if self._section_content_built("shared")
+            else str(self._app_settings.get("device_mode") or "cpu")
+        )
+        self._prewarm_thread = PrewarmThread(device=device)
         self._prewarm_thread.ready.connect(self._handle_prewarm_ready)
         self._prewarm_thread.failed.connect(self._handle_prewarm_failed)
         # Teardown only via finished: ready/failed fire from run()'s final
@@ -2309,6 +2340,144 @@ class MainWindow(QMainWindow):
         section.size_share_changed.connect(self._persist_workspace_layout)
         section.collapsed_changed.connect(self._persist_workspace_layout)
 
+    # -- lazy collapsed sections (2026-10-10) ------------------------------
+
+    def _section_starts_collapsed(self, key: str) -> bool:
+        """True when the saved workspace says this section starts collapsed.
+
+        Read from app settings (loaded before the UI is built), so the
+        deferral decision is known before any content would be constructed.
+        """
+        sections = self._app_settings.get("sections") or {}
+        data = sections.get(key)
+        return bool(data.get("collapsed", False)) if isinstance(data, dict) else False
+
+    def _section_content_built(self, key: str) -> bool:
+        """Whether a section's content widgets exist yet.
+
+        The startup/persist paths use this instead of touching widgets, so a
+        restored-collapsed section is skipped rather than force-built; code
+        that DOES touch a widget goes through __getattr__ and builds on
+        demand. The live column keeps its content in the panel, not the
+        section, so it reports through the panel.
+        """
+        if key == "live":
+            return self.live_panel.is_content_built()
+        entry = self._section_registry.get(key)
+        return True if entry is None else entry[0].is_content_built()
+
+    def _register_lazy_section(
+        self,
+        key: str,
+        section: QHSectionGroup,
+        splitter,
+        index: int,
+        factory=None,
+    ) -> None:
+        """Register a section whose content may stay unbuilt all session.
+
+        A saved-collapsed section keeps its factory for the first expand (or
+        the first on-demand widget access) and gets its restore hook wired to
+        ``content_built``; any other saved state builds immediately — the
+        exact eager behavior the window had before this slice. ``factory`` is
+        None for sections that own their factory already (SpeakerGroup's
+        panels) or hold no factory at all (the Live column's chrome).
+        """
+        if factory is not None:
+            section.set_content_factory(factory)
+        self._register_section(key, section, splitter, index)
+        if not self._section_starts_collapsed(key):
+            section.ensure_content()
+            return
+        section.content_built.connect(partial(self._restore_section_state, key))
+        section.set_collapsed(True)
+
+    def _restore_section_state(self, key: str, _section=None) -> None:
+        """Replay the saved workspace state into a lazily built section.
+
+        Connected (only for sections that start deferred) to
+        ``content_built``: the eager path receives its state from the startup
+        payload apply, while a section that builds later reads the same
+        saved payload here instead.
+        """
+        try:
+            if key == "shared":
+                self._restore_shared_section()
+            elif key == "paths":
+                self._restore_paths_section()
+            elif key in ("speaker_a", "speaker_b"):
+                self._restore_speaker_section(key)
+        except Exception as exc:  # a corrupt saved slice must not break expand
+            self.error_panel.append(f"Could not restore the saved {key} settings ({exc}); using defaults.")
+
+    def _saved_project_slice(self) -> dict:
+        """The saved GUI payload's project slice (empty when none)."""
+        saved = self._app_settings.get("gui")
+        if isinstance(saved, dict):
+            project = saved.get("project")
+            if isinstance(project, dict):
+                return project
+        return {}
+
+    def _restore_shared_section(self) -> None:
+        """Shared section restore: remembered backend first (production
+        order), then the saved project slice — the same values the eager
+        startup apply handed the widgets it built."""
+        self._apply_remembered_backend()
+        project = self._saved_project_slice()
+        if project:
+            merged = {**self._default_gui_settings_payload()["project"], **project}
+            self._apply_shared_project_settings(merged)
+        self._refresh_language_options()
+        self._refresh_reference_pickers()
+
+    def _restore_paths_section(self) -> None:
+        """Paths section restore: saved output fields, remembered input
+        file, cast bar, and the derived-filename pass the eager tail ran."""
+        project = self._saved_project_slice()
+        if project:
+            merged = {**self._default_gui_settings_payload()["project"], **project}
+            self._apply_paths_project_settings(merged)
+        self._restore_last_input_file()
+        self._refresh_cast_bar()
+        self._handle_outdir_changed()
+
+    def _restore_speaker_section(self, key: str) -> None:
+        """Speaker panel restore: saved panel settings, cast title, and the
+        visibility/language/reference refreshes the eager path ran."""
+        # The registry keys are section names; the payload's speakers are
+        # keyed by cast letter.
+        speaker = {"speaker_a": "A", "speaker_b": "B"}.get(key, key)
+        group = {"A": self.speaker_a, "B": self.speaker_b}.get(speaker)
+        if group is None:
+            return
+        saved_speakers = ((self._app_settings.get("gui") or {}).get("speakers") or {})
+        if saved_speakers.get(speaker):
+            _apply_speaker_settings_to_group(group, self._saved_speaker_settings(speaker))
+        self._update_speaker_group_title(speaker, group)
+        if speaker == "B":
+            self.speaker_b.setVisible(len(self._cast) > 1)
+        self._refresh_language_options()
+        self._refresh_reference_pickers()
+
+    def _saved_speaker_settings(self, key: str):
+        """The last persisted settings for one speaker — the lazy-persist
+        fallback for a panel that was never built."""
+        defaults_payload = self._default_gui_settings_payload()
+        default_config = defaults_payload["speakers"].get(key, defaults_payload["speakers"]["A"])
+        data = ((self._app_settings.get("gui") or {}).get("speakers") or {}).get(key)
+        merged = {**default_config, **data} if isinstance(data, dict) else default_config
+        return self._speaker_config_from_payload(key, merged)
+
+    def _restore_last_input_file(self) -> None:
+        """Remembered input file wins over the launch default; fall back to
+        the default when it is missing or no longer exists."""
+        remembered_input = str(self._app_settings.get("last_input_file") or "")
+        if remembered_input and Path(remembered_input).expanduser().exists():
+            self.input_path.setText(remembered_input)
+        elif not self.input_path.text().strip() and self._default_input_path.exists():
+            self.input_path.setText(str(self._default_input_path))
+
     def _persist_workspace_layout(self, *_args) -> None:
         """Snapshot splitters + section sliders/collapses into app settings."""
         if not self._app_settings_ready:
@@ -2329,11 +2498,15 @@ class MainWindow(QMainWindow):
             # Keep the last successful/typed file when New Project temporarily
             # clears the field; a fresh launch should still return to the last
             # used input rather than losing the user's working context.
-            "last_input_file": self.input_path.text().strip()
+            "last_input_file": (
+                self.input_path.text().strip() if self._section_content_built("paths") else ""
+            )
             or self._app_settings.get("last_input_file", ""),
             # Every current option and slider position (shared + speakers),
-            # so the whole GUI returns exactly as left.
-            "gui": self._current_gui_settings_payload(),
+            # so the whole GUI returns exactly as left. Deferred sections
+            # keep their last saved slice (defer_unbuilt) instead of being
+            # forced alive by the persist itself.
+            "gui": current_gui_settings_payload(self._widget_snapshot(defer_unbuilt=True)),
             "splitters": {
                 "main": self._main_splitter.sizes(),
                 "sections": self._sections_splitter.sizes(),
@@ -2354,7 +2527,9 @@ class MainWindow(QMainWindow):
         saved_gui = self._app_settings.get("gui")
         if isinstance(saved_gui, dict) and "project" in saved_gui and "speakers" in saved_gui:
             try:
-                self._apply_gui_settings_payload(saved_gui)
+                # only_built: deferred sections skip their slice and replay it
+                # from their restore hook when they build (lazy sections).
+                self._apply_gui_settings_payload(saved_gui, only_built=True)
             except Exception as exc:
                 self.error_panel.append(f"Could not restore the saved options ({exc}); using defaults.")
         splitters = self._app_settings.get("splitters") or {}
@@ -2395,132 +2570,187 @@ class MainWindow(QMainWindow):
             width, height = geometry
             if isinstance(width, int) and isinstance(height, int) and width >= 800 and height >= 600:
                 self.resize(width, height)
-        # Remembered input file wins over the launch default; fall back to the
-        # default when it is missing or no longer exists.
-        remembered_input = str(self._app_settings.get("last_input_file") or "")
-        if remembered_input and Path(remembered_input).expanduser().exists():
-            self.input_path.setText(remembered_input)
-        elif not self.input_path.text().strip() and self._default_input_path.exists():
-            self.input_path.setText(str(self._default_input_path))
+        # Remembered input file wins over the launch default; a deferred paths
+        # section applies it from its restore hook instead (touching the field
+        # here would force its build).
+        if self._section_content_built("paths"):
+            self._restore_last_input_file()
 
     def cast_keys(self) -> list[str]:
-        """Ordered speaker keys of the current cast (["A", "B"] by default)."""
-        return list(self._cast)
+        """Delegate to :func:`the_oracle.gui_cast.cast_keys` (cast-bar cluster, 2026-10-10).
+
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
+        """
+
+        from the_oracle.gui_cast import cast_keys
+
+        return cast_keys(self)
 
     def speaker_names(self) -> dict[str, str]:
-        """Optional character names per speaker key."""
-        return dict(self._speaker_names)
+        """Delegate to :func:`the_oracle.gui_cast.speaker_names` (cast-bar cluster, 2026-10-10).
+
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
+        """
+
+        from the_oracle.gui_cast import speaker_names
+
+        return speaker_names(self)
 
     def _all_speaker_groups(self) -> dict[str, SpeakerGroup]:
-        """Every speaker group in the current cast, in cast order."""
-        groups = {"A": self.speaker_a, "B": self.speaker_b, **self.extra_speaker_groups}
-        return {key: groups[key] for key in self._cast if key in groups}
+        """Delegate to :func:`the_oracle.gui_cast._all_speaker_groups` (cast-bar cluster, 2026-10-10).
+
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
+        """
+
+        from the_oracle.gui_cast import _all_speaker_groups
+
+        return _all_speaker_groups(self)
 
     def apply_cast(
         self,
         keys: list[str],
         names: dict[str, str] | None,
         settings: dict[str, SpeakerSettings] | None,
+        *,
+        only_built: bool = False,
     ) -> None:
-        """Replace the speaker cast and rebuild the panels to match.
+        """Delegate to :func:`the_oracle.gui_cast.apply_cast` (cast-bar cluster, 2026-10-10).
 
-        Called by the cast-management dialog and by settings/profile load, so
-        a cast of any size always leaves exactly the right panels behind (no
-        stale speaker panels contaminating later renders).
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
         """
-        cast = normalize_cast_keys(keys)
-        self._cast = cast
-        names = names if isinstance(names, dict) else {}
-        self._speaker_names = {key: str(names.get(key, "") or "").strip() for key in cast}
-        settings = settings if isinstance(settings, dict) else {}
-        self._sync_extra_speaker_groups([key for key in cast if key not in ("A", "B")])
-        # Speakers beyond A/B are configured in the cast dialog; the main
-        # window keeps their widgets alive (the render path reads them) but
-        # does not show them inline.
-        self.extra_voices_section.hide()
-        groups = {"A": self.speaker_a, "B": self.speaker_b, **self.extra_speaker_groups}
-        for key in cast:
-            group = groups.get(key)
-            if group is None:
-                continue
-            panel_settings = settings.get(key)
-            if panel_settings is not None:
-                _apply_speaker_settings_to_group(group, panel_settings)
-            self._update_speaker_group_title(key, group)
-        # Monologue layout: with a single speaker only the narrator's panel
-        # shows; a cast of one is monologue, more than one is dialogue.
-        self.speaker_b.setVisible(len(cast) > 1)
-        self.monologue_check.setChecked(len(cast) == 1)
-        self._refresh_cast_bar()
-        self._refresh_reference_pickers()
-        self._refresh_language_options()
+
+        from the_oracle.gui_cast import apply_cast
+
+        # INJECTION seam: the bare _apply_speaker_settings_to_group and
+        # normalize_cast_keys names resolve from THIS module's globals at call
+        # time, so app_gui-level rebinds keep intercepting the moved body
+        # exactly as before the move.
+
+        apply_cast(
+            self,
+            keys,
+            names,
+            settings,
+            only_built=only_built,
+            apply_settings_fn=_apply_speaker_settings_to_group,
+            normalize_keys_fn=normalize_cast_keys,
+        )
 
     def _update_speaker_group_title(self, key: str, group: SpeakerGroup) -> None:
-        name = (self._speaker_names.get(key) or "").strip()
-        group.setTitle(f"Speaker {key} — {name}" if name else f"Speaker {key}")
+        """Delegate to :func:`the_oracle.gui_cast._update_speaker_group_title` (cast-bar cluster, 2026-10-10).
+
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
+        """
+
+        from the_oracle.gui_cast import _update_speaker_group_title
+
+        return _update_speaker_group_title(self, key, group)
 
     def _refresh_cast_bar(self) -> None:
-        parts = []
-        for key in self._cast:
-            name = (self._speaker_names.get(key) or "").strip()
-            parts.append(f"{key} ({name})" if name else key)
-        count = len(self._cast)
-        noun = "speaker" if count == 1 else "speakers"
-        text = f"{', '.join(parts)} — {count} {noun}"
-        if count == 1 and self.monologue_check.isChecked():
-            text += " (monologue)"
-        self.cast_summary_label.setText(text)
+        """Delegate to :func:`the_oracle.gui_cast._refresh_cast_bar` (cast-bar cluster, 2026-10-10).
+
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
+        """
+
+        from the_oracle.gui_cast import _refresh_cast_bar
+
+        return _refresh_cast_bar(self)
+
+    def _monologue_enabled(self) -> bool:
+        """The monologue flag, readable while the shared section is deferred
+        (the cast bar suffix and the restore hooks both need it)."""
+        if self._section_content_built("shared"):
+            return bool(self.monologue_check.isChecked())
+        return bool(self._saved_project_slice().get("monologue", False))
 
     def open_cast_manager(self) -> None:
-        """Open the cast-management dialog (modal).
+        """Delegate to :func:`the_oracle.gui_cast.open_cast_manager` (cast-bar cluster, 2026-10-10).
 
-        Tracked per-instance like the recording-studio dialogs so a second
-        open can never orphan the first one's completion handling.
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
         """
-        for dialog in list(self._cast_dialogs):
-            dialog.raise_()
-            dialog.activateWindow()
-            return
-        dialog = CastManagementDialog(self)
-        self._cast_dialogs.add(dialog)
-        dialog.finished.connect(lambda _result, dlg=dialog: self._cast_dialogs.discard(dlg))
-        try:
-            dialog.exec()
-        finally:
-            self._cast_dialogs.discard(dialog)
+
+        from the_oracle.gui_cast import open_cast_manager
+
+        return open_cast_manager(self)
 
     def _sync_extra_speaker_groups(self, speakers: list[str]) -> None:
-        """Create/refresh SpeakerGroup widgets for characters beyond A and B
-        (up to the engine's voice capacity) so an audiobook cast gets one
-        voice panel each. Panels beyond A/B are configured in the cast dialog;
-        this only keeps the widgets in sync, it never shows them inline."""
-        extras = sorted(speaker for speaker in speakers if speaker not in ("A", "B"))
-        for key in extras:
-            if key not in self.extra_speaker_groups:
-                group = SpeakerGroup(key, self.paths.voice_dir, on_save_blend=self._save_blend_as_voice)
-                self.extra_speaker_groups[key] = group
-                self.extra_speaker_layout.addWidget(group)
-                self._update_speaker_group_title(key, group)
-        stale = [key for key in self.extra_speaker_groups if key not in extras]
-        for key in stale:
-            group = self.extra_speaker_groups.pop(key)
-            self.extra_speaker_layout.removeWidget(group)
-            group.deleteLater()
-        self._refresh_reference_pickers()
-        self._refresh_language_options()
+        """Delegate to :func:`the_oracle.gui_cast._sync_extra_speaker_groups` (cast-bar cluster, 2026-10-10).
+
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
+        """
+
+        from the_oracle.gui_cast import _sync_extra_speaker_groups
+
+        # INJECTION seam: the bare SpeakerGroup name resolves from THIS module's
+        # globals at call time, so app_gui-level rebinds keep intercepting the
+        # moved body exactly as before the move.
+
+        return _sync_extra_speaker_groups(self, speakers, speaker_group_cls=SpeakerGroup)
 
     def _speaker_settings(self) -> dict[str, SpeakerSettings]:
-        variant = self.variant_combo.currentText()
-        crossfade_ms = self.crossfade_spin.value()
-        return {
-            key: _speaker_settings_from_group(group, variant, crossfade_ms)
-            for key, group in self._all_speaker_groups().items()
-        }
+        """Delegate to :func:`the_oracle.gui_cast._speaker_settings` (cast-bar cluster, 2026-10-10).
+
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
+        """
+
+        from the_oracle.gui_cast import _speaker_settings
+
+        # INJECTION seam: the bare _speaker_settings_from_group name resolves
+        # from THIS module's globals at call time, so app_gui-level rebinds keep
+        # intercepting the moved body exactly as before the move.
+
+        return _speaker_settings(self, settings_from_group_fn=_speaker_settings_from_group)
 
     @staticmethod
     def _speaker_config_from_payload(key: str, data: dict) -> SpeakerSettings:
-        """Decode via the policy owner, then construct the engine dataclass."""
-        return SpeakerSettings(**speaker_config_from_payload(data))
+        """Delegate to :func:`the_oracle.gui_cast._speaker_config_from_payload` (cast-bar cluster, 2026-10-10).
+
+        The cast-bar cluster moved to the gui_cast owner; this method is the
+        call-site delegate and the owner function is imported FUNCTION-LOCALLY
+        (the slice-10 gui_ingest_tools convention, settled as the campaign's
+        single entry-point convention): app_gui holds no module-level binding,
+        so gui_cast is the single patch point.
+        """
+
+        from the_oracle.gui_cast import _speaker_config_from_payload
+
+        return _speaker_config_from_payload(key, data)
 
     def _pytorch_device_selection(self) -> tuple[str, int | None]:
         """Return the selected PyTorch device mode and CUDA index."""
@@ -2662,56 +2892,100 @@ class MainWindow(QMainWindow):
         self._sync_plan_from_table()
         return build_saved_project(self.plan, self._render_settings(), self._speaker_settings())
 
-    def _widget_snapshot(self) -> WidgetSnapshot:
-        """Every widget read the current-payload builder needs, in one place."""
-        device_mode, cuda_device = self._pytorch_device_selection()
-        return WidgetSnapshot(
-            cast_keys=self.cast_keys(),
-            speaker_names=dict(self._speaker_names),
-            model_variant=self.variant_combo.currentText(),
-            correction_mode=self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText(),
-            loudness_preset=self.loudness_combo.currentText(),
-            crossfade_ms=self.crossfade_spin.value(),
-            inference_backend=self.inference_backend_combo.currentData() or "pytorch",
-            device_mode=device_mode,
-            cuda_device=cuda_device,
-            output_dir=self.outdir_path.text() or str(self.paths.output_dir),
-            output_filename=self.output_name.text(),
-            export_srt=self.export_srt_check.isChecked(),
-            monologue=self.monologue_check.isChecked(),
-            delete_confirm_enabled=self.delete_confirm_enabled,
-            output_filename_warning_enabled=self.output_filename_warning_enabled,
-            audio_cpp_values={
+    def _widget_snapshot(self, *, defer_unbuilt: bool = False) -> WidgetSnapshot:
+        """Every widget read the current-payload builder needs, in one place.
+
+        ``defer_unbuilt`` is the persist path's mode: sections that were never
+        built contribute their last saved values instead of being forced
+        alive just to be re-serialized (a collapsed section must stay cheap
+        for the whole session, not only until the first layout change).
+        Profile/template saves use the default full snapshot — saving
+        settings must capture everything, building what it needs.
+        """
+        saved_project = self._saved_project_slice() if defer_unbuilt else {}
+        shared_built = not defer_unbuilt or self._section_content_built("shared")
+        paths_built = not defer_unbuilt or self._section_content_built("paths")
+        if shared_built:
+            device_mode, cuda_device = self._pytorch_device_selection()
+            variant = self.variant_combo.currentText()
+            crossfade_ms = self.crossfade_spin.value()
+            correction_mode = self.correction_mode_combo.currentData() or self.correction_mode_combo.currentText()
+            loudness_preset = self.loudness_combo.currentText()
+            inference_backend = self.inference_backend_combo.currentData() or "pytorch"
+            export_srt = self.export_srt_check.isChecked()
+            monologue = self.monologue_check.isChecked()
+            audio_cpp_values = {
                 "audio_cpp_device": self._audio_cpp_device_value(),
                 "audio_cpp_threads": self._audio_cpp_threads_value(),
                 "audio_cpp_timeout": self._audio_cpp_timeout_value(),
                 "audio_cpp_max_batch": self._audio_cpp_max_batch_value(),
-            },
-            speaker_settings=self._speaker_settings(),
+            }
+        else:
+            device_mode = str(saved_project.get("device_mode", "cpu"))
+            cuda_device = saved_project.get("cuda_device")
+            variant = str(saved_project.get("model_variant", "standard"))
+            crossfade_ms = int(saved_project.get("crossfade_ms", 20))
+            correction_mode = str(saved_project.get("correction_mode", "moderate"))
+            loudness_preset = str(saved_project.get("loudness_preset", RenderSettings().loudness_preset))
+            inference_backend = str(saved_project.get("inference_backend", "pytorch"))
+            export_srt = bool(saved_project.get("export_srt", False))
+            monologue = bool(saved_project.get("monologue", False))
+            audio_cpp_values = {
+                "audio_cpp_device": saved_project.get("audio_cpp_device"),
+                "audio_cpp_threads": saved_project.get("audio_cpp_threads"),
+                "audio_cpp_timeout": saved_project.get("audio_cpp_timeout"),
+                "audio_cpp_max_batch": saved_project.get("audio_cpp_max_batch"),
+            }
+        speaker_settings = {
+            key: (
+                _speaker_settings_from_group(group, variant, crossfade_ms)
+                if not defer_unbuilt or group.is_content_built()
+                else self._saved_speaker_settings(key)
+            )
+            for key, group in self._all_speaker_groups().items()
+        }
+        return WidgetSnapshot(
+            cast_keys=self.cast_keys(),
+            speaker_names=dict(self._speaker_names),
+            model_variant=variant,
+            correction_mode=correction_mode,
+            loudness_preset=loudness_preset,
+            crossfade_ms=crossfade_ms,
+            inference_backend=inference_backend,
+            device_mode=device_mode,
+            cuda_device=cuda_device,
+            output_dir=(self.outdir_path.text() or str(self.paths.output_dir))
+            if paths_built
+            else str(saved_project.get("output_dir", self.paths.output_dir)),
+            output_filename=self.output_name.text()
+            if paths_built
+            else str(saved_project.get("output_filename", "")),
+            export_srt=export_srt,
+            monologue=monologue,
+            delete_confirm_enabled=self.delete_confirm_enabled,
+            output_filename_warning_enabled=self.output_filename_warning_enabled,
+            audio_cpp_values=audio_cpp_values,
+            speaker_settings=speaker_settings,
         )
 
     def _current_gui_settings_payload(self) -> dict:
         return current_gui_settings_payload(self._widget_snapshot())
 
-    def _apply_gui_settings_payload(self, payload: dict) -> None:
+    def _apply_gui_settings_payload(self, payload: dict, *, only_built: bool = False) -> None:
+        """Apply a saved GUI payload to the window.
+
+        ``only_built`` is the lazy-startup mode: sections that are still
+        deferred skip their part of the apply (their restore hook replays the
+        same saved state when they build), so restoring a workspace never
+        forces a collapsed section alive. Profile/template loads and reset
+        use the default (apply everything, building what they touch).
+        """
         defaults = self._default_gui_settings_payload()
-        project = {**defaults["project"], **payload["project"]}
-        self.variant_combo.setCurrentText(project.get("model_variant", "standard"))
-        self._refresh_language_options()
-        self._set_correction_mode(project.get("correction_mode", "moderate"))
-        self.loudness_combo.setCurrentText(project.get("loudness_preset", RenderSettings().loudness_preset))
-        self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
-        device_mode = str(project.get("device_mode", payload.get("device_mode", "cpu")))
-        cuda_device = project.get("cuda_device")
-        target_device = "cpu"
-        if device_mode == "cuda" and cuda_device is not None:
-            target_device = f"cuda:{int(cuda_device)}"
-        device_index = self.pytorch_device_combo.findData(target_device)
-        self.pytorch_device_combo.setCurrentIndex(device_index if device_index >= 0 else 0)
-        self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
-        self._output_name_edited = bool(project.get("output_filename", ""))
-        self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
-        self.export_srt_check.setChecked(bool(project.get("export_srt", False)))
+        project = {
+            **defaults["project"],
+            "device_mode": payload.get("device_mode", "cpu"),
+            **payload["project"],
+        }
         self.delete_confirm_enabled = bool(project.get("delete_confirm_enabled", True))
         self.output_filename_warning_enabled = bool(
             project.get("output_filename_warning", self.output_filename_warning_enabled)
@@ -2720,18 +2994,10 @@ class MainWindow(QMainWindow):
             self.output_filename_warning_action.blockSignals(True)
             self.output_filename_warning_action.setChecked(self.output_filename_warning_enabled)
             self.output_filename_warning_action.blockSignals(False)
-        backend_index = self.inference_backend_combo.findData(project.get("inference_backend", "pytorch"))
-        if backend_index >= 0:
-            self.inference_backend_combo.setCurrentIndex(backend_index)
-        self._set_audio_cpp_device_value(project.get("audio_cpp_device"))
-        self._set_audio_cpp_threads_value(project.get("audio_cpp_threads"))
-        self._set_audio_cpp_timeout_value(project.get("audio_cpp_timeout"))
-        self._set_audio_cpp_max_batch_value(project.get("audio_cpp_max_batch"))
-        # A hand-edited profile could pair turbo with vulkan; the turbo guard
-        # falls back to pytorch instead of leaving the invalid combination
-        # selected (RenderSettings would otherwise pass it through to a
-        # confusing engine error at render time).
-        self._refresh_inference_backend_options()
+        if not (only_built and not self._section_content_built("shared")):
+            self._apply_shared_project_settings(project)
+        if not (only_built and not self._section_content_built("paths")):
+            self._apply_paths_project_settings(project)
         # Rebuild the whole cast from the payload's ordered "cast" list
         # (falling back to the saved speaker keys, then A/B). Loading fewer
         # speakers than are currently shown deletes the stale panels outright
@@ -2750,11 +3016,51 @@ class MainWindow(QMainWindow):
                 merged = {**default_config, **data}
                 cast_settings[key] = self._speaker_config_from_payload(key, merged)
                 names[key] = str(merged.get("name", "") or "")
-        self.apply_cast(requested, names, cast_settings)
+        self.apply_cast(requested, names, cast_settings, only_built=only_built)
         # apply_cast defaults monologue from cast size; an explicit saved flag
         # (e.g. monologue with two configured voices) wins.
-        self.monologue_check.setChecked(bool(project.get("monologue", False)))
+        if not (only_built and not self._section_content_built("shared")):
+            self.monologue_check.setChecked(bool(project.get("monologue", False)))
         self._refresh_reference_pickers()
+
+    def _apply_shared_project_settings(self, project: dict) -> None:
+        """The Shared Render Settings slice of a GUI payload.
+
+        Also the shared restore hook's replay for a lazily built section —
+        the same values the eager startup apply handed the widgets.
+        """
+        self.variant_combo.setCurrentText(project.get("model_variant", "standard"))
+        self._refresh_language_options()
+        self._set_correction_mode(project.get("correction_mode", "moderate"))
+        self.loudness_combo.setCurrentText(project.get("loudness_preset", RenderSettings().loudness_preset))
+        self.crossfade_spin.setValue(int(project.get("crossfade_ms", 20)))
+        device_mode = str(project.get("device_mode", "cpu"))
+        cuda_device = project.get("cuda_device")
+        target_device = "cpu"
+        if device_mode == "cuda" and cuda_device is not None:
+            target_device = f"cuda:{int(cuda_device)}"
+        device_index = self.pytorch_device_combo.findData(target_device)
+        self.pytorch_device_combo.setCurrentIndex(device_index if device_index >= 0 else 0)
+        self.export_srt_check.setChecked(bool(project.get("export_srt", False)))
+        backend_index = self.inference_backend_combo.findData(project.get("inference_backend", "pytorch"))
+        if backend_index >= 0:
+            self.inference_backend_combo.setCurrentIndex(backend_index)
+        self._set_audio_cpp_device_value(project.get("audio_cpp_device"))
+        self._set_audio_cpp_threads_value(project.get("audio_cpp_threads"))
+        self._set_audio_cpp_timeout_value(project.get("audio_cpp_timeout"))
+        self._set_audio_cpp_max_batch_value(project.get("audio_cpp_max_batch"))
+        # A hand-edited profile could pair turbo with vulkan; the turbo guard
+        # falls back to pytorch instead of leaving the invalid combination
+        # selected (RenderSettings would otherwise pass it through to a
+        # confusing engine error at render time).
+        self._refresh_inference_backend_options()
+
+    def _apply_paths_project_settings(self, project: dict) -> None:
+        """The Script & Cast section's slice of a GUI payload (output folder
+        and filename)."""
+        self.outdir_path.setText(str(project.get("output_dir", self.paths.output_dir)))
+        self._output_name_edited = bool(project.get("output_filename", ""))
+        self.output_name.setText(normalize_output_filename(str(project.get("output_filename", ""))))
 
     def reset_settings_to_defaults(self) -> None:
         self._apply_gui_settings_payload(self._default_gui_settings_payload())

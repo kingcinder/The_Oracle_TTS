@@ -261,10 +261,40 @@ def register_ctrl_help_descriptions(
     passes the bare app_gui name -- it resolves at call time, keeping the
     suite's app_gui-level ``cuda_reason`` rebinds live for this moved text
     (the ``_vulkan_prerequisite_missing`` ``find_binary=`` precedent).
+
+    Section-owned descriptions follow their sections' laziness (lazy
+    collapsed sections, 2026-10-10): a restored-collapsed section has no
+    widgets to describe until it builds, so each block registers now for a
+    built section or on the section's first ``content_built``.
     """
     ctrl_help = main_window._ctrl_help
     if ctrl_help is None:
         return
+    _register_action_buttons(main_window, ctrl_help)
+    _register_action_help(main_window, ctrl_help)
+    _register_menubar_help(main_window, ctrl_help)
+    _register_when_built(main_window, "paths", lambda: _register_paths_help(main_window, ctrl_help))
+    _register_when_built(main_window, "table", lambda: _register_table_help(main_window, ctrl_help))
+    _register_when_built(main_window, "status", lambda: _register_status_help(main_window, ctrl_help))
+    _register_when_built(
+        main_window, "shared", lambda: _register_shared_help(main_window, ctrl_help, cuda_reason_fn)
+    )
+    for key, group in (("speaker_a", main_window.speaker_a), ("speaker_b", main_window.speaker_b)):
+        _register_when_built(main_window, key, lambda g=group: _register_speaker_group_help(g, ctrl_help))
+
+
+def _register_when_built(main_window, key: str, register) -> None:
+    """Run ``register`` now if the section's content exists, otherwise on its
+    first build: a deferred section's widgets only come into existence when
+    it expands (or when code touches one), and their help must follow."""
+    section = main_window._section_registry[key][0]
+    if section.is_content_built():
+        register()
+    else:
+        section.content_built.connect(register)
+
+
+def _register_paths_help(main_window, ctrl_help) -> None:
     ctrl_help.register_many([
         (
             main_window.input_path,
@@ -283,6 +313,20 @@ def register_ctrl_help_descriptions(
             "Filename for the final render, without the extension. Leave "
             "blank to auto-derive from the input file name.",
         ),
+    ])
+    # The row labels and Browse buttons share their field's description,
+    # so hovering the *name* of a control works too (the user asked for
+    # "names, selections, buttons, toggles, or other areas of interest").
+    ctrl_help.register(main_window._path_row_labels[0], ctrl_help.description_for(main_window.input_path))
+    ctrl_help.register(main_window._path_row_buttons[0], "Open a file picker to choose the input script or transcript.")
+    ctrl_help.register(main_window._path_row_labels[1], ctrl_help.description_for(main_window.outdir_path))
+    ctrl_help.register(main_window._path_row_buttons[1], "Open a folder picker to choose where the rendered FLAC is written.")
+    ctrl_help.register(main_window.output_name_label, ctrl_help.description_for(main_window.output_name))
+
+
+def _register_action_buttons(main_window, ctrl_help) -> None:
+    """The bare Analyze/Render action row (never inside a section)."""
+    ctrl_help.register_many([
         (
             main_window.analyze_button,
             "Analyze the input: repair text, attribute lines to speakers "
@@ -295,18 +339,32 @@ def register_ctrl_help_descriptions(
             "with the selected inference backend, assemble the two "
             "speakers, and write the output file.",
         ),
+    ])
+
+
+def _register_table_help(main_window, ctrl_help) -> None:
+    ctrl_help.register_many([
         (
             main_window.table,
             "Review table, one row per utterance: index, speaker, "
             "original/repaired text, emotion (editable), duration, "
             "status, preview, and stem on/off.",
         ),
+    ])
+
+
+def _register_status_help(main_window, ctrl_help) -> None:
+    ctrl_help.register_many([
         (
             main_window.error_panel,
             "Status and error log. Render progress, Vulkan preflight "
             "reports, model downloads, and failures are appended here.",
         ),
     ])
+    ctrl_help.register(main_window.status_label, ctrl_help.description_for(main_window.error_panel))
+
+
+def _register_shared_help(main_window, ctrl_help, cuda_reason_fn) -> None:
     ctrl_help.register_many([
         (
             main_window.variant_combo,
@@ -387,8 +445,29 @@ def register_ctrl_help_descriptions(
             "Equivalent to ORACLE_AUDIOCPP_MAX_BATCH.",
         ),
     ])
-    for group in main_window._all_speaker_groups().values():
-        ctrl_help.register_many([
+    # Form row labels (e.g. "Model Variant", "CFG Weight") get the same
+    # help as their field.
+    ctrl_help.register_form_labels(main_window._project_settings_form, [
+        main_window.variant_combo,
+        main_window.correction_mode_combo,
+        main_window.loudness_combo,
+        main_window.crossfade_spin,
+        main_window.inference_backend_combo,
+        main_window.audio_cpp_device_combo,
+        main_window.audio_cpp_threads_spin,
+        main_window.audio_cpp_timeout_spin,
+        main_window.audio_cpp_max_batch_spin,
+        main_window.pytorch_device_combo,
+    ])
+    # The Inference Backend row's field is a layout, so its label is not
+    # covered by register_form_labels; register it explicitly.
+    backend_label = main_window._project_settings_form.labelForField(main_window._inference_backend_row)
+    if backend_label is not None:
+        ctrl_help.register(backend_label, ctrl_help.description_for(main_window.inference_backend_combo))
+
+
+def _register_speaker_group_help(group, ctrl_help) -> None:
+    ctrl_help.register_many([
             (
                 group.reference_picker,
                 "Voice reference audio this speaker clones: a default "
@@ -451,6 +530,22 @@ def register_ctrl_help_descriptions(
                 "line. Chunk seams breathe ~35% (min 40 ms).",
             ),
         ])
+    ctrl_help.register_form_labels(group.form, [
+        group.reference_picker,
+        group.blend_picker,
+        group.blend_weight_spin,
+        group.blend_mode_combo,
+        group.language_combo,
+        group.cfg_weight,
+        group.exaggeration,
+        group.temperature,
+        group.emotion_intensity,
+        group.naturalness,
+        group.pause_spin,
+    ])
+
+
+def _register_action_help(main_window, ctrl_help) -> None:
     ctrl_help.register_many([
         (main_window.new_action, "Start a new project: clears the review table and plan while keeping the current shared and speaker settings."),
         (main_window.open_action, "Load a saved project manifest, restoring the plan, review table, and settings."),
@@ -469,48 +564,9 @@ def register_ctrl_help_descriptions(
         (main_window.recording_wizard_action, "Replay the Recording Studio setup guide, including microphone, folder, naming, and speaking technique."),
         (main_window.output_filename_warning_action, "Show or hide the caution before a render uses its automatically derived generic output filename."),
     ])
-    # The row labels and Browse buttons share their field's description,
-    # so hovering the *name* of a control works too (the user asked for
-    # "names, selections, buttons, toggles, or other areas of interest").
-    ctrl_help.register(main_window._path_row_labels[0], ctrl_help.description_for(main_window.input_path))
-    ctrl_help.register(main_window._path_row_buttons[0], "Open a file picker to choose the input script or transcript.")
-    ctrl_help.register(main_window._path_row_labels[1], ctrl_help.description_for(main_window.outdir_path))
-    ctrl_help.register(main_window._path_row_buttons[1], "Open a folder picker to choose where the rendered FLAC is written.")
-    ctrl_help.register(main_window.output_name_label, ctrl_help.description_for(main_window.output_name))
-    ctrl_help.register(main_window.status_label, ctrl_help.description_for(main_window.error_panel))
-    # Form row labels (e.g. "Model Variant", "CFG Weight") get the same
-    # help as their field.
-    ctrl_help.register_form_labels(main_window._project_settings_form, [
-        main_window.variant_combo,
-        main_window.correction_mode_combo,
-        main_window.loudness_combo,
-        main_window.crossfade_spin,
-        main_window.inference_backend_combo,
-        main_window.audio_cpp_device_combo,
-        main_window.audio_cpp_threads_spin,
-        main_window.audio_cpp_timeout_spin,
-        main_window.audio_cpp_max_batch_spin,
-        main_window.pytorch_device_combo,
-    ])
-    # The Inference Backend row's field is a layout, so its label is not
-    # covered by register_form_labels; register it explicitly.
-    backend_label = main_window._project_settings_form.labelForField(main_window._inference_backend_row)
-    if backend_label is not None:
-        ctrl_help.register(backend_label, ctrl_help.description_for(main_window.inference_backend_combo))
-    for group in main_window._all_speaker_groups().values():
-        ctrl_help.register_form_labels(group.form, [
-            group.reference_picker,
-            group.blend_picker,
-            group.blend_weight_spin,
-            group.blend_mode_combo,
-            group.language_combo,
-            group.cfg_weight,
-            group.exaggeration,
-            group.temperature,
-            group.emotion_intensity,
-            group.naturalness,
-            group.pause_spin,
-        ])
+
+
+def _register_menubar_help(main_window, ctrl_help) -> None:
     # The bar itself (not just its actions): covers the menu-bar padding
     # and Qt's internal overflow extension button, which has no text of
     # its own and resolves its description through the parent walk.

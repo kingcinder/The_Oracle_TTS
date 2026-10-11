@@ -167,12 +167,18 @@ def test_main_window_builds_the_live_column_from_gui_chrome() -> None:
     register_calls = [
         c
         for c in _calls(build_ui)
-        if _callee_name(c) == "_register_section"
+        # The deferred-sections slice registers every section — live included —
+        # through _register_lazy_section, which delegates to _register_section
+        # (persistence wiring included). Either spelling is the contract.
+        if _callee_name(c) in {"_register_section", "_register_lazy_section"}
         and c.args
         and isinstance(c.args[0], ast.Constant)
         and c.args[0].value == "live"
     ]
-    assert len(register_calls) == 1, "the 'live' section must stay registered for persistence"
+    assert len(register_calls) == 1, (
+        "the 'live' section must stay registered for persistence "
+        "(via _register_section or the lazy _register_lazy_section wrapper)"
+    )
 
 
 #: The progress dialogs MainWindow dismisses at the end of an operation. The

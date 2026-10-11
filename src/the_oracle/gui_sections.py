@@ -9,13 +9,28 @@
   the GUI's sections. Slider positions and collapsed states are emitted via
   :attr:`size_share_changed` / :attr:`collapsed_changed` so the main window
   can persist them across restarts.
+
+Lazy content: a section may register a *content factory* with
+:meth:`QHSectionGroup.set_content_factory` instead of being populated by its
+constructor. The factory runs on first demand — an explicit
+:meth:`ensure_content` or the first expand — so a section that starts
+collapsed (restored workspace state) never constructs its widgets: a smaller
+tree at startup and one less subtree for Qt to re-polish on a theme switch.
+Collapsing never destroys built content; :attr:`content_built` fires once,
+after the factory ran, for callers that must restore saved state into the
+freshly built widgets.
 """
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Callable
+
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QGroupBox, QSlider, QToolButton, QWidget
+
+from the_oracle.gui_themes import bulk_restyle
 
 COLLAPSE_TOOLTIP = (
     "Collapse / Expand: hides this section's controls without discarding them; "
@@ -36,6 +51,10 @@ class QHSectionGroup(QGroupBox):
 
     size_share_changed = Signal(int)
     collapsed_changed = Signal(bool)
+    #: Fired once, right after the registered content factory populated the
+    #: section. Deferred sections use it to restore saved state on first
+    #: expand (the widgets only exist from that point on).
+    content_built = Signal()
 
     def __init__(
         self,
@@ -50,6 +69,10 @@ class QHSectionGroup(QGroupBox):
         self._splitter = None
         self._splitter_index = -1
         self._collapsed = False
+        # Lazy content: no factory registered means the caller populated the
+        # section eagerly, i.e. content is "built" by definition.
+        self._content_factory: Callable[[], None] | None = None
+        self._content_is_built = True
 
         self._toggle = QToolButton(self)
         self._toggle.setText("\u2013")  # minus: expanded
@@ -58,7 +81,13 @@ class QHSectionGroup(QGroupBox):
         self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle.setToolTip(COLLAPSE_TOOLTIP)
         self._toggle.setAccessibleName(f"Collapse or expand the {title} section")
-        self._toggle.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
+        # Widget-level restyles run inside the bulk-restyle scope: measured
+        # (2026-10-10 construction-storm audit) at 1 change event / 0.06 ms
+        # per call, so the gate costs nothing here and guarantees no app-wide
+        # event filter is ever re-entered by a widget-level stylesheet — a
+        # future heavier per-widget style gets the gate for free.
+        with bulk_restyle():
+            self._toggle.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
         self._toggle.setFixedSize(22, 18)
         self._toggle.toggled.connect(self._on_toggled)
 
@@ -103,12 +132,66 @@ class QHSectionGroup(QGroupBox):
     def has_size_slider(self) -> bool:
         return self._size_slider is not None
 
+    def set_content_factory(self, factory: Callable[[], None]) -> None:
+        """Register the callable that populates this section on first demand.
+
+        Call before the first :meth:`ensure_content` (typically right after
+        construction): registering flips the section to "not built" and the
+        factory replaces any eager population. Sections without a factory
+        keep the eager, always-built behavior.
+        """
+        self._content_factory = factory
+        self._content_is_built = False
+
+    def release_content_factory(self) -> None:
+        """Drop the pending factory and the one-shot ``content_built`` hooks.
+
+        The factory and the connected receivers are Python callables —
+        closures over the main window — held by this wrapper, and PySide
+        keeps such non-QObject callables alive in C-level connection
+        structures that CPython's garbage collector cannot trace. A window
+        destroyed with them still registered therefore keeps its Python
+        wrapper pinned alive forever (the leak
+        ``tests/test_gui_window_lifetime.py`` pins). Called from the accepted
+        close path while the window is still fully alive; afterwards the
+        section behaves as eagerly built. Collapsing/expanding still works —
+        content, once built, is never discarded.
+        """
+        self._content_factory = None
+        # disconnect() with no receivers is a printed RuntimeWarning in
+        # PySide6 (not an exception), which the close path must not emit.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            self.content_built.disconnect()
+
+    def is_content_built(self) -> bool:
+        """True once the registered factory has run (or none is registered)."""
+        return self._content_is_built
+
+    def ensure_content(self) -> None:
+        """Run the registered content factory once; later calls are no-ops.
+
+        Marked built *before* the factory runs, so a factory (or a restore
+        hook on :attr:`content_built`) that touches something which circles
+        back here cannot recurse forever — it sees "built" and proceeds.
+        """
+        if self._content_is_built:
+            return
+        self._content_is_built = True
+        factory = self._content_factory
+        if factory is not None:
+            factory()
+        self.content_built.emit()
+
     # -- internals -----------------------------------------------------------
 
     def _on_toggled(self, expanded: bool) -> None:
         self._collapsed = not expanded
         self._toggle.setText("\u2013" if expanded else "+")
         if expanded:
+            # First expand of a deferred section: build its content before it
+            # becomes visible (the factory is a no-op once built).
+            self.ensure_content()
             self.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
         else:
             self.setMaximumHeight(_COLLAPSED_HEADER_HEIGHT)

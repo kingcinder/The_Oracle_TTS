@@ -42,9 +42,16 @@
     },
     "the_oracle.gui_cast": {
       "names": [
-        "_CastRow"
+        "_CastRow",
+        "CastManagementDialog"
       ],
-      "note": "Only the row widget: CastManagementDialog - which MainWindow constructs from app_gui globals, the RecordingStudioDialog precedent - builds its rows from gui_cast's globals, so an app_gui-level patch of _CastRow is a silent no-op. SpeakerGroup, CastManagementDialog, _speaker_settings_from_group and _apply_speaker_settings_to_group must NOT be listed: MainWindow reads/constructs them from app_gui globals too (split readership - the patch-surface net's PARTIAL_OWNED records the partial patch coverage)."
+      "note": "EXECUTED 2026-10-10 (the cast-bar cluster slice; the pre-flight below was recorded earlier the same day and is kept for the reasoning it carries). Only the row widget and the modal dialog are listed. _CastRow: the dialog builds its rows from gui_cast's globals, so an app_gui-level patch of it is a silent no-op. CastManagementDialog: listed as of this slice - its only app_gui runtime reader was the moved open_cast_manager (the __init__ use is an annotation), so no app_gui runtime reader remains, app_gui no longer re-exports it, and an app_gui-level patch of it is an offender to repoint at gui_cast (the _CastRow rule). SpeakerGroup, _speaker_settings_from_group and _apply_speaker_settings_to_group are NOT listed: a staying app_gui site reads each (SpeakerGroup - _build_ui builds panels A/B; _speaker_settings_from_group - _widget_snapshot; _apply_speaker_settings_to_group - _restore_speaker_section), so app_gui-level patches stay legitimate and the moved bodies receive them as INJECTIONS at the delegate boundary, resolved from app_gui's globals at call time. The four call-boundary names this slice injects are speaker_group_cls into _sync_extra_speaker_groups, settings_from_group_fn into _speaker_settings, and apply_settings_fn + normalize_keys_fn into apply_cast (the find_audiocpp_binary pattern) - normalize_cast_keys included (its staying readers are _load_project_into_ui and prepare_project, so it stays bare-resolvable at app_gui level and gains no PARTIAL_OWNED entry). A module-global read of any of the four inside gui_cast would turn every app_gui-level rebind of it into a silent no-op for the moved path; they stay unlistable permanently because their staying readers are window-assembly and persistence code that does not travel with the cluster. SpeakerSettings and speaker_config_from_payload need no seam: each is read at runtime only by the moved _speaker_config_from_payload body and each is already listed as moved-owned elsewhere in this record (the_oracle.models.settings; the_oracle.gui_settings), so app_gui-level patches are already offenders and the moved body resolves gui_cast's imports of them - and gui_cast joins payload_policy.policy_owners as a delegates owner for speaker_config_from_payload, since the decode delegate genuinely lives there now. SpeakerSettings' latent split adjudication is pruned in the same edit: app_gui keeps only annotation uses of it, so no runtime read remains on that side and the pair the latent net audits is gone. The ten cluster methods' bodies moved VERBATIM into gui_cast as main_window-taking functions (comments and blank lines preserved; the only textual edits are self -> main_window, the four injected names, and CastManagementDialog(self) -> CastManagementDialog(main_window)), and each app_gui method remains as a thin delegate whose body imports its owner function FUNCTION-LOCALLY (the settled entry-point delegate convention), so app_gui holds no module-level binding for any of them, an app_gui-level patch is a silent no-op, and gui_cast is the single patch point - literally what this listing records under rule 1."
+    },
+    "the_oracle.gui_menu": {
+      "names": [
+        "build_menu"
+      ],
+      "note": "extraction slice 12 (2026-10-10): the whole menu-bar body moved verbatim out of MainWindow._build_menu, which stays in app_gui as the thin call-site delegate (a method, so _build_menu itself is NOT listed here). `themes` crosses by injection at that boundary, so gui_menu binds no THEMES global and an app_gui-level THEMES rebind stays live for the moved body - the seam this slice is mutation-proven on. The patch-couple net needs no new bare-set exemption: neither QAction (imported by gui_menu) nor THEMES (injected) is in the suite's app_gui-rebind census. ENTRY-POINT DELEGATE CONVENTION (adjudicated 2026-10-10): the delegate imports build_menu FUNCTION-LOCALLY inside `_build_menu` (the slice-10 gui_ingest_tools style, settled as the campaign's single entry-point convention), so app_gui holds NO module-level binding for this name - an app_gui-level patch is a silent no-op and gui_menu is the single patch point, resolving at call time, which is what makes this listing literally true under rule 1. Before this, the module-level import made an app_gui-level patch LIVE for the delegate call while repointing at gui_menu was inert."
     },
     "the_oracle.gui_ingest_tools": {
       "names": [
@@ -58,7 +65,7 @@
       "names": [
         "register_ctrl_help_descriptions"
       ],
-      "note": "extraction slice 11 (2026-10-10): the Ctrl+hover description table moved verbatim from MainWindow._register_ctrl_help_descriptions (which remains a thin delegate with its exact call-site signature). The one patch-coupled name that body uses, cuda_reason, crosses as an INJECTION callable (cuda_reason_fn) resolved from app_gui globals at call time - the _vulkan_prerequisite_missing find_binary= precedent - so app_gui-level wholesale rebinds keep reaching the moved text, and this module needs no bare-set exemption (it binds no coupled name)."
+      "note": "extraction slice 11 (2026-10-10): the Ctrl+hover description table moved verbatim from MainWindow._register_ctrl_help_descriptions (which remains a thin delegate with its exact call-site signature). The one patch-coupled name that body uses, cuda_reason, crosses as an INJECTION callable (cuda_reason_fn) resolved from app_gui globals at call time - the _vulkan_prerequisite_missing find_binary= precedent - so app_gui-level wholesale rebinds keep reaching the moved text, and this module needs no bare-set exemption (it binds no coupled name). ENTRY-POINT DELEGATE CONVENTION (adjudicated 2026-10-10): the delegate imports register_ctrl_help_descriptions FUNCTION-LOCALLY inside `_register_ctrl_help_descriptions` (the slice-10 gui_ingest_tools style, settled as the campaign's single entry-point convention), so app_gui holds NO module-level binding for this name - an app_gui-level patch is a silent no-op and gui_tooltips is the single patch point, resolving at call time, which is what makes this listing literally true under rule 1. Before this, the module-level import made an app_gui-level patch LIVE for the delegate call while repointing at gui_tooltips was inert."
     }
   },
   "payload_policy": {
@@ -107,6 +114,7 @@
       "_handle_vulkan_model_downloaded",
       "_refresh_audio_cpp_knob_options",
       "_refresh_cast_bar",
+      "_monologue_enabled",
       "_refresh_inference_backend_options",
       "_refresh_language_options",
       "apply_cast"
@@ -121,7 +129,8 @@
     ],
     "policy_owners": {
       "the_oracle.gui_settings": "definition",
-      "the_oracle.app_gui": "delegates"
+      "the_oracle.app_gui": "delegates",
+      "the_oracle.gui_cast": "delegates"
     },
     "schema_keys": [
       "model_variant",
@@ -170,7 +179,7 @@
     "min_preview_sites": 1
   },
   "patch_couple_policy": {
-    "description": "Policy data for the patch-couple seam net (tests/test_app_gui_patch_surface.py): a name the suite rebinds at the app_gui module level is patch-coupled, and a moved gui_* module whose body resolves it as a bare global turns every app_gui-level rebind of it into a silent no-op. The net derives the coupled set from the test suite itself (self-updating census), scans every gui_* module's bare Name loads, and requires the raw bare set to equal the sanctioned exemptions EXACTLY: a new bare use fails until the call boundary injects the name (the 2ba2392 find_audiocpp_binary pattern) or the split is sanctioned here with a reason; a stale exemption fails until pruned.",
+    "description": "Policy data for the patch-couple seam net (tests/test_app_gui_patch_surface.py): a name the suite rebinds at the app_gui module level is patch-coupled, and a moved gui_* module whose body resolves it as a bare global turns every app_gui-level rebind of it into a silent no-op. The net derives the coupled set from the test suite itself (self-updating census), scans every gui_* module's bare Name loads, and requires the raw bare set to equal the sanctioned exemptions EXACTLY: a new bare use fails until the call boundary injects the name (the 2ba2392 find_audiocpp_binary pattern) or the split is sanctioned here with a reason; a stale exemption fails until pruned. The same record also carries the LATENT split-readership adjudications: names no test rebinds YET but that both a staying app_gui function body and a gui_* module read in runtime position - the pair a future app_gui-level patch would silently half-cover. latent_split_readership entries are adjudicated with a reason and enforced with the same exact-set rule; latent_anchor_names and min_latent_pairs are the latent scan's blindness guards, mirroring the census's. The ANCHOR set is adjudicated alongside its pairs: THEMES left it on 2026-10-10 when tests/test_gui_menu_themes_seam.py rebinding app_gui.THEMES moved that name to the census side by construction - a name the census owns can never stay a LATENT anchor - and Path, read by eight gui_* modules' latent pairs, took its place so the guard stays three names strong.",
     "census_noise_names": [
       "name"
     ],
@@ -204,7 +213,139 @@
       },
       "gui_settings.py": {
         "load_recent_reference_paths": "documented split: app_gui imports the loader and its two call sites resolve from app_gui globals (app_gui-level rebinds stay live); gui_settings' internal recursion inside the recents-add helper resolves from its own module by design"
+      },
+      "gui_themes.py": {
+        "THEMES": "documented split (slice 12, promoted 2026-10-10): THEMES is DEFINED in gui_themes.py and that module's own stylesheet/theme-application helpers read its definition, so an app_gui-level rebind reaches those bodies only when rebindings land at gui_themes.py. The window's menu path is the exception the name is in the census for - app_gui's _build_menu delegate resolves its THEMES global and injects it into gui_menu.build_menu(themes=...), pinned by tests/test_gui_menu_themes_seam.py rebinding app_gui.THEMES and finding the sentinel look in the Theme menu. Promoted out of latent_split_readership: that permanent test moves THEMES into the census by construction, and its latent entry was pruned in the same edit."
       }
-    }
+    },
+    "latent_split_readership": {
+      "gui_cast.py": {
+        "Path": "Path: stdlib import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QComboBox": "QComboBox: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QFileDialog": "QFileDialog: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QFormLayout": "QFormLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QHBoxLayout": "QHBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QHSectionGroup": "QHSectionGroup is imported by both sides from the_oracle.gui_sections; an app_gui-level rebind would miss gui_cast.py's reads - repoint at gui_cast.py (or rebind the_oracle.gui_sections) if a flow ever needs it.",
+        "QLabel": "QLabel: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QLineEdit": "QLineEdit: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QPushButton": "QPushButton: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QScrollArea": "QScrollArea: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QVBoxLayout": "QVBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QWidget": "QWidget: PySide6 import held by both sides; an app_gui-level rebind would miss gui_cast.py's uses - inject or repoint at gui_cast.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "SpeakerGroup": "SpeakerGroup lives in gui_cast.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_cast.py for both sides.",
+        "VoiceSettings": "VoiceSettings is imported by both sides from the_oracle.models.project; an app_gui-level rebind would miss gui_cast.py's reads - repoint at gui_cast.py (or rebind the_oracle.models.project) if a flow ever needs it.",
+        "_apply_speaker_settings_to_group": "_apply_speaker_settings_to_group lives in gui_cast.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_cast.py for both sides.",
+        "_speaker_settings_from_group": "_speaker_settings_from_group lives in gui_cast.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_cast.py for both sides."
+      },
+      "gui_chrome.py": {
+        "QHSectionGroup": "QHSectionGroup is imported by both sides from the_oracle.gui_sections; an app_gui-level rebind would miss gui_chrome.py's reads - repoint at gui_chrome.py (or rebind the_oracle.gui_sections) if a flow ever needs it.",
+        "QLabel": "QLabel: PySide6 import held by both sides; an app_gui-level rebind would miss gui_chrome.py's uses - inject or repoint at gui_chrome.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QVBoxLayout": "QVBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_chrome.py's uses - inject or repoint at gui_chrome.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QWidget": "QWidget: PySide6 import held by both sides; an app_gui-level rebind would miss gui_chrome.py's uses - inject or repoint at gui_chrome.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "RenderProgressDialog": "RenderProgressDialog is imported by both sides from the_oracle.gui_render; an app_gui-level rebind would miss gui_chrome.py's reads - repoint at gui_chrome.py (or rebind the_oracle.gui_render) if a flow ever needs it."
+      },
+      "gui_crash.py": {
+        "QHBoxLayout": "QHBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_crash.py's uses - inject or repoint at gui_crash.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QLabel": "QLabel: PySide6 import held by both sides; an app_gui-level rebind would miss gui_crash.py's uses - inject or repoint at gui_crash.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QPushButton": "QPushButton: PySide6 import held by both sides; an app_gui-level rebind would miss gui_crash.py's uses - inject or repoint at gui_crash.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QVBoxLayout": "QVBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_crash.py's uses - inject or repoint at gui_crash.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "json": "json: stdlib import held by both sides; an app_gui-level rebind would miss gui_crash.py's uses - repoint at gui_crash.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_ingest.py": {
+        "Path": "Path: stdlib import held by both sides; an app_gui-level rebind would miss gui_ingest.py's uses - repoint at gui_ingest.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QCheckBox": "QCheckBox: PySide6 import held by both sides; an app_gui-level rebind would miss gui_ingest.py's uses - inject or repoint at gui_ingest.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QHBoxLayout": "QHBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_ingest.py's uses - inject or repoint at gui_ingest.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QLabel": "QLabel: PySide6 import held by both sides; an app_gui-level rebind would miss gui_ingest.py's uses - inject or repoint at gui_ingest.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QPushButton": "QPushButton: PySide6 import held by both sides; an app_gui-level rebind would miss gui_ingest.py's uses - inject or repoint at gui_ingest.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QTextEdit": "QTextEdit: PySide6 import held by both sides; an app_gui-level rebind would miss gui_ingest.py's uses - inject or repoint at gui_ingest.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QVBoxLayout": "QVBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_ingest.py's uses - inject or repoint at gui_ingest.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "Qt": "Qt: PySide6 import held by both sides; an app_gui-level rebind would miss gui_ingest.py's uses - inject or repoint at gui_ingest.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_ingest_tools.py": {
+        "Path": "Path: stdlib import held by both sides; an app_gui-level rebind would miss gui_ingest_tools.py's uses - repoint at gui_ingest_tools.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "save_app_settings": "save_app_settings is imported by both sides from the_oracle.gui_settings; an app_gui-level rebind would miss gui_ingest_tools.py's reads - repoint at gui_ingest_tools.py (or rebind the_oracle.gui_settings) if a flow ever needs it."
+      },
+      "gui_license.py": {
+        "Path": "Path: stdlib import held by both sides; an app_gui-level rebind would miss gui_license.py's uses - repoint at gui_license.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QLabel": "QLabel: PySide6 import held by both sides; an app_gui-level rebind would miss gui_license.py's uses - inject or repoint at gui_license.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QVBoxLayout": "QVBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_license.py's uses - inject or repoint at gui_license.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_menu.py": {
+        "QAction": "QAction: PySide6 import held by both sides; an app_gui-level rebind would miss gui_menu.py's uses - inject or repoint at gui_menu.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_recording.py": {
+        "Path": "Path: stdlib import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QCheckBox": "QCheckBox: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QComboBox": "QComboBox: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QFileDialog": "QFileDialog: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QFormLayout": "QFormLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QHBoxLayout": "QHBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QLabel": "QLabel: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QLineEdit": "QLineEdit: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QPushButton": "QPushButton: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QSpinBox": "QSpinBox: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QTimer": "QTimer: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QUrl": "QUrl: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QVBoxLayout": "QVBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - inject or repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "threading": "threading: stdlib import held by both sides; an app_gui-level rebind would miss gui_recording.py's uses - repoint at gui_recording.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_render.py": {
+        "Path": "Path: stdlib import held by both sides; an app_gui-level rebind would miss gui_render.py's uses - repoint at gui_render.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QLabel": "QLabel: PySide6 import held by both sides; an app_gui-level rebind would miss gui_render.py's uses - inject or repoint at gui_render.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QVBoxLayout": "QVBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_render.py's uses - inject or repoint at gui_render.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "RenderPlan": "RenderPlan is imported by both sides from the_oracle.models.project; an app_gui-level rebind would miss gui_render.py's reads - repoint at gui_render.py (or rebind the_oracle.models.project) if a flow ever needs it.",
+        "Utterance": "Utterance is imported by both sides from the_oracle.models.project; an app_gui-level rebind would miss gui_render.py's reads - repoint at gui_render.py (or rebind the_oracle.models.project) if a flow ever needs it.",
+        "json": "json: stdlib import held by both sides; an app_gui-level rebind would miss gui_render.py's uses - repoint at gui_render.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "os": "os: stdlib import held by both sides; an app_gui-level rebind would miss gui_render.py's uses - repoint at gui_render.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "sys": "sys: stdlib import held by both sides; an app_gui-level rebind would miss gui_render.py's uses - repoint at gui_render.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "time": "time: stdlib import held by both sides; an app_gui-level rebind would miss gui_render.py's uses - repoint at gui_render.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_sections.py": {
+        "QHSectionGroup": "QHSectionGroup lives in gui_sections.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_sections.py for both sides.",
+        "Qt": "Qt: PySide6 import held by both sides; an app_gui-level rebind would miss gui_sections.py's uses - inject or repoint at gui_sections.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_settings.py": {
+        "GUISettingsError": "GUISettingsError lives in gui_settings.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_settings.py for both sides.",
+        "Path": "Path: stdlib import held by both sides; an app_gui-level rebind would miss gui_settings.py's uses - repoint at gui_settings.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "VoiceSettings": "VoiceSettings is imported by both sides from the_oracle.models.project; an app_gui-level rebind would miss gui_settings.py's reads - repoint at gui_settings.py (or rebind the_oracle.models.project) if a flow ever needs it.",
+        "json": "json: stdlib import held by both sides; an app_gui-level rebind would miss gui_settings.py's uses - repoint at gui_settings.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "load_gui_settings": "load_gui_settings lives in gui_settings.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_settings.py for both sides.",
+        "normalize_cast_keys": "normalize_cast_keys is imported by both sides from the_oracle.gui_utils; an app_gui-level rebind would miss gui_settings.py's reads - repoint at gui_settings.py (or rebind the_oracle.gui_utils) if a flow ever needs it.",
+        "normalize_correction_mode": "normalize_correction_mode is imported by both sides from the_oracle.correction_modes; an app_gui-level rebind would miss gui_settings.py's reads - repoint at gui_settings.py (or rebind the_oracle.correction_modes) if a flow ever needs it.",
+        "normalize_output_filename": "normalize_output_filename is imported by both sides from the_oracle.app_paths; an app_gui-level rebind would miss gui_settings.py's reads - repoint at gui_settings.py (or rebind the_oracle.app_paths) if a flow ever needs it.",
+        "save_gui_settings": "save_gui_settings lives in gui_settings.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_settings.py for both sides."
+      },
+      "gui_themes.py": {
+        "DEFAULT_THEME": "DEFAULT_THEME lives in gui_themes.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_themes.py for both sides."
+      },
+      "gui_tooltips.py": {
+        "QApplication": "QApplication: PySide6 import held by both sides; an app_gui-level rebind would miss gui_tooltips.py's uses - inject or repoint at gui_tooltips.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QTimer": "QTimer: PySide6 import held by both sides; an app_gui-level rebind would miss gui_tooltips.py's uses - inject or repoint at gui_tooltips.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "Qt": "Qt: PySide6 import held by both sides; an app_gui-level rebind would miss gui_tooltips.py's uses - inject or repoint at gui_tooltips.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_utils.py": {
+        "Path": "Path: stdlib import held by both sides; an app_gui-level rebind would miss gui_utils.py's uses - repoint at gui_utils.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "normalize_cast_keys": "normalize_cast_keys lives in gui_utils.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_utils.py for both sides.",
+        "os": "os: stdlib import held by both sides; an app_gui-level rebind would miss gui_utils.py's uses - repoint at gui_utils.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_vulkan.py": {
+        "_vulkan_prerequisite_missing": "app_gui defines its own wrapper of this name (delegating to gui_vulkan's implementation with an injected find_binary) while gui_vulkan reads its own definition; an app_gui-level rebind reaches app_gui's call sites only - rebind inside gui_vulkan to reach its uses.",
+        "os": "os: stdlib import held by both sides; an app_gui-level rebind would miss gui_vulkan.py's uses - repoint at gui_vulkan.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "threading": "threading: stdlib import held by both sides; an app_gui-level rebind would miss gui_vulkan.py's uses - repoint at gui_vulkan.py if a flow ever needs it; the census net escalates this pair automatically."
+      },
+      "gui_widgets.py": {
+        "QHBoxLayout": "QHBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_widgets.py's uses - inject or repoint at gui_widgets.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QLabel": "QLabel: PySide6 import held by both sides; an app_gui-level rebind would miss gui_widgets.py's uses - inject or repoint at gui_widgets.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QVBoxLayout": "QVBoxLayout: PySide6 import held by both sides; an app_gui-level rebind would miss gui_widgets.py's uses - inject or repoint at gui_widgets.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "QWidget": "QWidget: PySide6 import held by both sides; an app_gui-level rebind would miss gui_widgets.py's uses - inject or repoint at gui_widgets.py if a flow ever needs it; the census net escalates this pair automatically.",
+        "Qt": "Qt: PySide6 import held by both sides; an app_gui-level rebind would miss gui_widgets.py's uses - inject or repoint at gui_widgets.py if a flow ever needs it; the census net escalates this pair automatically."
+      }
+    },
+    "latent_anchor_names": [
+      "Path",
+      "QWidget",
+      "save_gui_settings"
+    ],
+    "min_latent_pairs": 60
   }
 }
