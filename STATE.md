@@ -2548,13 +2548,111 @@ cited when the entry is next touched.
   fresh worktree of that same commit, and working-tree runs are green — so the
   difference is the context it runs in (a full suite of ~1800 tests, on a shared
   checkout other sessions are also driving), not anything the certification
-  checks. Left unfixed on purpose as a bounded unit of its own, not a footnote to
-  a baseline record: the crashing tree is deleted by the tool before its
-  `crash_reports/` can be read, so the next step is one `--keep` run to capture
-  the faulting frame. Consequences today: the commit-keyed baseline's
-  re-verification can fail non-deterministically (a count-preserving crash reads
-  as drift), and `tests/test_fast_subset.py` lists this gate as of `58cf7c9`, so a
-  local `pytest -m "not slow"` loop can segv for the same reason.
+  checks. **Faulting frame captured 2026-10-11** from one kept fresh tree
+  (`--keep` + the consent file planted into the tree so the faulthandler net
+  arms; reproduced 2 of 4 kept runs since, exactly in-shape): the certifier dies
+  inside `_build_window`'s hide/show pump on the REOPENED window of the
+  tape_deck `_certify_persistence` round-trip, in the app-wide event filter
+  `gui_tooltips.CtrlHoverHelp.eventFilter` at the `event.type()` call
+  (gui_tooltips.py:133); the kernel logged the same moment as
+  `python[972235]: segfault at 0 ip 0000000000000000` — a call through a null
+  pointer, uniformly timed at the certifier child's PySide6 import
+  (`qt.multimedia.ffmpeg` pulse/cookie birth ~60 s before its death). Fixes
+  pre-emptively ruled out with evidence: certifier-only or suite-only crashes
+  (`scripts/certify_gui.py --aspects chrome` alone passed 8/8, working-tree
+  suite runs past the gate daily); memory pressure at the gate (free reported
+  ~17 Gi avail — the machine carries an unrelated NVR suite's OOM history, but
+  there was no kernel OOM in the window and the run's RSS never spiked);
+  environment divergence (the child's env differed from a clean shell's only
+  by `OLDPWD`); resource exhaustion (the same full-suite context reproduces
+  armed, unarmed, and with `--capture-output`, and a two-file reduction —
+  test_app_gui_profiles + the gate — never segfaulted in 6 runs). Planted
+  consent caused a DIFFERENT flake once (`test_entry_point_arming` saw the
+  consent file appear mid-run and fail its fail-closed red line), so for
+  re-verifying the baseline the harness itself has a fix available: those
+  consent-visible parts should exec without consent rather than inherit one.
+  Web research found no matching upstream regression (closest is PYSIDE-2747's
+  Fedora/3.12 startup crash — different release, different signature).
+  Remaining candidate cause is the import race (crash handlers at module
+  top of handler-loading, while Qt extension modules load as a side effect
+  of the certifier's imports) colliding with faulthandler's signal context
+  when the caller's Python is 3.12.3's faulthandler; the direct test of that
+  (run the certifier with faulthandler disabled) and a core-capture reproducer
+  purposed for gdb are the next steps if it recurs. The capture recipe above
+  documents what to run if it fires. Measured run tally at the time this note
+  was written: **4 of 5 kept fresh-tree full-suite runs reproduced the crash**
+  (two unarmed, two armed with a captured frame each) and 1 green, plus 12
+  armed-or-empty standalone certifier runs passing, and one consent-flake of a
+  different test (`test_entry_point_arming`) in one armed run.
+
+- **2026-10-11: the geometry pins ride the merge cleanup's conclusion: the
+  two single-harness certifiers were deleted in commit `58cf7c9` (measured,
+  not assumed: `git ls-tree HEAD scripts/` carries only the merged
+  `certify_gui.py`, `certify_theme_switch.py`, `certify_suite_counts.py`),
+  and the deletion is ALREADY in the committed tree — three tests in
+  `tests/test_gui_theme_certification.py` pin
+  `_collect_problems` exactly so the removal's survivors stay pinned.** The chrome aspect's "no visible widget is
+  zero-sized or clipped" verdict reads the one scan; nothing pinned the scan's
+  own report shape, so a merge cleanup renaming the zero-geometry line,
+  deduplicating it wrongly (double- or zero-reporting for one flawed widget),
+  or dropping the visibility gate would have landed as a TEST-side green with
+  a silently different reader contract. Three pins, all on real offscreen
+  widgets (not synthetic objects): **one zero-geometry child produces exactly
+  one `zero size` line** (the merge-cleanup regression shape; the mutation
+  double-appending to `problems` was run live on the real bytes and the pin
+  fired, file restored byte-identical); **two independent zero-size children
+  produce exactly two lines** (the deduplicate-everything complement);
+  **a hidden zero-geometry child produces nothing while its VISIBLE sibling
+  under the same parent still reports** (the visibility gate is a gate, not a
+  broken prefix), verified bidirectionally (hide → []; re-show → reports)
+  so the swallow cannot be confused with a dead prefix. The degenerate
+  geometry is forced with `setGeometry(0, 0, 0, 0)` — a default child inherits
+  its parent's size, which is not a geometry problem (measured before
+  writing). The pins run in the fast subset file through its own module
+  `qt_app` fixture, and the report line is asserted to open with the
+  widget's objectName — the reader-facing name the cleanup must not change.
+  File green standalone (13 passed) and with the certifier family (31 passed:
+  theme cert, sections chrome, certifier isolation, fast subset).
+
+- **2026-10-11: the slice-12 owner net landed — `tests/test_gui_menu_owner.py`
+  (11 tests, all passing), closing the last un-owned moved module.** Every
+  other moved gui_* module has an owner net pinned from the manifest record
+  and the module's own shape (gui_vulkan September 20/28, gui_cast October
+  5, gui_recording September 28, gui_settings October 5, payload policy,
+  import direction, patch-surface); gui_menu had only the THEMES seam net
+  and its `moved_owners` listing, with no file pinning the owner-side shape
+  as a whole. The new net picks up the family convention: **ONE OWNER** —
+  `build_menu` defined in gui_menu as its only public function, app_gui
+  holding NO module-level binding for it in any spelling (the slice-10
+  function-local delegate convention, so an app_gui-level patch is a quiet
+  no-op and gui_menu is the single patch point); **the delegate passes the
+  bare `THEMES` name** (source-level pin of `build_menu(self,
+  themes=THEMES)`); **the seam is a required KEYWORD-ONLY parameter** — the
+  arguments-by-signature pin others express in prose; **DIRECTION** via the
+  shared `_scan_imports` scanner (app_gui forbidden in every spelling,
+  dynamic included, unresolved failing loudly); **the harm class against
+  the suite-derived census** — 21 names re-derived as a literal-set scan
+  across tests/test_*.py every run, with a vacuity guard (the census floor
+  and classification probe the other owner nets carry); **the manifest
+  record** (`moved_owners.the_oracle.gui_menu` lists exactly `build_menu`);
+  and a **self-sufficiency probe** on a real-QMainWindow stub driven with
+  an INJECTED two-theme mapping: the four menus plus menu-bar Recording
+  Studio action build, the Theme menu iterates the injected mapping exactly
+  (order included — `Stub Probe Dark/Light`, never a real look), and all 25
+  `main_window.*` assignments land on the window. **Mutation proofs (each
+  reverted byte-identical, sha256-compared on both sides):** the harm
+  mutation (gui_menu binds its own `THEMES` global and iterates it) fires
+  `test_themes_is_a_required_keyword_only_parameter` AND the seam net's
+  rebound leg; the app_gui re-export fires `test_app_gui_holds_no_module_
+  level_binding_for_the_owner`; the delegate capturing `_MUTATED_CAPTURE =
+  dict(THEMES)` fires `test_delegate_resolves_themes_bare_from_app_gui_
+  globals`; loosening the seam with a `None` default fires the keyword-only
+  pin. **Verified green:** the new file plus the seam/couple/direction/
+  payload nets 40 passed / 0 failed, exit 0; the menu-consumer fast-subset
+  cluster (chrome, theme cert, hermeticity, fast-subset) 25 passed, and a
+  full run of this file standalone is 11/11. Nothing committed: the file is
+  untracked, and this entry rides the same uncommitted STATE.md as the
+  suite-count and chrome-crash work above.
 
 - **`scripts/mutation_probe.py` carries a THIRD copy of the reap policy
   (found 2026-10-11, while factoring the certifier family's preamble into

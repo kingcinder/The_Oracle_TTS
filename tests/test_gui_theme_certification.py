@@ -39,6 +39,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CERTIFIER = REPO_ROOT / "scripts" / "certify_gui.py"
 
 
+@pytest.fixture(scope="module")
+def qt_app():
+    """One QApplication for the geometry-scan pins (the section-chrome file's
+    own module fixture): the two probes build real widgets offscreen."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    yield app
+
+
 def _run_certifier_in_scratch(
     scratch: Path, *args: str
 ) -> tuple[subprocess.CompletedProcess, list[str]]:
@@ -408,7 +418,117 @@ def test_the_dialog_report_parser_cannot_pass_on_a_truncated_report() -> None:
     assert _parse_dialog_report("  ocean_depth: OK - sections render\n") == {}
 
 
-#: Rule-count budget for the app stylesheet. The 2026-10-10 selector diet
+# --- the geometry scan's report shape ------------------------------------------
+
+
+def _load_certifier(name: str = "oracle_certify_gui_for_geometry"):
+    """The certifier, imported as a file (the suite's own script-test idiom).
+
+    Importing the real module runs its preamble (config root + app import),
+    which is exactly what the other certifier-family tests accept: same
+    process, same redirect, same abort-without-QApplication semantics.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, CERTIFIER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault(spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+#: The zero-geometry line as the scan renders it today, asserted literally:
+#: the whole point of the regression pin is that a merge cleanup cannot
+#: change the NAME a reader has to find in the report without a deliberate
+#: re-pin.
+_ZERO_SIZE_PHRASE = "zero size"
+
+
+def test_collect_problems_names_a_zero_geometry_widget_exactly_once(qt_app) -> None:
+    """Regression pin for the merge cleanup: one zero-geometry widget, one line.
+
+    A parent and a child of zero size BOTH qualify (they are independent
+    geometry problems), but a single widget must produce exactly ONE problem —
+    a duplicate line for the same widget doubles the reader's work for one
+    flaw and reads as two broken widgets in a gate report. The widget is a
+    real zero-size child under a real container (not a synthetic object), so
+    the pin exercises the scan's own recursion and naming rules.
+    """
+    from PySide6.QtWidgets import QWidget
+
+    certifier = _load_certifier()
+
+    root = QWidget()
+    root.setObjectName("geometry-pin-root")
+    child = QWidget(root)
+    child.setObjectName("offset-pileup")
+    # Force the degenerate geometry a real pileup leaves behind (a default
+    # child inherits its parent's default size, which is NOT a geometry
+    # problem): the scan's gate is on the rect, not on the creator.
+    child.setGeometry(0, 0, 0, 0)
+    root.show()
+    qt_app.processEvents()
+
+    problems = certifier._collect_problems(root)
+    zero_lines = [line for line in problems if "offset-pileup" in line and _ZERO_SIZE_PHRASE in line]
+
+    assert len(zero_lines) == 1, (
+        f"the zero-geometry widget produced {len(zero_lines)} report lines, not "
+        f"exactly one: {zero_lines!r} — the scan duplicated a problem"
+    )
+    # The line names the widget by its objectName (the scan's own naming
+    # rule: objectName() preferred, type fallback otherwise) — the exact
+    # reader-facing name the merge cleanup must not change silently.
+    assert zero_lines[0].startswith("offset-pileup"), (
+        f"the report line must open with the widget's objectName: {zero_lines[0]!r}"
+    )
+
+
+def test_collect_problems_reports_one_line_per_flawed_widget(qt_app) -> None:
+    """Two independent zero-geometry widgets produce exactly two lines.
+
+    The complement to the single-widget pin: the scan is not collapsing
+    everything into one report line either (a merge cleanup that made the
+    scan deduplicate an entire subtree would break this too).
+    """
+    from PySide6.QtWidgets import QWidget
+
+    certifier = _load_certifier()
+    root = QWidget()
+    ugA = QWidget(root); ugA.setObjectName("degenerate-a")
+    ugB = QWidget(root); ugB.setObjectName("degenerate-b")
+    ugA.setGeometry(0, 0, 0, 0)
+    ugB.setGeometry(0, 0, 0, 0)
+    root.show()
+    qt_app.processEvents()
+
+    problems = certifier._collect_problems(root)
+    named = [line for line in problems if _ZERO_SIZE_PHRASE in line]
+    assert len(named) == 2, f"expected two zero-geometry report lines, got {len(named)}: {named!r}"
+    assert any("degenerate-a" in line for line in named)
+    assert any("degenerate-b" in line for line in named)
+
+
+def test_collect_problems_skips_a_hidden_widget_then_finds_it_again(qt_app) -> None:
+    """The visibility gate (merge cleanup): a zero-geometry HIDDEN child
+    produces nothing — but its VISIBLE sibling under the same parent is still
+    reported with the parent path intact, so a prefix-carrying refactor of
+    the gate cannot be mistaken for the gate existing."""
+    from PySide6.QtWidgets import QWidget
+
+    certifier = _load_certifier()
+    root = QWidget()
+    hidden = QWidget(root); hidden.setObjectName("hidden-zero-geo")
+    hidden.setGeometry(0, 0, 0, 0)
+    root.show()
+    qt_app.processEvents()
+    hidden.hide()
+    qt_app.processEvents()
+
+    assert certifier._collect_problems(root) == []
+    # Vacuity: re-show and the file reports again — the swallow is the gate,
+    # not a broken prefix. The 2026-10-10 selector diet
 #: merged every rule whose declaration block was byte-identical to another
 #: one's (59 -> 51 blocks) without changing a single painted pixel — proven
 #: per-theme by a pixel-comparison probe over a widget zoo covering every
