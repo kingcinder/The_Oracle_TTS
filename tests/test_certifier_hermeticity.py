@@ -219,3 +219,16 @@ def test_no_repo_log_entry_points() -> None:
     source = _source()
     for forbidden in ("configure_logging(", "launch_gui(", "gui_launch_timing"):
         assert forbidden not in source, f"the sweep must not call {forbidden}"
+
+
+def test_certifier_neutralizes_prewarm_and_requires_window_close() -> None:
+    """The GUI certifier measures themed widgets, not model startup or teardown.
+
+    A machine with a cached model must not start native prewarm work while the
+    certifier repeatedly opens windows, and a refused close must not silently
+    leave one window alive while the next is built.
+    """
+    source = _source()
+    assert "window._start_prewarm = lambda: None" in source
+    assert "if not window.close():" in source
+    assert "helper.window is not None" in source

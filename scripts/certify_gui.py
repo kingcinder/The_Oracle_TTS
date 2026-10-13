@@ -282,6 +282,9 @@ def _neutralize_startup_dialogs(window: MainWindow) -> None:
     """
     window._maybe_run_crash_startup_flow = lambda: None
     window._start_inference_wizard = lambda: None
+    # Theme certification is independent of model availability. A cached
+    # model must not start native warmup work during repeated GUI teardown.
+    window._start_prewarm = lambda: None
 
 
 def _build_window(app: QApplication) -> MainWindow:
@@ -312,8 +315,14 @@ def _destroy_window(app: QApplication, window: MainWindow) -> None:
         timer = getattr(window, attr, None)
         if timer is not None:
             timer.stop()
-    if window.close():
-        window.deleteLater()
+    if not window.close():
+        raise RuntimeError(
+            "certifier window refused to close; refusing to build another window"
+        )
+    helper = getattr(window, "_ctrl_help", None)
+    if helper is not None and helper.window is not None:
+        raise RuntimeError("Ctrl-hover helper remained attached after window close")
+    window.deleteLater()
     # A bare processEvents() does not deliver DeferredDelete events posted
     # while outside an event loop — the explicit typed flush is the cut that
     # actually destroys the window (conftest's docstring).
