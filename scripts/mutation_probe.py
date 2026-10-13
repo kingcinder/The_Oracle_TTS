@@ -33,6 +33,13 @@ Usage::
     python scripts/mutation_probe.py --spec /tmp/mut.json --expect-rc 1 -- \\
         .venv/bin/python -m pytest -q tests/test_gui_sections_chrome.py
 
+A mutation this project has already run by hand does not need a spec file:
+``--list-presets`` prints the catalog and ``--preset NAME`` runs one with its
+proof command, its expected status and its expected evidence already attached —
+the certifier-level gate mutation from STATE.md's 2026-10-12 entry, for
+instance: ungate the Live header, sweep all six themes, watch the gate fail.
+Every mutation a preset names still carries this module's own guards.
+
 Or from Python::
 
     with Probe([Mutation(Path("src/x.py"), "old", "new")]) as probe:
@@ -52,6 +59,11 @@ guard refused, the spec was unusable, the child timed out, or the child exited
 nonzero with a status OTHER than the ``--expect-rc`` you named. That last one
 matters: a collection error or a crash is not a caught mutation, and reporting it
 as one is the same class of lie as reading stale bytecode.
+
+``--require-stdout TEXT`` narrows CAUGHT further: the status has to be the one
+asked for AND the child's output (stdout then stderr) has to contain TEXT, or
+the run is INVALID rather than caught. A nonzero status means *something*
+failed; the text is what says the thing this mutation targets is what failed.
 """
 
 from __future__ import annotations
@@ -69,12 +81,18 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 #: Prefix of the probe's throwaway root under the system temp directory. The
 #: root holds one cache directory per run and nothing else.
 _SCRATCH_PREFIX = "oracle_mutation_probe_"
+
+#: The repository this script ships in. A preset names its files and its proof
+#: command relative to HERE, so ``--preset`` works from any working directory
+#: (the proof command runs with this as its cwd), while a ``--spec`` keeps
+#: whatever meaning the caller's own relative paths have.
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class GuardRefused(Exception):
@@ -222,6 +240,97 @@ class Mutation:
         )
 
 
+@dataclass(frozen=True)
+class Preset:
+    """A mutation this repo has already run by hand, packaged with its check.
+
+    The four things a hand run leaves in a commit message instead of in a tool:
+    which bytes to change, which command proves the change is seen, what status
+    that command must exit with, and what its output must say. Recording all
+    four is what makes a later run MEASURE the same thing rather than
+    approximately it — a preset's ``require_stdout`` is the difference between
+    "the gate fired" and "something broke".
+
+    ``mutations`` may name repo-relative paths (resolved against
+    ``REPO_ROOT``); the preset's proof command runs with ``REPO_ROOT`` as its
+    cwd, so it is written the way the documentation writes it. Everything the
+    spec path already guards still applies — this is a spec with a command
+    attached, not a bypass of one.
+    """
+
+    name: str
+    what: str
+    mutations: tuple[Mutation, ...]
+    command: tuple[str, ...]
+    expect_rc: int | None = None
+    require_stdout: str | None = None
+    evidence: str = ""
+
+    def resolve(self) -> list[Mutation]:
+        """The mutations, with repo-relative paths anchored at the repo root."""
+        return [
+            mutation
+            if mutation.path.is_absolute()
+            else replace(mutation, path=REPO_ROOT / mutation.path)
+            for mutation in self.mutations
+        ]
+
+    def describe(self) -> str:
+        """One catalog line: what it mutates, and the proof it runs."""
+        lines = [f"{self.name}: {self.what}"]
+        for mutation in self.mutations:
+            lines.append(f"    mutates {mutation.path} (count {mutation.count})")
+        lines.append(f"    proves  {shlex.join(self.command)}")
+        if self.expect_rc is not None:
+            lines.append(f"    expects status {self.expect_rc}")
+        if self.require_stdout is not None:
+            lines.append(f"    expects output containing {self.require_stdout!r}")
+        if self.evidence:
+            lines.append(f"    recorded: {self.evidence}")
+        return "\n".join(lines)
+
+
+# The certifier-level gate mutation from STATE.md's 2026-10-12 (second slice)
+# entry, recorded as the tool it used to be: ungate gui_chrome's Live header
+# and watch certify_gui's chrome aspect fail all six themes. The replacement
+# DEDENTS rather than merely deleting the ``with`` line — a 12-space suite
+# directly after an 8-space statement is an IndentationError, and a mutation
+# that cannot import proves nothing (pytest exits 4, which this tool already
+# refuses to call caught).
+_LIVE_HEADER_GATE_OLD = (
+    "        with bulk_restyle():\n"
+    '            header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px 0;")\n'
+)
+_LIVE_HEADER_GATE_NEW = (
+    '        header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px 0;")\n'
+)
+
+_PRESETS: tuple[Preset, ...] = (
+    Preset(
+        name="certifier-gate-live-header",
+        what="ungate gui_chrome's Live header setStyleSheet, so the certifier's "
+        "chrome aspect has to fail the sweep on a CLOSED bulk-restyle gate",
+        mutations=(
+            Mutation(
+                path=Path("src/the_oracle/gui_chrome.py"),
+                old=_LIVE_HEADER_GATE_OLD,
+                new=_LIVE_HEADER_GATE_NEW,
+                count=1,
+            ),
+        ),
+        command=(sys.executable, "scripts/certify_gui.py", "--aspects", "chrome"),
+        expect_rc=1,
+        require_stdout="bulk-restyle gate CLOSED",
+        evidence="STATE.md 2026-10-12 (second slice): all six themes failed "
+        "with the gate CLOSED, 0 \"all open\" notes, restored byte-identical (sha256)",
+    ),
+)
+
+#: Name to preset. Built from the tuple so a ``name`` that disagrees with its
+#: own catalog key cannot exist.
+PRESETS: dict[str, Preset] = {preset.name: preset for preset in _PRESETS}
+
+
 @dataclass
 class FileRecord:
     """The hash trail of one mutated file, as reported."""
@@ -358,11 +467,26 @@ class Probe:
         mutated = text.replace(mutation.old, mutation.new).encode("utf-8")
         if mutated == original:
             raise GuardRefused(f"{path}: the replacement does not change the file's bytes")
+        existing = self._by_path.get(path)
+        if existing is None:
+            record = FileRecord(path=path, original_sha256=before, mutated_sha256=digest(mutated))
+            self.records.append(record)
+            self._by_path[path] = record
+            # The FIRST pre-image for this path. Every later bite of the same
+            # file has to revert to this one; see the branch below.
+            self._originals[path] = original
+        else:
+            # A second bite at a file this probe already holds. The record and
+            # the original STAY as they are — the original is the pre-image
+            # from before the first bite, which is what the restore owes the
+            # caller — while only the mutated bytes move forward. Overwriting
+            # them here (as this did until 2026-10-13, found driving a
+            # two-hunk spec at .github/workflows/ci.yml) made revert() put back
+            # the MID-CHAIN bytes: the run then reported CAUGHT and exited 0
+            # with the checkout left half-mutated.
+            record = existing
+            record.mutated_sha256 = digest(mutated)
         path.write_bytes(mutated)
-        record = FileRecord(path=path, original_sha256=before, mutated_sha256=digest(mutated))
-        self.records.append(record)
-        self._by_path[path] = record
-        self._originals[path] = original
         self._mutated[path] = mutated
         record.hazards.extend(forget_hazardous_bytecode(path))
 
@@ -453,7 +577,7 @@ class Probe:
 
     # -- reporting -------------------------------------------------------
 
-    def report(self, *, expect_rc: int | None = None) -> str:
+    def report(self, *, expect_rc: int | None = None, require_stdout: str | None = None) -> str:
         """The text report: the hash trail, the hazards, and every run."""
         lines = [f"mutation probe: {len(self.records)} mutation(s), {len(self.runs)} run(s)"]
         for record in self.records:
@@ -475,9 +599,11 @@ class Probe:
             )
         expected = "any nonzero" if expect_rc is None else str(expect_rc)
         lines.append(f"  expected child status: {expected}")
+        if require_stdout is not None:
+            lines.append(f"  expected child output: {require_stdout!r}")
         return "\n".join(lines)
 
-    def as_json(self, *, expect_rc: int | None = None) -> dict:
+    def as_json(self, *, expect_rc: int | None = None, require_stdout: str | None = None) -> dict:
         """The same facts, for a script or a CI annotation."""
         return {
             "mutations": [
@@ -502,6 +628,7 @@ class Probe:
                 for run in self.runs
             ],
             "expect_rc": expect_rc,
+            "require_stdout": require_stdout,
         }
 
 
@@ -534,7 +661,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--spec",
-        required=True,
         metavar="FILE",
         help='JSON list of {"path","old","new"[,"count"[,"expect_sha256"]]}; "-" reads stdin',
     )
@@ -559,23 +685,82 @@ def main(argv: list[str] | None = None) -> int:
         "--json", action="store_true", help="print one JSON document instead of the text report"
     )
     parser.add_argument(
+        "--preset",
+        metavar="NAME",
+        help="a mutation this repo has already recorded; it supplies its own proof "
+        "command, expected status and expected output (--list-presets prints them)",
+    )
+    parser.add_argument(
+        "--list-presets",
+        action="store_true",
+        help="print the preset catalog and exit",
+    )
+    parser.add_argument(
+        "--require-stdout",
+        metavar="TEXT",
+        default=None,
+        help="CAUGHT only if the child's output (stdout then stderr) contains TEXT; "
+        "a matching status without the text is inconclusive (exit 2)",
+    )
+    parser.add_argument(
         "command",
         nargs=argparse.REMAINDER,
         help="the check to run under the mutation, after --",
     )
     args = parser.parse_args(argv)
 
+    if args.list_presets:
+        for name in sorted(PRESETS):
+            print(PRESETS[name].describe())
+        return 0
+    if args.spec is not None and args.preset is not None:
+        print("mutation_probe: --spec and --preset are alternatives — pass one", file=sys.stderr)
+        return 2
+    if args.spec is None and args.preset is None:
+        print(
+            "mutation_probe: no mutation given — pass --spec FILE or --preset NAME "
+            "(--list-presets prints the catalog)",
+            file=sys.stderr,
+        )
+        return 2
+
+    preset: Preset | None = None
+    run_cwd: Path | None = None
+    if args.spec is not None:
+        try:
+            mutations = load_spec(args.spec)
+        except (OSError, ValueError, GuardRefused) as exc:
+            print(f"mutation_probe: unusable spec: {exc}", file=sys.stderr)
+            return 2
+        expect_rc = args.expect_rc
+        require_stdout = args.require_stdout
+    else:
+        assert args.preset is not None  # the two refusal branches above
+        preset = PRESETS.get(args.preset)
+        if preset is None:
+            print(
+                f"mutation_probe: no preset named {args.preset!r} — known: "
+                + ", ".join(sorted(PRESETS)),
+                file=sys.stderr,
+            )
+            return 2
+        mutations = preset.resolve()
+        # A preset's proof command is written the way the documentation writes
+        # it (repo-relative), so it means the same thing from any directory.
+        run_cwd = REPO_ROOT
+        expect_rc = args.expect_rc if args.expect_rc is not None else preset.expect_rc
+        require_stdout = (
+            args.require_stdout if args.require_stdout is not None else preset.require_stdout
+        )
+
     command = list(args.command)
     if command and command[0] == "--":
         command = command[1:]
     if not command:
-        print("mutation_probe: no check given — pass it after --", file=sys.stderr)
-        return 2
-    try:
-        mutations = load_spec(args.spec)
-    except (OSError, ValueError, GuardRefused) as exc:
-        print(f"mutation_probe: unusable spec: {exc}", file=sys.stderr)
-        return 2
+        if preset is None:
+            print("mutation_probe: no check given — pass it after --", file=sys.stderr)
+            return 2
+        command = list(preset.command)
 
     probe = Probe(mutations, timeout=args.timeout)
     child: subprocess.CompletedProcess | None = None
@@ -586,13 +771,25 @@ def main(argv: list[str] | None = None) -> int:
         refused = str(exc)
     if refused is None:
         try:
-            child = probe.run(command)
+            child = probe.run(command, cwd=run_cwd)
         except Exception as exc:  # the probe must never die holding mutated bytes
             refused = f"the check could not be run: {exc}"
         try:
             probe.revert()
         except GuardRefused as exc:
             refused = str(exc) if refused is None else f"{refused}; {exc}"
+    if refused is None:
+        # Exit 0 with an un-restored file is the verdict that must not exist:
+        # revert() raises on the failure modes it can see, so this catches the
+        # ones it cannot — a record with no verified restore still stands
+        # between the run and a CAUGHT.
+        unrestored = [record for record in probe.records if not record.byte_identical]
+        if unrestored:
+            refused = "; ".join(
+                f"{record.path}: restore never verified (sha256 "
+                f"{record.restored_sha256}, expected {record.original_sha256})"
+                for record in unrestored
+            )
     probe.close()
 
     if refused is not None:
@@ -613,30 +810,44 @@ def main(argv: list[str] | None = None) -> int:
                 "SURVIVED — the check exited 0 under the mutation, so it does not cover this "
                 "line"
             )
-        elif args.expect_rc is not None and status != args.expect_rc:
+        elif expect_rc is not None and status != expect_rc:
             # A nonzero status that is not the one asked for is not a caught
             # mutation: pytest exits 4 on a collection error and 1 on a failing
             # test, and only the second one means the check saw the change.
             token, code = "invalid", 2
             verdict = (
-                f"INVALID — the check exited {status}, not the expected {args.expect_rc}: it "
+                f"INVALID — the check exited {status}, not the expected {expect_rc}: it "
                 "did not report the failure this probe asked for, so nothing is concluded "
                 f"(pass --expect-rc {status} if that is the signal you want)"
             )
+        elif require_stdout is not None and require_stdout not in (
+            _as_text(child.stdout) + _as_text(child.stderr)
+        ):
+            # The status matched but the evidence never printed: the check broke
+            # some OTHER way (a bad flag, a missing dependency, a theme failing
+            # the table audit before any window is built). That is not a caught
+            # mutation, and calling it one is the same class of lie as calling a
+            # collection error one.
+            token, code = "invalid", 2
+            verdict = (
+                f"INVALID — the check exited {status} but never printed "
+                f"{require_stdout!r}, so nothing was concluded about the mutation"
+            )
         else:
             token, code = "caught", 0
-            expected = "any nonzero" if args.expect_rc is None else str(args.expect_rc)
+            expected = "any nonzero" if expect_rc is None else str(expect_rc)
+            evidence = f" and printed {require_stdout!r}" if require_stdout else ""
             verdict = (
-                f"CAUGHT — the check exited {status} under the mutation ({expected} was asked "
-                "for), which is what it has to do"
+                f"CAUGHT — the check exited {status} under the mutation ({expected} was "
+                f"asked for){evidence}, which is what it has to do"
             )
 
     if args.json:
-        document = probe.as_json(expect_rc=args.expect_rc)
+        document = probe.as_json(expect_rc=expect_rc, require_stdout=require_stdout)
         document.update({"verdict": token, "exit_code": code})
         print(json.dumps(document, indent=2))
     else:
-        print(probe.report(expect_rc=args.expect_rc))
+        print(probe.report(expect_rc=expect_rc, require_stdout=require_stdout))
         if child is not None and child.stdout.strip():
             print("--- child stdout ---")
             print(child.stdout.rstrip())

@@ -318,10 +318,31 @@ def test_the_job_runs_the_orchestrator_from_the_venv() -> None:
 
 
 def test_the_cached_model_lives_outside_the_clone_path() -> None:
-    """A cache restored inside audio.cpp/ makes git clone refuse the directory."""
+    """A cache restored inside audio.cpp/ makes git clone refuse the directory.
+
+    The root rides the STEP that builds it, not a job-level ``env:`` — the
+    ``runner`` context exists only at step level, and declaring the root in the
+    job's env made GitHub reject the ENTIRE workflow file ("Unrecognized
+    named-value: 'runner'"), so every push failed with zero jobs and no step on
+    any OS ran at all: 24 days of silently dead CI, found 2026-10-13 while
+    waiting for a Windows chrome step that could never start. Both halves are
+    pinned — the value (outside the clone path, equal to the cache's own path)
+    and that no job-level env still names the illegal context.
+    """
     job = _vulkan_job()
 
-    models_root = job["env"]["AUDIOCPP_MODELS_ROOT"]
+    for name, value in (job.get("env") or {}).items():
+        assert "runner" not in str(value), (
+            f"jobs.vulkan-smoke.env.{name} uses the `runner` context, which is step-level "
+            "only — GitHub rejects the whole workflow file for it, so no job runs"
+        )
+
+    build = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Build audio.cpp, Fetch The Model, Run The Suite Without Skips"
+    )
+    models_root = build["env"]["AUDIOCPP_MODELS_ROOT"]
     assert "audio.cpp" not in models_root
     cache = next(step for step in job["steps"] if step.get("uses") == "actions/cache@v4")
     assert cache["with"]["path"] == models_root

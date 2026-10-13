@@ -12,6 +12,7 @@ restore — "byte-identical" is measured here, never assumed.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import os
@@ -424,3 +425,256 @@ def _run_cli(
         timeout=300,
         check=False,
     )
+
+
+# --- the preset path ----------------------------------------------------------
+
+
+def _preset_cli(*args: str) -> subprocess.CompletedProcess:
+    """Run the harness with *args*, as a developer would from the repo root."""
+    return subprocess.run(
+        [sys.executable, str(PROBE_PATH), *args],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def test_the_certifier_preset_still_describes_this_tree(probe_module) -> None:
+    """The recorded certifier mutation must match the tree it is run against.
+
+    A preset is a hand run written down, so the only way it can rot silently is
+    the tree moving underneath it: the Live header's gate site edited (the
+    anchor then occurs 0 or 2 times and the tool's count guard refuses — good,
+    but a red the operator should be able to read as "re-record me" rather than
+    as a broken tool), or the site reformatted so the recorded replacement no
+    longer produces the recorded ungated statement, or the proof command
+    renamed out from under it. The evidence fields are pinned too: the recorded
+    run exited 1 on six CLOSED failures, and a looser needle would call any
+    breakage a catch — exactly the lie ``--require-stdout`` exists to prevent.
+
+    This does NOT run the sweep (six real windows, ~19 s): the live proof is a
+    deliberate act, recorded in the commit message. What is pinned here is that
+    the act would still be possible.
+    """
+    preset = probe_module.PRESETS["certifier-gate-live-header"]
+    assert preset.expect_rc == 1, (
+        "the recorded certifier run exited 1 — re-measure the sweep, do not relax "
+        "the expectation"
+    )
+    assert preset.require_stdout == "bulk-restyle gate CLOSED", (
+        "the recorded evidence was six CLOSED failures; a looser needle would report "
+        "CAUGHT for a sweep that broke some other way"
+    )
+    script = probe_module.REPO_ROOT / preset.command[1]
+    assert script.is_file(), f"the proof command names a script that is not there: {script}"
+    assert list(preset.command[2:]) == ["--aspects", "chrome"], preset.command
+
+    [mutation] = preset.resolve()
+    assert mutation.path.is_file(), f"{mutation.path} is gone — re-record the preset"
+    text = mutation.path.read_text(encoding="utf-8")
+    assert text.count(mutation.old) == mutation.count, (
+        f"the Live header gate site no longer occurs exactly {mutation.count} time(s) in "
+        f"{mutation.path.name}: someone edited the site, so the preset must be "
+        "re-recorded rather than left to miss"
+    )
+    mutated = text.replace(mutation.old, mutation.new)
+    assert mutated != text, "the replacement changes nothing — it is not a mutation"
+    # A mutation that cannot import exits 4 (a collection error), which the
+    # verdict logic already refuses to call caught; failing here says WHY.
+    ast.parse(mutated)
+    header_lines = [line for line in mutated.splitlines() if "header.setStyleSheet(" in line]
+    assert header_lines == mutation.new.rstrip("\n").splitlines(), (
+        "the mutation no longer produces the recorded ungated statement "
+        f"(got {header_lines!r}) — re-record the preset"
+    )
+
+
+def test_the_cli_lists_presets_and_refuses_the_ambiguous_invocations(probe_module) -> None:
+    """The catalog is reachable and every half-specified run is a refusal.
+
+    Refusals are exit 2 — "nothing concluded" — because a probe that guessed
+    between ``--spec`` and ``--preset``, or invented a preset name, would run a
+    mutation nobody asked for.
+    """
+    listed = _preset_cli("--list-presets")
+    assert listed.returncode == 0, listed.stderr
+    assert "certifier-gate-live-header" in listed.stdout, listed.stdout
+    assert "bulk-restyle gate CLOSED" in listed.stdout, listed.stdout
+    assert "--aspects chrome" in listed.stdout, listed.stdout
+
+    unknown = _preset_cli("--preset", "not-a-preset")
+    assert unknown.returncode == 2, unknown.stdout
+    assert "not-a-preset" in unknown.stderr and "certifier-gate-live-header" in unknown.stderr, (
+        unknown.stderr
+    )
+
+    neither = _preset_cli()
+    assert neither.returncode == 2 and "--preset" in neither.stderr, neither.stderr
+
+    both = _preset_cli(
+        "--spec", "spec.json", "--preset", "certifier-gate-live-header"
+    )
+    assert both.returncode == 2 and "alternatives" in both.stderr, both.stderr
+
+
+def test_a_preset_run_needs_the_evidence_and_not_just_the_status(
+    probe_module, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The three verdicts a preset can reach, driven through ``main()``.
+
+    A fake preset on a temp file stands in for the real one so the suite never
+    mutates ``gui_chrome.py`` or runs six real windows; everything else —
+    preset resolution, the preset's own command being used when no check is
+    passed after ``--``, its ``expect_rc`` and its needle — is the production
+    path. The middle case is the point: status right AND evidence present is
+    CAUGHT, status right with no evidence is INVALID (exit 2), and a check that
+    exits 0 stays SURVIVED however loudly it printed.
+    """
+    source = tmp_path / "toy.py"
+    source.write_text('VALUE = "old"\n', encoding="utf-8")
+    before = probe_module.digest(source.read_bytes())
+    mutation = probe_module.Mutation(path=source, old="old", new="new", count=1)
+
+    def preset_running(child: str) -> object:
+        return probe_module.Preset(
+            name="fake",
+            what="a temp-file mutation used to pin the verdict shapes",
+            mutations=(mutation,),
+            command=(sys.executable, "-c", child),
+            expect_rc=1,
+            require_stdout="bulk-restyle gate CLOSED",
+        )
+
+    cases = (
+        ("raise SystemExit(1)", 2, "INVALID"),
+        ("print('bulk-restyle gate CLOSED'); raise SystemExit(1)", 0, "CAUGHT"),
+        ("print('bulk-restyle gate CLOSED'); raise SystemExit(0)", 1, "SURVIVED"),
+    )
+    for child, expected_code, token in cases:
+        monkeypatch.setitem(probe_module.PRESETS, "fake", preset_running(child))
+        code = probe_module.main(["--preset", "fake"])
+        output = capsys.readouterr().out
+        assert code == expected_code, output
+        assert token in output, output
+        assert probe_module.digest(source.read_bytes()) == before, (
+            "every verdict has to leave the file byte-identical"
+        )
+
+
+def test_the_stdout_requirement_applies_to_a_spec_run_too(
+    probe_module, tmp_path: Path
+) -> None:
+    """``--require-stdout`` is the flag's own contract, not a preset perk.
+
+    The same check, same mutation, same expected status: adding a needle the
+    child never prints turns CAUGHT into INVALID, so the narrowing cannot be
+    switched off by reaching for ``--spec`` instead.
+    """
+    source = tmp_path / "toy.py"
+    source.write_text('VALUE = "old"\n', encoding="utf-8")
+    (tmp_path / "check.py").write_text(
+        'import toy\nraise SystemExit(0 if toy.VALUE == "old" else 1)\n', encoding="utf-8"
+    )
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    before = probe_module.digest(source.read_bytes())
+    spec = [{"path": str(source), "old": "old", "new": "new"}]
+
+    without = _run_cli(tmp_path, scratch, spec)
+    assert without.returncode == 0, without.stdout + without.stderr
+
+    with_needle = _run_cli(
+        tmp_path, scratch, spec, extra=["--require-stdout", "never printed"]
+    )
+    assert with_needle.returncode == 2, with_needle.stdout + with_needle.stderr
+    assert "INVALID" in with_needle.stdout and "never printed" in with_needle.stdout, (
+        with_needle.stdout
+    )
+    assert probe_module.digest(source.read_bytes()) == before, (
+        "the narrowed verdict still restores the file byte-identical"
+    )
+
+
+def test_several_bites_of_one_file_revert_to_its_preimage(
+    probe_module, tmp_path: Path
+) -> None:
+    """A spec may take more than one bite of a file; the restore is of the FILE.
+
+    Each bite used to overwrite the path's recorded original, so ``revert()``
+    put back the MID-CHAIN bytes: the run reported CAUGHT and exited 0 with the
+    checkout left half-mutated — found 2026-10-13 driving a two-hunk spec at
+    ``.github/workflows/ci.yml``, which is the one state the harness's own
+    docstring says it must never create. Pinned here: one record per file, its
+    ``original`` the pre-image from before the FIRST bite, its ``mutated`` the
+    last one written, and the bytes afterwards the pre-image exactly.
+    """
+    source = tmp_path / "multi.py"
+    source.write_text('A = "one"\nB = "two"\n', encoding="utf-8")
+    preimage = source.read_bytes()
+    (tmp_path / "check.py").write_text(
+        'import multi\nraise SystemExit(0 if (multi.A, multi.B) == ("uno", "dos") else 1)\n',
+        encoding="utf-8",
+    )
+
+    probe = probe_module.Probe(
+        [
+            probe_module.Mutation(path=source, old='A = "one"', new='A = "uno"', count=1),
+            probe_module.Mutation(path=source, old='B = "two"', new='B = "dos"', count=1),
+        ]
+    )
+    probe.apply()
+    try:
+        text = source.read_text(encoding="utf-8")
+        assert 'A = "uno"' in text and 'B = "dos"' in text, text
+        child = probe.run([sys.executable, str(tmp_path / "check.py")], cwd=tmp_path)
+        assert child.returncode == 0, child.stdout + child.stderr
+    finally:
+        probe.revert()
+        probe.close()
+
+    assert source.read_bytes() == preimage, "the file must come back to its pre-image"
+    [record] = probe.records  # one record per FILE, not one per bite
+    assert record.byte_identical, (record.original_sha256, record.restored_sha256)
+    assert record.original_sha256 == probe_module.digest(preimage)
+    assert record.mutated_sha256 != record.original_sha256
+
+
+def test_a_run_whose_restore_was_never_verified_never_reports_caught(
+    probe_module, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Exit 0 over an un-restored file is the verdict that must not exist.
+
+    ``revert()`` refuses on the failures it can see; this pins the belt under
+    it. If no verified restore stands behind a mutated file, ``main()`` reports
+    INVALID (exit 2) even when ``revert()`` returned without complaining — the
+    shape a silent revert failure produces, which is exactly how the two-bite
+    bug above escaped as a CAUGHT.
+    """
+    source = tmp_path / "toy.py"
+    source.write_text('VALUE = "old"\n', encoding="utf-8")
+    pristine = source.read_bytes()
+    spec = tmp_path / "spec.json"
+    spec.write_text(
+        json.dumps([{"path": str(source), "old": "old", "new": "new"}]), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(probe_module.Probe, "revert", lambda self: None)
+    code = probe_module.main(
+        [
+            "--spec",
+            str(spec),
+            "--expect-rc",
+            "1",
+            "--",
+            sys.executable,
+            "-c",
+            "raise SystemExit(1)",
+        ]
+    )
+    output = capsys.readouterr().out
+    assert code == 2, output
+    assert "restore never verified" in output, output
+    # The no-op revert really did leave the mutation applied; undo it here.
+    source.write_bytes(pristine)

@@ -254,11 +254,12 @@ jobs:
     # not change it. Push to a branch, the weekly schedule, or run it by hand.
     if: github.event_name != 'pull_request'
     timeout-minutes: 90
-    env:
-      # Outside the clone path on purpose: scripts/build_audio_cpp.sh clones into
-      # audio.cpp/, and git refuses to clone into a non-empty directory -- a cache
-      # restored inside it would break the build on the first cached run.
-      AUDIOCPP_MODELS_ROOT: ${{ runner.temp }}/oracle-vulkan-models
+    # AUDIOCPP_MODELS_ROOT is deliberately NOT a job-level `env:`: the `runner`
+    # context exists only at step level, and declaring it here made GitHub
+    # reject the ENTIRE workflow file ("Unrecognized named-value: 'runner'") —
+    # every run since 4c436da failed with zero jobs, so no step on any OS ever
+    # ran again, including the six-theme certifications below. It rides the
+    # step that needs it instead.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -318,6 +319,14 @@ jobs:
       # smoke's three gates resolve, then runs the suite with ORACLE_FAIL_ON_SKIP=1.
       - name: Build audio.cpp, Fetch The Model, Run The Suite Without Skips
         shell: bash
+        # Outside the clone path on purpose: scripts/build_audio_cpp.sh clones
+        # into audio.cpp/, and git refuses to clone into a non-empty directory
+        # -- a cache restored inside it would break the build on the first
+        # cached run. The cache step above restores to this same expression, so
+        # the two cannot diverge, and `runner` is a legal context here (step
+        # level) where it was not at job level.
+        env:
+          AUDIOCPP_MODELS_ROOT: ${{ runner.temp }}/oracle-vulkan-models
         run: ./.venv/bin/python scripts/vulkan_ci_smoke.py
 
   windows-install-smoke:
