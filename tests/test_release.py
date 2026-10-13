@@ -71,6 +71,25 @@ def _write_fake_repo(
     (tmp_path / "src" / "the_oracle" / "__init__.py").write_text(
         f'__all__ = ["__version__"]\n\n__version__ = "{version}"\n', encoding="utf-8"
     )
+    # A product tree carries a license verify-key registry, and release mode
+    # refuses to build around a missing or forgeable one (licensing_key_problems).
+    # The fixture supplies a well-formed, NON-vector key so the release path
+    # exercises the gate's passing branch; the gate's refusal branches have
+    # their own tests.
+    licensing = tmp_path / "src" / "the_oracle" / "licensing"
+    licensing.mkdir(parents=True, exist_ok=True)
+    (licensing / "__init__.py").write_text("", encoding="utf-8")
+    (licensing / "keys.py").write_text(
+        "KEYS = (\n"
+        "    VerifyKey(\n"
+        '        key_id="k2",\n'
+        "        public_key=bytes.fromhex(\n"
+        '            "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"\n'
+        "        ),\n"
+        "    ),\n"
+        ")\n",
+        encoding="utf-8",
+    )
     if pyproject_literal:
         project = f'[project]\nname = "the-oracle"\nversion = "1.2.3"\n'
         dynamic = ""
@@ -808,3 +827,80 @@ def test_release_mode_records_the_tracked_manifest(
     tracked = repo / "release_checksums" / "checksums-9.9.9.sha256"
     assert tracked.is_file()
     assert tracked.read_bytes() == (outdir / "checksums-9.9.9.sha256").read_bytes()
+
+
+# --- the license key-custody gate --------------------------------------------
+
+
+def _write_registry(repo: Path, body: str) -> Path:
+    path = repo / "src" / "the_oracle" / "licensing" / "keys.py"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_a_registered_non_vector_key_passes_the_gate(tmp_path: Path) -> None:
+    """The fixture tree's own registry is well-formed: nothing to report."""
+    repo = _write_fake_repo(tmp_path)
+    assert release.licensing_key_problems(repo) == []
+
+
+def test_an_empty_registry_blocks_the_release(tmp_path: Path) -> None:
+    """No production key means no customer can activate — refuse to ship.
+
+    This is the state the repository is deliberately in until the owner
+    registers the production key, so the gate must be red on it rather than
+    quietly producing an install that reports community for every token.
+    """
+    repo = _write_fake_repo(tmp_path)
+    _write_registry(repo, "KEYS: tuple[VerifyKey, ...] = ()\n")
+    problems = release.licensing_key_problems(repo)
+    assert problems, "an empty registry must be a problem"
+    assert "no production verify key" in problems[0]
+    assert "license_sign.py keygen" in problems[0]  # the remedy travel with it
+
+
+def test_a_published_test_vector_key_blocks_the_release(tmp_path: Path) -> None:
+    """The historical k1 defect, refused at the distribution step.
+
+    RFC 8032 §7.1 TEST 1's public key has a published seed, so anyone who reads
+    the spec can mint a licence that the shipped build accepts.
+    """
+    repo = _write_fake_repo(tmp_path)
+    _write_registry(
+        repo,
+        "KEYS = (\n"
+        '    VerifyKey(key_id="k1", public_key=bytes.fromhex(\n'
+        '        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"\n'
+        "    )),\n"
+        ")\n",
+    )
+    problems = release.licensing_key_problems(repo)
+    assert problems, "a forgeable key must be a problem"
+    assert "test-vector" in problems[0]
+
+
+def test_the_gate_does_not_read_the_running_installation(tmp_path: Path) -> None:
+    """The subject is the tree under release, not whatever is on sys.path.
+
+    A regression to ``import the_oracle.licensing`` would report the installed
+    package's state for every tree, which is how a gate silently certifies the
+    wrong thing.
+    """
+    repo = _write_fake_repo(tmp_path)
+    _write_registry(repo, "KEYS = ()\n")
+    assert release.licensing_key_problems(repo), "the tree's empty registry must be seen"
+
+
+def test_release_mode_refuses_an_unconfigured_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """End of the path: no artifacts, no tracked manifest, exit 1."""
+    repo = _write_fake_repo(tmp_path)
+    _write_registry(repo, "KEYS = ()\n")
+    monkeypatch.setattr(release, "tree_is_dirty", lambda _repo: False)
+    monkeypatch.setattr(release, "run_tests", lambda _repo: None)
+
+    status = release.main(["--repo-root", str(repo)])
+
+    assert status == 1
+    assert not (repo / release.RELEASE_CHECKSUMS_DIR).exists(), (
+        "a blocked release must not record a checksum manifest"
+    )

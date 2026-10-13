@@ -5,6 +5,12 @@ signature check (M1), (b) the exp check comparing with ``>`` instead of
 ``>=`` (M2), (c) dropping the signature check from save_token (M4), (d)
 canonical bytes depending on dict key order. If a mutation survives, the net
 is wrong, not the code right.
+
+**Registry:** every token here is minted with the test-only key in
+``tests/licensing_fixtures`` and the module installs that registry through the
+``test_license_registry`` fixture. The production registry holds no test key,
+so a green run here can never be evidence that a shipped install trusts a
+published seed.
 """
 
 from __future__ import annotations
@@ -21,15 +27,21 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from the_oracle import _ed25519  # noqa: E402
 from the_oracle.licensing import tokens  # noqa: E402
+from tests.licensing_fixtures import TEST_KEY_ID, TEST_PUBLIC_KEY, TEST_SEED  # noqa: E402
 
-SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
-PUB = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+pytestmark = pytest.mark.usefixtures("test_license_registry")
+
+#: Test-only signing material: RFC 8032 §7.1 TEST 1, a *published* vector used
+#: here purely as convenient crypto. The production registry does not know it
+#: (and must not: tests/test_licensing_registry_hygiene.py enforces that).
+SEED = TEST_SEED
+PUB = TEST_PUBLIC_KEY
 
 #: An otherwise-valid payload with a DIFFERENT lic_id — used as the forgery
 #: body under a signature made over the real payload.
 REAL_PAYLOAD = {
     "v": 1,
-    "key_id": "k1",
+    "key_id": TEST_KEY_ID,
     "lic_id": "22222222-2222-4222-8222-222222222222",
     "edition": "studio",
     "licensee": "Cody",

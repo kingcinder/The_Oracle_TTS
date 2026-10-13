@@ -12,6 +12,12 @@ Everything here is the production truth the CLI, GUI, and doctor all read
   entitlements, with the purchase-path message;
 - `the-oracle license-status` reports the install's state as JSON.
 
+The degrade-never-lock guarantee is pinned twice: on hand-built statuses (the
+edition map and require() in isolation) and again on statuses that came out of
+the real verifier, so the edition the product computes is the one under test.
+Verified statuses use the **injected** test-only registry
+(tests/licensing_fixtures.py); the shipped table holds no test key.
+
 A regression in any of these silently changes what customers can run —
 which is exactly the class of drift the safety nets exist to catch.
 """
@@ -38,8 +44,14 @@ from the_oracle.licensing.policy import (  # noqa: E402
     require,
 )
 from the_oracle.licensing.tokens import LicenseStatus  # noqa: E402
+from tests.licensing_fixtures import TEST_KEY_ID, TEST_SEED  # noqa: E402
 
-SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+#: Verified statuses come from the INJECTED test-only registry: the production
+#: registry ships no test key (tests/test_licensing_registry_hygiene.py).
+pytestmark = pytest.mark.usefixtures("test_license_registry")
+
+#: Test-only crypto material (RFC 8032 §7.1 TEST 1, a published vector).
+SEED = TEST_SEED
 
 #: The entitlements every edition must grant — "community is everything that
 #: ships today" is the rollout rule that makes the licensing unit safe.
@@ -59,7 +71,7 @@ def _status(
         edition=edition,
         licensee="Cody",
         lic_id="test-lic",
-        key_id="k1",
+        key_id=TEST_KEY_ID,
         exp=exp,
         machine_locked=False,
         detail="",
@@ -116,6 +128,49 @@ def test_require_raises_for_expired_studio_license() -> None:
         require(_status(ok=False, state="expired", edition="studio"), "studio_features")
 
 
+# --- degrade-never-lock, proven on REAL verified statuses --------------------
+
+
+def test_real_studio_license_grants_studio_features() -> None:
+    """A genuinely minted+verified studio token reaches studio entitlements.
+
+    Every other test in this file reads a hand-built LicenseStatus; this one
+    goes through the real verifier so the edition the product actually computes
+    is the one under test (the "verify" half of the guarantee).
+    """
+    valid = tokens.verify_token(_minted_token(), now=1700000001.0)
+    assert valid.ok is True and valid.state == "valid"
+    assert current_edition(valid) == "studio"
+    require(valid, "studio_features")  # must not raise
+    for entitlement in CORE_ENTITLEMENTS:
+        require(valid, entitlement)
+
+
+def test_real_expired_studio_license_degrades_to_community_and_loses_nothing() -> None:
+    """The release guarantee, end to end through verification.
+
+    An expired studio token must (a) not be ok, (b) run as community, (c) refuse
+    a studio-only entitlement with the typed purchase-path error, and (d) still
+    grant every entitlement that ships today — renders in flight finish and no
+    existing workflow is locked away. "Expired" is a billing state, never a
+    damaged install.
+    """
+    exp = 1_700_000_500
+    expired = tokens.verify_token(_minted_token(exp=exp), now=float(exp + 60))
+    assert expired.ok is False
+    assert expired.state == "expired"
+    assert current_edition(expired) == "community"
+
+    with pytest.raises(LicenseRequired) as excinfo:
+        require(expired, "studio_features")
+    assert "Studio" in str(excinfo.value)
+
+    # Degrade, never lock: the whole shipped feature set keeps working.
+    for entitlement in CORE_ENTITLEMENTS:
+        require(expired, entitlement)
+    assert CORE_ENTITLEMENTS <= edition_entitlements(current_edition(expired))
+
+
 # --- the CLI surface: license-status -----------------------------------------
 
 
@@ -130,7 +185,7 @@ def sandbox_root(tmp_path: Path, monkeypatch) -> Path:
 def _minted_token(exp: int | None = None) -> str:
     payload = {
         "v": 1,
-        "key_id": "k1",
+        "key_id": TEST_KEY_ID,
         "lic_id": "77777777-7777-4777-7777-777777777777",
         "edition": "studio",
         "licensee": "Cody",

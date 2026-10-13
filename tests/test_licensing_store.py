@@ -1,5 +1,9 @@
 """The license store: atomic writes, typed failures, save-then-verify order.
 
+Registry: tokens are minted for the **injected** test-only registry
+(tests/licensing_fixtures.py); the shipped table holds no test key, so nothing
+here can pass by trusting a published one.
+
 **Mutation contract:** removing the verify_before_save gate from
 store.save_token must fail test_refuses_to_store_an_invalid_token (M4);
 breaking the atomic write (direct write to the final path) is pinned by
@@ -19,12 +23,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from the_oracle.licensing import store, tokens  # noqa: E402
+from tests.licensing_fixtures import TEST_KEY_ID, TEST_SEED  # noqa: E402
 
-SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+#: Tokens are minted for the INJECTED test-only registry: the production
+#: registry ships no test key (see tests/test_licensing_registry_hygiene.py).
+pytestmark = pytest.mark.usefixtures("test_license_registry")
+
+#: Test-only crypto material (RFC 8032 §7.1 TEST 1, a published vector).
+SEED = TEST_SEED
 
 PAYLOAD = {
     "v": 1,
-    "key_id": "k1",
+    "key_id": TEST_KEY_ID,
     "lic_id": "44444444-4444-4444-8444-444444444444",
     "edition": "studio",
     "licensee": "Cody",

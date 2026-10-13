@@ -117,7 +117,10 @@ def build_parser() -> argparse.ArgumentParser:
     mint_parser = sub.add_parser("mint", help="Mint one signed license token.")
     mint_parser.add_argument("--edition", required=True, choices=["community", "studio", "trial"])
     mint_parser.add_argument("--licensee", default="")
-    mint_parser.add_argument("--key-id", default="k1")
+    # A default key id is how the compromised commissioning key got used for
+    # every minted token without anyone choosing it. The operator must name the
+    # key id their client registry actually carries.
+    mint_parser.add_argument("--key-id", required=True, help="Key id the client registry carries (see the_oracle/licensing/keys.py).")
     mint_parser.add_argument("--expires", default=None, help="ISO-8601 timestamp; omit for a perpetual license.")
     mint_parser.add_argument("--machine-hash", default=None, help="32-hex SHA-256 prefix from `the-oracle machine-id`.")
     return parser

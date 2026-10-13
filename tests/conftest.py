@@ -26,6 +26,12 @@ import pytest
 
 from tests import skip_audit
 
+# Re-exported so pytest registers it: the licensing suite's registry injection
+# lives with its constants in tests/licensing_fixtures.py (a module, not a
+# plugin), and an imported fixture is discovered here. See that module for why
+# the injection is opt-in per module rather than autouse.
+from tests.licensing_fixtures import test_license_registry  # noqa: F401
+
 _ORACLE_ENV_PREFIX = "ORACLE_"
 
 #: Every skip reported this session, in the order pytest reports them.

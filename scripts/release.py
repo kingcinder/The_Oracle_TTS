@@ -174,6 +174,74 @@ def pyproject_problems(repo_root: Path) -> list[str]:
     return problems
 
 
+#: Where a product tree keeps its license verify-key registry.
+_LICENSING_KEYS_REL = Path("src") / "the_oracle" / "licensing" / "keys.py"
+
+#: RFC 8032 §7.1 published test-vector public keys. Their seeds are in the
+#: spec, so any registry entry equal to one of them is forgeable by any reader
+#: — the exact shape of the historical ``k1`` defect.
+_FORGEABLE_VERIFY_KEYS = frozenset(
+    {
+        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+        "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+    }
+)
+
+
+def licensing_key_problems(repo_root: Path) -> list[str]:
+    """Distribution gate: never build artifacts around a forgeable key registry.
+
+    Two release blockers live here. A registry holding a published test vector
+    key means anyone can mint licences (the historical ``k1`` defect), and an
+    EMPTY registry means no customer can ever activate — the client fails
+    closed, so shipping it silently produces an install that reports community
+    for every token. Both refuse the build instead.
+
+    The registry is read **from the tree under release**, as source, rather than
+    by importing the package: an import resolves against whatever is already on
+    ``sys.path``, which is the running installation and not necessarily the tree
+    being packaged. A tree with no registry file at all (a fixture repo, or a
+    build of some other package) is left alone.
+
+    Deliberately not part of ``check_report``: the version/CHANGELOG invariant
+    is a property of the tracked tree and is checked on every ``--check``, while
+    key custody is a property of what gets *distributed*. Keeping them apart
+    means ``--check`` stays a fast, always-green-on-a-clean-tree signal and the
+    blocker still cannot be published.
+    """
+    keys_path = repo_root / _LICENSING_KEYS_REL
+    if not keys_path.is_file():
+        return []
+    try:
+        source = keys_path.read_text(encoding="utf-8")
+    except OSError as error:
+        return [f"licensing: cannot read the verify-key registry ({error})"]
+
+    # Only literal registrations count; the module's own prose about the
+    # retired key must not read as one.
+    registered = [
+        value.lower()
+        for value in re.findall(r'bytes\.fromhex\(\s*"([0-9a-fA-F]{64})"\s*\)', source)
+    ]
+    problems: list[str] = []
+    if not registered:
+        problems.append(
+            "licensing: no production verify key is registered in "
+            f"{_LICENSING_KEYS_REL.as_posix()}, so no licence can ever be minted "
+            "for this build. Run `python scripts/license_sign.py keygen` on your "
+            "own machine, store signing_seed_hex in your secret manager, and "
+            "register ONLY verify_key_hex as a new key id."
+        )
+    for value in registered:
+        if value in _FORGEABLE_VERIFY_KEYS:
+            problems.append(
+                f"licensing: {_LICENSING_KEYS_REL.as_posix()} registers the published "
+                "RFC 8032 test-vector public key "
+                f"{value[:16]}…, so any reader can mint licences with it"
+            )
+    return problems
+
+
 def banner_problems(repo_root: Path, version: str) -> list[str]:
     """Drift between the release banners and the single source of truth."""
     problems: list[str] = []
@@ -612,6 +680,12 @@ def _release(repo: Path, outdir_arg: str, *, skip_tests: bool) -> int:
     status = _report(check_report(repo))
     if status != 0:
         return status
+    # Key custody is a distribution blocker, not a version-invariant one.
+    key_problems = licensing_key_problems(repo)
+    if key_problems:
+        for problem in key_problems:
+            print(f"BLOCKED: {problem}", file=sys.stderr)
+        return 1
     version = _require_version(repo)
     if tree_is_dirty(repo):
         print(

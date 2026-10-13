@@ -5,6 +5,11 @@ cannot come to hold a token the verifier rejects), and a good token activates
 offline against a sandboxed repo root (offline.repo_root monkeypatched — the
 handler must never write into the real repo during tests).
 
+The tokens here are signed with a published RFC 8032 test seed, so they must
+verify against the **injected** test-only registry rather than the shipped one:
+activation that only worked because the production registry carried a
+forgeable key is exactly the defect these tests exist to keep out.
+
 **Mutation contract:** making handle_activate write the token before
 verification must fail test_bad_token_writes_nothing (that ordering is the
 save gate's whole point, so the e2e test guards it independently of M4).
@@ -24,12 +29,18 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from the_oracle import cli  # noqa: E402
 from the_oracle.licensing import store, tokens  # noqa: E402
+from tests.licensing_fixtures import TEST_KEY_ID, TEST_SEED  # noqa: E402
 
-SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+pytestmark = pytest.mark.usefixtures("test_license_registry")
+
+#: Test-only signing material: the RFC 8032 §7.1 TEST 1 seed, keyed to the
+#: injected registry's test id. The names ``SEED``/``PAYLOAD``/``_good_token``
+#: are kept because sibling licensing tests import them from this module.
+SEED = TEST_SEED
 
 PAYLOAD = {
     "v": 1,
-    "key_id": "k1",
+    "key_id": TEST_KEY_ID,
     "lic_id": "88888888-8888-4888-8888-888888888888",
     "edition": "studio",
     "licensee": "Cody",

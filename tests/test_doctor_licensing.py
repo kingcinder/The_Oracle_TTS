@@ -8,6 +8,11 @@ expired license is a billing state, not a broken install).
 **Mutation contract:** flipping the no_token branch to ``ok=False`` fails
 test_unlicensed_install_is_a_valid_state; dropping the expired-state
 detection (reporting expired as ok) fails test_expired_license_fails_its_own_check.
+
+The licence this file installs is signed with a published RFC 8032 test seed,
+so the module registers the injected test-only registry; the doctor's check is
+a pure function of the registry it reads, and a test that needed the shipped
+registry to carry that key would be certifying a forgeable licence as valid.
 """
 
 from __future__ import annotations
@@ -18,14 +23,22 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCTOR_PATH = REPO_ROOT / "scripts" / "doctor.py"
 
-SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from tests.licensing_fixtures import TEST_KEY_ID, TEST_SEED  # noqa: E402
+
+pytestmark = pytest.mark.usefixtures("test_license_registry")
+
+SEED = TEST_SEED
 
 PAYLOAD = {
     "v": 1,
-    "key_id": "k1",
+    "key_id": TEST_KEY_ID,
     "lic_id": "55555555-5555-4555-8555-555555555555",
     "edition": "studio",
     "licensee": "Cody",
@@ -85,7 +98,7 @@ def test_valid_license_reports_edition_and_licensee(tmp_path: Path) -> None:
     assert status["state"] == "valid"
     assert status["edition"] == "studio"
     assert status["licensee"] == "Cody"
-    assert status["key_id"] == "k1"
+    assert status["key_id"] == TEST_KEY_ID
 
 
 def test_expired_license_fails_its_own_check(tmp_path: Path) -> None:

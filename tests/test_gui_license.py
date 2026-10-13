@@ -7,6 +7,11 @@ The license root is sandboxed like the CLI flow tests (offline.repo_root
 monkeypatched where the production handler resolves it; the dialogs take it
 as a plain argument).
 
+Registry: the tokens these flows activate are minted for the **injected**
+test-only registry (tests/licensing_fixtures.py). The shipped table holds no
+test key, so a green run here says the dialogs wire the verify/save gate
+correctly, not that a shipped install would accept a test token.
+
 **Mutation contract:** an activation that stores a token WITHOUT verifying
 must fail test_activation_bad_token_writes_nothing (the save gate is the
 privacy-critical ordering).
@@ -28,8 +33,15 @@ from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 from the_oracle import gui_license
 from the_oracle.licensing import store, tokens
+from tests.licensing_fixtures import TEST_KEY_ID, TEST_SEED  # noqa: E402
 
-SEED = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+#: The flow tests activate tokens minted for the INJECTED test-only registry:
+#: the production registry ships no test key, so a shipped install would refuse
+#: these tokens (pinned in tests/test_licensing_registry_hygiene.py).
+pytestmark = pytest.mark.usefixtures("test_license_registry")
+
+#: Test-only crypto material (RFC 8032 §7.1 TEST 1, a published vector).
+SEED = TEST_SEED
 
 
 @pytest.fixture(scope="module")
@@ -123,7 +135,7 @@ class _FakeMessageBox(_FakeDialog):
 def _good_token(exp: int | None = None) -> str:
     payload = {
         "v": 1,
-        "key_id": "k1",
+        "key_id": TEST_KEY_ID,
         "lic_id": "55555555-5555-4555-5555-555555555555",
         "edition": "studio",
         "licensee": "Cody",
@@ -268,7 +280,7 @@ def test_about_panel_names_edition_and_privacy(root: Path, parent, monkeypatch) 
 
         return LicenseStatus(
             ok=True, state="valid", edition="studio", licensee="Cody",
-            lic_id="x", key_id="k1", exp=None, machine_locked=False, detail="",
+            lic_id="x", key_id=TEST_KEY_ID, exp=None, machine_locked=False, detail="",
         )
 
     monkeypatch.setattr(gui_license, "current_license", fake_current_license)

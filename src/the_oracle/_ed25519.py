@@ -9,9 +9,23 @@ else in the package touches curve arithmetic.
 
 Reference-shaped implementation of RFC 8032 (edwards25519sha512batch / the
 Ed25519 scheme exactly as specified): SHA-512, the standard base point,
-little-endian field arithmetic mod 2**255-19. Verify rejects non-canonical S
-(malleability) and points not on the curve. The signing seed never ships: the
+little-endian field arithmetic mod 2**255-19. The signing seed never ships: the
 client embeds only 32-byte public keys (`keys.py`).
+
+Verification hardening (each case is pinned by tests/test_licensing_ed25519.py):
+
+- **non-canonical S** (``S >= L``) is refused — otherwise a valid signature has
+a second, malleable encoding.
+- **points not on the curve** are refused at decode.
+- **non-canonical point encodings** (``y >= p``) are refused at decode, per
+RFC 8032 §5.1.3/§5.1.7: a y that is not reduced mod p makes one point
+reachable through two distinct encodings.
+- **small-order public keys and R** are refused. This is the forgery the suite
+caught: with A = the identity (``01`` followed by 31 zero bytes), ``[h]A`` is
+the neutral element for every ``h``, so the pair ``(R = [s]B, S = s)`` satisfies
+the verification equation for *any* message — a universal forgery from a
+32-byte public key. The build refuses it rather than trusting a licence whose
+key encodes the identity or any other point of order dividing 8.
 """
 
 from __future__ import annotations
@@ -84,6 +98,11 @@ def _decode_point(data: bytes) -> tuple[int, int]:
     if len(data) != 32:
         raise ValueError("point encoding must be 32 bytes")
     y = int.from_bytes(data, "little") & ((1 << 255) - 1)
+    if y >= _Q:
+        # RFC 8032 §5.1.3: the encoding is not canonical when y is not
+        # already reduced mod p. Accepting it would give one point two
+        # distinct encodings.
+        raise ValueError("non-canonical point encoding (y >= p)")
     x_sign = data[31] >> 7
     x = _xrecover(y)
     if x & 1 != x_sign:
@@ -92,6 +111,21 @@ def _decode_point(data: bytes) -> tuple[int, int]:
     if not _is_on_curve(point):
         raise ValueError("point is not on the curve")
     return point
+
+
+_NEUTRAL = (0, 1)
+
+
+def _has_small_order(point: tuple[int, int]) -> bool:
+    """True for points killed by the cofactor (order 1, 2, 4 or 8).
+
+    The curve group has order 8L, so the eight points with ``[8]P = neutral``
+    are the ones that make the verification equation collapse: ``[h]A`` is the
+    neutral element regardless of h, and the equation degrades to ``R == [s]B``,
+    which an attacker can satisfy for any message by choosing ``s`` and setting
+    ``S = s``, ``R = [s]B``.
+    """
+    return _scalarmult(point, 8) == _NEUTRAL
 
 
 def _clamp(secret_seed: bytes) -> int:
@@ -129,9 +163,11 @@ def sign(secret_seed: bytes, message: bytes) -> bytes:
 def verify(public_key_bytes: bytes, message: bytes, signature: bytes) -> bool:
     """RFC 8032 §5.1.7 verification. Returns False on any malformed input.
 
-    Rejects signatures whose S half is >= the group order (non-canonical,
-    which would make signatures malleable) and public keys or R points that
-    do not decode to points on the curve.
+    Rejects a signature whose S half is >= the group order (non-canonical,
+    which would make signatures malleable), public keys or R points that do not
+decode to points on the curve or that use a non-canonical encoding, and
+small-order public keys or R points (which would turn the check into a
+universal forgery). Returns False rather than raising on any of them.
     """
     if len(public_key_bytes) != 32 or len(signature) != 64:
         return False
@@ -142,6 +178,8 @@ def verify(public_key_bytes: bytes, message: bytes, signature: bytes) -> bool:
         a_point = _decode_point(public_key_bytes)
         r_point = _decode_point(signature[:32])
     except ValueError:
+        return False
+    if _has_small_order(a_point) or _has_small_order(r_point):
         return False
     h = int.from_bytes(_sha512(signature[:32] + public_key_bytes + message), "little") % _L
     lhs = _scalarmult(_B, s)
