@@ -377,3 +377,73 @@ jobs:
             --profile "${{ runner.temp }}\oracle smoke profile" `
             --hf-home "${{ runner.temp }}\oracle-smoke\hf" `
             --pip-cache "${{ runner.temp }}\oracle-smoke\pip-cache"
+
+  # The Windows certification steps in the matrix above die on this runner with
+  # rc=3221225477 (0xC0000005, access violation) and EMPTY stdout and stderr —
+  # no traceback, no aspect progress, no faulting line — so CI contains nothing
+  # that says what faulted. The suite's own Qt tests pass on the same runner,
+  # including the two that call QWidget.grab(), so plain widget rendering is
+  # exonerated and the fault is somewhere in what the certifier does beyond it.
+  #
+  # Two facts make the frame capturable without manufacturing a consent
+  # decision: crash_consent.json is gitignored, so a fresh checkout is consent
+  # OFF and the certifier deliberately never arms its own file dump, which
+  # leaves PYTHONFAULTHANDLER — Python's own stderr-targeted handler —
+  # registered and free to write the faulting stack as the process dies; and
+  # -u keeps the certifier's progress unbuffered, so a process killed by an
+  # unhandled exception cannot take the aspect it was standing in down with
+  # its output buffer (which is why the suite saw stdout empty even though the
+  # sweep had been printing for minutes).
+  #
+  # No consent file is written here: the job captures with the checkout's own
+  # absent consent, i.e. exactly the state every CI run already has. The run is
+  # the hermeticity test's repro byte for byte — full sweep, no --aspects.
+  #
+  # Manual only (workflow_dispatch): this is a crash hunt, not a gate. It is
+  # expected to be red until the fault is fixed, and red on every push would
+  # say nothing the suite failures do not already say.
+  windows-certifier-fault-capture:
+    name: Windows certifier native-fault capture (manual)
+    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Bootstrap Runtime And Test Dependencies
+        shell: pwsh
+        run: python scripts/manage_install.py bootstrap --skip-doctor --include-dev
+
+      # stderr carries the faulthandler dump, stdout carries the aspect
+      # progress, and both are teed into the artifact so the frame survives
+      # after the runner's log expires. The pipe's own exit status is the
+      # certifier's; pwsh cannot `exit` a raw 0xC0000005 value (it overflows
+      # Int32), so the raw code is printed here and the step fails with 1.
+      - name: Run The Certifier With faulthandler On Stderr
+        shell: pwsh
+        env:
+          PYTHONFAULTHANDLER: "1"
+          QT_QPA_PLATFORM: "offscreen"
+        timeout-minutes: 25
+        run: |
+          $out = "certifier-fault.txt"
+          & .\.venv\Scripts\python.exe -u scripts/certify_gui.py 2>&1 | Tee-Object -FilePath $out
+          $code = $LASTEXITCODE
+          Write-Host "certifier exit code: $code (the suite observed 3221225477 = 0xC0000005)"
+          if ($code -ne 0) { exit 1 }
+
+      - name: Upload The Fault Dump
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-certifier-fault
+          path: certifier-fault.txt
+          if-no-files-found: warn
+          retention-days: 14
