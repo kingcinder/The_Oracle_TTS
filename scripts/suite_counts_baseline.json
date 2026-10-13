@@ -1,6 +1,17 @@
 {
   "about": "Suite counts from `pytest -q` run in a fresh `git worktree add --detach <ref>` tree of the named commit: a real checkout with .git and the committed files only, so no .venv and no git-ignored native build. Recorded and verified by scripts/certify_suite_counts.py; edit it through --record, not by hand.",
   "counts": {
+    "0bbb78f2ca0028358b78bc0e4e270854d5d60403": {
+      "errors": 0,
+      "exit_code": 0,
+      "failed": 0,
+      "passed": 1914,
+      "skipped": 3,
+      "skipped_ids": [
+        "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
+      ],
+      "skipped_ids_complete": false
+    },
     "1a737183d63f97ba261611a132bf0ac1dbad7dba": {
       "errors": 0,
       "exit_code": 0,
