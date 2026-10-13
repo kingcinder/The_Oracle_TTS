@@ -1,6 +1,28 @@
 {
   "about": "Suite counts from `pytest -q` run in a fresh `git worktree add --detach <ref>` tree of the named commit: a real checkout with .git and the committed files only, so no .venv and no git-ignored native build. Recorded and verified by scripts/certify_suite_counts.py; edit it through --record, not by hand.",
   "counts": {
+    "1a737183d63f97ba261611a132bf0ac1dbad7dba": {
+      "errors": 0,
+      "exit_code": 0,
+      "failed": 0,
+      "passed": 1858,
+      "skipped": 3,
+      "skipped_ids": [
+        "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
+      ],
+      "skipped_ids_complete": false
+    },
+    "32591f2caa3d1ad027ee8ae8dc833c05020e6f6e": {
+      "errors": 0,
+      "exit_code": 0,
+      "failed": 0,
+      "passed": 1912,
+      "skipped": 3,
+      "skipped_ids": [
+        "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
+      ],
+      "skipped_ids_complete": false
+    },
     "40b8ddbd60589569bca19c171eddd2771ecd35fc": {
       "errors": 0,
       "exit_code": 0,
@@ -72,6 +94,17 @@
       "exit_code": 0,
       "failed": 0,
       "passed": 1796,
+      "skipped": 3,
+      "skipped_ids": [
+        "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
+      ],
+      "skipped_ids_complete": false
+    },
+    "fa0f26a306e941e8bc428681c9634b09689c5c5b": {
+      "errors": 0,
+      "exit_code": 0,
+      "failed": 0,
+      "passed": 1902,
       "skipped": 3,
       "skipped_ids": [
         "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
