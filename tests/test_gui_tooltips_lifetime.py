@@ -184,15 +184,34 @@ def test_tooltip_owner_appearing_later_is_swept(qt_app):
 
 
 def test_real_main_window_churn_leaves_no_filters_behind(qt_app, app_install_spy, monkeypatch, tmp_path):
-    """Ten real build/destroy cycles: no app-level filter, nothing leaked.
+    """Fifty real build/destroy cycles with Ctrl-hover: no filter survives.
 
     The window is the real MainWindow with heavyweight collaborators faked
     (``tests/test_app_gui_profiles.py::_build_window``), which is the same
     construction the certifier drives.
     """
     from tests.test_app_gui_profiles import _build_window
+    from PySide6.QtCore import QPoint
 
-    for index in range(10):
+    installed: dict[QObject, int] = {}
+    removed: dict[QObject, int] = {}
+    original_install = QWidget.installEventFilter
+    original_remove = QWidget.removeEventFilter
+
+    def track_install(self, obj):  # noqa: ANN001 - Qt signature
+        if isinstance(obj, CtrlHoverHelp):
+            installed[obj] = installed.get(obj, 0) + 1
+        return original_install(self, obj)
+
+    def track_remove(self, obj):  # noqa: ANN001 - Qt signature
+        if isinstance(obj, CtrlHoverHelp):
+            removed[obj] = removed.get(obj, 0) + 1
+        return original_remove(self, obj)
+
+    monkeypatch.setattr(QWidget, "installEventFilter", track_install)
+    monkeypatch.setattr(QWidget, "removeEventFilter", track_remove)
+
+    for index in range(50):
         window, _paths = _build_window(monkeypatch, tmp_path / f"pass{index}")
         try:
             helper = window._ctrl_help
@@ -207,8 +226,30 @@ def test_real_main_window_churn_leaves_no_filters_behind(qt_app, app_install_spy
             assert owners, "the real window is expected to carry tooltips"
             missing = [w for w in owners if w not in helper._swept]
             assert missing == [], "every tooltip owner must be swallowed"
+
+            # Exercise the same Ctrl-held hover path on a real registered
+            # control. Offscreen Qt cannot provide reliable global cursor or
+            # modifier state, so only those two OS inputs are replaced.
+            widget, description = next(iter(helper._descriptions.items()))
+            shown: list[tuple[str, QWidget]] = []
+            monkeypatch.setattr(helper, "_modifiers_have_ctrl", lambda: True)
+            monkeypatch.setattr(helper, "_cursor_pos", lambda: QPoint(10, 10))
+            monkeypatch.setattr(helper, "_widget_at", lambda _pos, w=widget: w)
+            monkeypatch.setattr(
+                helper,
+                "_show",
+                lambda _pos, text, target: shown.append((text, target)),
+            )
+            helper.control_pressed()
+            helper._poll()
+            assert shown == [(description, widget)]
         finally:
             window.close()
+            helper = window._ctrl_help
+            assert helper.window is None
+            assert helper._swept == set()
+            assert not helper._timer.isActive()
+            assert installed.get(helper, 0) == removed.get(helper, 0)
             window.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
             QApplication.processEvents()

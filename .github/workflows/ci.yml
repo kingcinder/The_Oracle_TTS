@@ -197,6 +197,38 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\python.exe scripts/certify_gui.py --aspects wizard
 
+      # The original Windows failure was intermittent and appeared during
+      # repeated window construction. Run the complete six-theme certification
+      # serially ten times, stop on the first failure, and retain each log.
+      - name: Windows Six-Theme Certification - 10 consecutive runs
+        if: runner.os == 'Windows' && always()
+        shell: pwsh
+        env:
+          PYTHONFAULTHANDLER: "1"
+          QT_QPA_PLATFORM: "offscreen"
+        run: |
+          New-Item -ItemType Directory -Force -Path gui-certification-runs | Out-Null
+          for ($run = 1; $run -le 10; $run++) {
+            $log = "gui-certification-runs/run-$run.txt"
+            Write-Host "Full six-theme certification $run/10"
+            & .\.venv\Scripts\python.exe -u scripts/certify_gui.py --aspects contrast,chrome,studio,wizard 2>&1 | Tee-Object -FilePath $log
+            $code = $LASTEXITCODE
+            if ($code -ne 0) {
+              Write-Error "Certification $run/10 failed with exit code $code; stopping without retry."
+              exit 1
+            }
+          }
+          Write-Host "All ten consecutive full six-theme certifications passed."
+
+      - name: Upload Windows Certification Logs
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-six-theme-certification-logs
+          path: gui-certification-runs/
+          if-no-files-found: warn
+          retention-days: 14
+
       # The suite pins the bulk-restyle gate against a duck-typed app stand-in
       # and a synthetic event; this certifies it on the REAL window under a real
       # Qt repolish, and splits the switch cost into the terms a temp probe
