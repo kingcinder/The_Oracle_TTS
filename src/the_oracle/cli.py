@@ -188,6 +188,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit the full report as a single JSON document on stdout instead of human-readable text.",
     )
 
+    render_report = subparsers.add_parser(
+        "render-report",
+        help="Studio: measure a finished render and report its technical conformance "
+        "(level, clipping, silence, sample rate, utterance and speaker counts).",
+    )
+    render_report.add_argument(
+        "project",
+        help="The render's project directory (the one holding the assembled .flac and render_plan.json).",
+    )
+    render_report.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the report as a single JSON document on stdout instead of human-readable text.",
+    )
+    render_report.add_argument(
+        "--out",
+        default=None,
+        help="Also write the report JSON to this path (written atomically).",
+    )
+
     render = subparsers.add_parser("render", help="Batch render a dialogue file.")
     render.add_argument("--project", help="Load a saved project manifest.")
     render.add_argument("--save-project", dest="save_project", help="Write the current project manifest after preparation/render.")
@@ -1367,6 +1387,51 @@ def handle_license_status() -> int:
     return 0 if status.ok else 1
 
 
+def handle_render_report(args) -> int:
+    """Studio: measure a finished render and report its conformance.
+
+    The gate is exactly ONE call site — the module constant named on the
+    ``require`` line below. The
+    community edition keeps every workflow that shipped before this flag
+    existed -- the capability itself is new in 1.4.0 -- so the gate takes
+    nothing away; an absent or expired licence degrades to community and this
+    command reports the purchase path instead of running.
+
+    Nothing here writes to the project: the render and its plan are read only.
+    """
+    from the_oracle import render_report
+    from the_oracle.licensing import current_license
+    from the_oracle.licensing.policy import LicenseRequired, current_edition, require
+
+    status = current_license()
+    try:
+        require(status, render_report.STUDIO_ENTITLEMENT)
+    except LicenseRequired as exc:
+        print(f"Render reports are a Studio feature. {exc}", file=sys.stderr)
+        print(
+            "Activation is offline and takes one paste: the-oracle activate <token>"
+            " (see `the-oracle license-status` for the current edition).",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        report = render_report.build_report(Path(args.project))
+    except render_report.ReportError as error:
+        print(f"render-report: {error}", file=sys.stderr)
+        return 2
+
+    report["edition"] = current_edition(status)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(render_report.report_text(report))
+    if args.out:
+        written = render_report.write_report(report, Path(args.out))
+        print(f"Report written to {written}", file=sys.stderr)
+    return 0
+
+
 def handle_setup_vulkan() -> int:
     """One-shot automatic setup for the Vulkan (GPU) backend.
 
@@ -1454,6 +1519,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_fix_folder(args)
     if args.command == "sweep-cache":
         return handle_sweep_cache(args)
+    if args.command == "render-report":
+        return handle_render_report(args)
     if args.command == "setup-vulkan":
         return handle_setup_vulkan()
     if args.command == "license-status":
