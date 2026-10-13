@@ -13,6 +13,7 @@ test_atomic_write_leaves_no_temp_file.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -92,6 +93,31 @@ def test_wrong_shape_is_corrupted_content(tmp_path: Path) -> None:
 
 
 def test_unreadable_store_is_typed(tmp_path: Path) -> None:
+    """An unreadable store is a typed state, never a traceback.
+
+    The mechanism has to be one the running platform actually honours. This
+    test used to ``chmod(0o000)`` the token file, which NTFS does not enforce
+    against the *owner*: on Windows the file stayed readable, a token of ``{}``
+    loaded as corrupted_content, and the assertion failed in CI for a reason
+    that had nothing to do with the store. A directory sitting where the token
+    file belongs raises OSError on every platform (POSIX ``IsADirectoryError``,
+    Windows ``PermissionError``) and is a real shape on disk — a stray
+    directory, a half-synced backup — so the portable half of the claim is
+    pinned everywhere and the permission-specific half below where it can be.
+    """
+    path = store.store_path(tmp_path)
+    path.mkdir()
+    result = store.load_token(tmp_path)
+    assert result.state == "unreadable"
+    assert "could not read" in result.detail
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="NTFS does not deny the owner read access for chmod(0o000)",
+)
+def test_permission_denied_store_is_typed(tmp_path: Path) -> None:
+    """The same state from a permission failure, where permissions mean that."""
     path = store.store_path(tmp_path)
     path.write_text("{}", encoding="utf-8")
     path.chmod(0o000)
