@@ -64,6 +64,16 @@ as one is the same class of lie as reading stale bytecode.
 asked for AND the child's output (stdout then stderr) has to contain TEXT, or
 the run is INVALID rather than caught. A nonzero status means *something*
 failed; the text is what says the thing this mutation targets is what failed.
+
+``--witness`` runs that same check on the UNMUTATED tree first, before any byte
+is touched, and refuses (exit 2) unless the witness exits 0 and never prints
+TEXT. Without it a check that was already red — a broken test, a missing
+dependency, a suite someone else is mid-edit on — fails identically under the
+mutation, prints the needle included, and reads as CAUGHT it never earned; a
+check that always prints TEXT has the same problem one layer down. The witness
+is the only thing that can tell those apart, because the verdict logic only
+ever sees the mutated run. Both runs are recorded, so the report shows the
+clean one beside the mutated one.
 """
 
 from __future__ import annotations
@@ -857,6 +867,13 @@ def main(argv: list[str] | None = None) -> int:
         "a matching status without the text is inconclusive (exit 2)",
     )
     parser.add_argument(
+        "--witness",
+        action="store_true",
+        help="run the check on the UNMUTATED tree first and refuse (exit 2) unless it "
+        "exits 0 and never prints the needle — a check that was already red, or "
+        "already printing the needle, cannot read as CAUGHT",
+    )
+    parser.add_argument(
         "command",
         nargs=argparse.REMAINDER,
         help="the check to run under the mutation, after --",
@@ -918,11 +935,41 @@ def main(argv: list[str] | None = None) -> int:
 
     probe = Probe(mutations, timeout=args.timeout)
     child: subprocess.CompletedProcess | None = None
+    witness: subprocess.CompletedProcess | None = None
     refused: str | None = None
-    try:
-        probe.apply()
-    except GuardRefused as exc:
-        refused = str(exc)
+    if args.witness:
+        # Before any byte is touched: a check that is already red — or that
+        # already prints the needle — behaves the same way under the mutation,
+        # so its failure would measure nothing, and the verdict logic below
+        # could not tell it apart from a real catch. Both runs land in
+        # probe.runs, so the report shows the clean one beside the mutated one.
+        try:
+            witness = probe.run(command, cwd=run_cwd)
+        except Exception as exc:  # nothing was mutated, so nothing to restore
+            refused = f"the witness run could not be executed: {exc}"
+        if refused is None and probe.runs[-1].timed_out:
+            refused = (
+                f"the witness run did not finish within {args.timeout:g}s on the UNMUTATED "
+                "tree, so there is no clean baseline to judge the mutated run against"
+            )
+        elif refused is None and witness.returncode != 0:
+            refused = (
+                f"the witness run exited {witness.returncode} on the UNMUTATED tree, so a "
+                "failure under the mutation would conclude nothing — fix the check first, "
+                "or point the probe at a command that is green here"
+            )
+        elif refused is None and require_stdout is not None and require_stdout in (
+            _as_text(witness.stdout) + _as_text(witness.stderr)
+        ):
+            refused = (
+                f"the witness run already printed {require_stdout!r} on the UNMUTATED tree, "
+                "so the needle cannot distinguish the mutation from the baseline"
+            )
+    if refused is None:
+        try:
+            probe.apply()
+        except GuardRefused as exc:
+            refused = str(exc)
     if refused is None:
         try:
             child = probe.run(command, cwd=run_cwd)
@@ -999,8 +1046,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         document = probe.as_json(expect_rc=expect_rc, require_stdout=require_stdout)
         document.update({"verdict": token, "exit_code": code})
+        if witness is not None:
+            document["witness"] = {
+                "returncode": witness.returncode,
+                "timed_out": probe.runs[0].timed_out,
+            }
         print(json.dumps(document, indent=2))
     else:
+        if witness is not None:
+            printed = bool(require_stdout) and require_stdout in (
+                _as_text(witness.stdout) + _as_text(witness.stderr)
+            )
+            print(
+                f"witness: on the UNMUTATED tree the check exited {witness.returncode} "
+                f"and {'printed' if printed else 'did not print'} the needle"
+            )
         print(probe.report(expect_rc=expect_rc, require_stdout=require_stdout))
         if child is not None and child.stdout.strip():
             print("--- child stdout ---")

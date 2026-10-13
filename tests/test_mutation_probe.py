@@ -784,3 +784,155 @@ def test_a_run_whose_restore_was_never_verified_never_reports_caught(
     assert "restore never verified" in output, output
     # The no-op revert really did leave the mutation applied; undo it here.
     source.write_bytes(pristine)
+
+
+# --- --witness: the check must be green before its verdict can be believed ----
+
+
+def _toy_preset_for(probe_module, source: Path, child: str) -> object:
+    """A fake preset whose mutation is a temp file and whose check is ``child``."""
+    return probe_module.Preset(
+        name="fake",
+        what="a temp-file mutation used to pin the witness shape",
+        mutations=(probe_module.Mutation(path=source, old="old", new="new", count=1),),
+        command=(sys.executable, "-c", child),
+        expect_rc=1,
+        require_stdout="bulk-restyle gate CLOSED",
+    )
+
+
+def _toy_that_imports(tmp_path: Path, body: str) -> str:
+    """A ``-c`` child that imports the temp ``toy`` module and runs ``body``."""
+    return f"import sys; sys.path.insert(0, {str(tmp_path)!r}); import toy; {body}"
+
+
+def test_the_witness_refuses_a_check_that_is_already_red(
+    probe_module, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A check red with OR without the mutation must not read as CAUGHT.
+
+    The lie this prevents is demonstrated in the same test: the identical run
+    WITHOUT ``--witness`` reports CAUGHT and exits 0, because a nonzero status
+    plus a printed needle is all the verdict logic can see. The witness asks
+    the question the verdict cannot — was the check green to begin with — and
+    refuses instead of guessing.
+    """
+    source = tmp_path / "toy.py"
+    source.write_text('VALUE = "old"\n', encoding="utf-8")
+    before = probe_module.digest(source.read_bytes())
+    monkeypatch.setitem(
+        probe_module.PRESETS,
+        "fake",
+        _toy_preset_for(
+            probe_module,
+            source,
+            "print('bulk-restyle gate CLOSED'); raise SystemExit(1)",
+        ),
+    )
+
+    without = probe_module.main(["--preset", "fake"])
+    plain = capsys.readouterr().out
+    assert without == 0 and "CAUGHT" in plain, plain
+
+    with_witness = probe_module.main(["--preset", "fake", "--witness"])
+    witnessed = capsys.readouterr().out
+    assert with_witness == 2, witnessed
+    assert "INVALID" in witnessed and "UNMUTATED" in witnessed, witnessed
+    assert probe_module.digest(source.read_bytes()) == before, (
+        "a refused witness must leave the file untouched — nothing was mutated"
+    )
+
+
+def test_the_witness_refuses_a_needle_the_clean_run_already_prints(
+    probe_module, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Exit 0 on the clean tree is not enough: the needle must be silent there.
+
+    A check that always prints the needle (a stray debug line, an assertion
+    copied from the docs) matches it under the mutation too, so the needle
+    would prove nothing — the same class of lie as a pre-existing red, one    layer down.
+    """
+    source = tmp_path / "toy.py"
+    source.write_text('VALUE = "old"\n', encoding="utf-8")
+    before = probe_module.digest(source.read_bytes())
+    monkeypatch.setitem(
+        probe_module.PRESETS,
+        "fake",
+        _toy_preset_for(
+            probe_module,
+            source,
+            _toy_that_imports(
+                tmp_path,
+                "print('bulk-restyle gate CLOSED'); "
+                "raise SystemExit(0 if toy.VALUE == 'old' else 1)",
+            ),
+        ),
+    )
+
+    code = probe_module.main(["--preset", "fake", "--witness"])
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "cannot distinguish" in out, out
+    assert probe_module.digest(source.read_bytes()) == before
+
+
+def test_the_witness_runs_first_and_a_green_check_still_catches(
+    probe_module, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The flag must not cost a real catch: green and silent clean, red and loud mutated."""
+    source = tmp_path / "toy.py"
+    source.write_text('VALUE = "old"\n', encoding="utf-8")
+    before = probe_module.digest(source.read_bytes())
+    monkeypatch.setitem(
+        probe_module.PRESETS,
+        "fake",
+        _toy_preset_for(
+            probe_module,
+            source,
+            _toy_that_imports(
+                tmp_path,
+                "clean = toy.VALUE == 'old'; "
+                "print('bulk-restyle gate CLOSED' if not clean else 'clean run'); "
+                "raise SystemExit(0 if clean else 1)",
+            ),
+        ),
+    )
+
+    code = probe_module.main(["--preset", "fake", "--witness"])
+    out = capsys.readouterr().out
+    assert code == 0 and "CAUGHT" in out, out
+    assert "witness" in out.lower() and "unmutated" in out.lower(), (
+        f"the report must name the witness run and what it measured:\n{out}"
+    )
+    assert probe_module.digest(source.read_bytes()) == before
+
+
+def test_the_witness_applies_to_a_spec_run_too(
+    probe_module, tmp_path: Path, capsys
+) -> None:
+    """``--witness`` is the flag's own contract, not a preset perk."""
+    source = tmp_path / "toy.py"
+    source.write_text('VALUE = "old"\n', encoding="utf-8")
+    spec = tmp_path / "spec.json"
+    spec.write_text(
+        json.dumps([{"path": str(source), "old": "old", "new": "new"}]),
+        encoding="utf-8",
+    )
+
+    code = probe_module.main(
+        [
+            "--spec",
+            str(spec),
+            "--expect-rc",
+            "1",
+            "--witness",
+            "--",
+            sys.executable,
+            "-c",
+            "print('bulk-restyle gate CLOSED'); raise SystemExit(1)",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 2, out
+    assert "UNMUTATED" in out, out
+    assert source.read_text(encoding="utf-8") == 'VALUE = "old"\n'
