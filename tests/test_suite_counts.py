@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
@@ -608,3 +609,140 @@ def test_recording_is_the_measuring_path_and_never_inherits(counts) -> None:
     source = (SCRIPTS_DIR / "certify_suite_counts.py").read_text(encoding="utf-8")
 
     assert "if not args.record and recorded is None:" in source
+
+
+# --- the availability gate CI runs on every head -------------------------------
+
+
+def _no_suite_run(*args, **kwargs):
+    raise AssertionError("the availability gate must not run the suite")
+
+
+def _availability(counts, repo: Path, baseline: Path, tmp_path: Path, *extra: str) -> int:
+    return counts.main(
+        [
+            "--repo-root",
+            str(repo),
+            "--baseline",
+            str(baseline),
+            "--scratch",
+            str(_check_scratch(tmp_path)),
+            "--availability",
+            *extra,
+        ]
+    )
+
+
+def test_the_availability_gate_passes_a_recorded_head_without_running_the_suite(
+    counts, tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """The gate answers from the baseline file: no run, no interpreter, no worktree.
+
+    The distinction is the whole point of having it in CI: recording costs a
+    full suite run (minutes) while answering "is this head answerable" costs a
+    JSON lookup plus a two-tree diff (seconds), and only the second is cheap
+    enough to run on every push.
+    """
+    repo, baseline, measured = _repo_whose_tip_carries_a_recording(tmp_path / "repo")
+    monkeypatch.setattr(counts, "run_suite", _no_suite_run)
+
+    code = _availability(counts, repo, baseline, tmp_path, measured)
+
+    assert code == 0
+    assert "recorded" in capsys.readouterr().out.lower()
+    # Nothing was checked out: the gate must not pay the recording path's cost.
+    assert len(_git_in(repo, "worktree", "list").splitlines()) == 1
+
+
+def test_the_availability_gate_passes_the_follower_by_inheritance(
+    counts, tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """The commit that carries a recording is the case the gate exists to keep green."""
+    repo, baseline, _ = _repo_whose_tip_carries_a_recording(tmp_path / "repo")
+    monkeypatch.setattr(counts, "run_suite", _no_suite_run)
+
+    code = _availability(counts, repo, baseline, tmp_path, "HEAD")
+
+    assert code == 0
+    assert "inherit" in capsys.readouterr().out.lower()
+    assert len(_git_in(repo, "worktree", "list").splitlines()) == 1
+
+
+def test_the_availability_gate_refuses_a_head_that_is_neither_recorded_nor_inheritable(
+    counts, tmp_path: Path, capsys, monkeypatch
+) -> None:
+    """This refusal is the CI red the gate exists to produce."""
+    repo, baseline, _ = _repo_whose_tip_carries_a_recording(tmp_path / "repo")
+    (repo / "suite_test.py").write_text(
+        "def test_one(): pass\ndef test_two(): pass\n", encoding="utf-8"
+    )
+    _git_in(repo, "add", "suite_test.py")
+    _git_in(repo, "commit", "-qm", "c: one more test")
+    monkeypatch.setattr(counts, "run_suite", _no_suite_run)
+
+    code = _availability(counts, repo, baseline, tmp_path)
+
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "no baseline is recorded" in error
+    assert "nothing to inherit" in error
+
+
+def test_the_availability_gate_never_records(counts, tmp_path: Path, capsys) -> None:
+    """``--availability`` answers whether counts exist; ``--record`` creates them.
+
+    Combining them must refuse rather than silently measure: a gate that could
+    record would be a gate that could rewrite the thing it is supposed to check.
+    """
+    repo, baseline, measured = _repo_whose_tip_carries_a_recording(tmp_path / "repo")
+
+    code = _availability(counts, repo, baseline, tmp_path, "--record", measured)
+
+    assert code == 2
+    assert "--availability" in capsys.readouterr().err
+
+
+def test_ci_refuses_a_head_whose_counts_are_neither_recorded_nor_inheritable() -> None:
+    """The gate must run on every push, see real history, and be allowed to fail.
+
+    Four separate ways this could silently stop covering anything: no job at
+    all; a job gated to manual dispatch (a hunt job, not a gate); a shallow
+    clone (the inheritance comparison cannot read a recorded commit the clone
+    never fetched, so the gate would refuse every head for the wrong reason);
+    and continue-on-error (a red nobody sees).
+    """
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    jobs = workflow["jobs"]
+    gated = [
+        (name, job)
+        for name, job in jobs.items()
+        if any(
+            "certify_suite_counts.py" in str(step.get("run", ""))
+            and "--availability" in str(step.get("run", ""))
+            for step in job.get("steps", [])
+        )
+    ]
+    assert gated, (
+        "no CI job runs scripts/certify_suite_counts.py --availability, so a head "
+        "whose suite counts are neither recorded nor inheritable is not refused anywhere"
+    )
+    _, job = gated[0]
+    assert "workflow_dispatch" not in str(job.get("if", "")), (
+        "the gate must run on pushes and pull requests, not only by hand"
+    )
+    assert not job.get("continue-on-error"), "a gate that cannot fail is not a gate"
+    assert "timeout-minutes" in job, "the gate needs a bound of its own"
+
+    checkout = next(
+        step for step in job["steps"] if "actions/checkout" in str(step.get("uses", ""))
+    )
+    assert str(checkout.get("with", {}).get("fetch-depth")) == "0", (
+        "the inheritance comparison diffs against recorded commits, which a shallow "
+        "clone never fetched; the gate must check out full history"
+    )
+    gate_step = next(
+        step for step in job["steps"] if "--availability" in str(step.get("run", ""))
+    )
+    assert not gate_step.get("continue-on-error")

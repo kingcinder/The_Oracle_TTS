@@ -31,6 +31,7 @@ would be a baseline of a tree nobody actually gets from a clone.
     python scripts/certify_suite_counts.py                    # HEAD against its baseline
     python scripts/certify_suite_counts.py ebc88f2            # an older commit
     python scripts/certify_suite_counts.py --record           # record/replace HEAD's entry
+    python scripts/certify_suite_counts.py --availability     # CI's gate: recorded or inheritable, else exit 2
     python scripts/certify_suite_counts.py --pytest-args "-k vulkan"
     python scripts/certify_suite_counts.py --capture-output /tmp/run.txt
 
@@ -608,6 +609,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--scratch", type=Path, default=None, help="Where to build the fresh tree.")
     parser.add_argument("--keep", action="store_true", help="Keep the fresh tree instead of deleting it.")
+    parser.add_argument(
+        "--availability",
+        action="store_true",
+        help=(
+            "Only answer whether this ref's counts are recorded or inheritable; "
+            "never run the suite. Exit 2 when neither -- this is CI's gate."
+        ),
+    )
     args = parser.parse_args(argv)
 
     repo_root = args.repo_root.expanduser().resolve()
@@ -629,6 +638,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         commit = resolve_commit(repo_root, args.ref)
         counts = load_baseline(args.baseline)
+        if args.availability and args.record:
+            raise SuiteCountsError(
+                "--availability answers whether counts exist; --record creates them. "
+                "A gate that could rewrite the baseline it checks would not be a gate, "
+                "so the two flags together are a refusal rather than a measurement."
+            )
         recorded = counts.get(commit)
         inherited: Inheritance | None = None
         if not args.record and recorded is None:
@@ -654,6 +669,18 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"PASS (inherited): {commit[:12]} checks out the suite {inherited.recorded_for[:12]} "
                 "was measured on, so it inherits those counts; nothing was re-derived here."
+            )
+            return 0
+
+        if args.availability:
+            # Counts exist for this sha itself, so the gate is answered from the
+            # baseline file alone: no interpreter, no worktree, no suite. This is
+            # the only difference from the check above, and the reason the gate is
+            # cheap enough to run on every push.
+            print(f"Checking {args.ref} -> {commit[:12]} for an available baseline (no suite run)")
+            print(
+                f"PASS (recorded): {commit[:12]} has its own baseline entry "
+                + " ".join(f"{field}={recorded[field]}" for field in COUNT_FIELDS)
             )
             return 0
 

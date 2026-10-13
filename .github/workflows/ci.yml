@@ -240,6 +240,43 @@ jobs:
         if: runner.os == 'Linux'
         run: python scripts/fresh_clone_acceptance.py --only doctor,wrappers
 
+  # Every head must be answerable for its suite counts: either recorded in
+  # scripts/suite_counts_baseline.json, or inheriting one from a recorded commit
+  # whose tree is identical apart from that file. RECORDING costs a full suite
+  # run in a fresh worktree (minutes), so it stays a deliberate act; ANSWERING
+  # costs a JSON lookup plus a two-tree diff, which is cheap enough to gate every
+  # push -- and that is the point. Until this job existed, nothing refused an
+  # unrecorded head: the script said "an unrecorded commit is a question, not a
+  # pass" and nobody asked the question in CI. Exit 2 is that refusal (no entry
+  # for the head, and no recorded commit checks out the same suite), so this job
+  # is red exactly when a head's counts are neither recorded nor inheritable,
+  # and green otherwise -- on recorded heads and on the commit that carries a
+  # recording, which can never be recorded itself and inherits by tree
+  # comparison instead.
+  #
+  # Full history on purpose: the inheritance comparison diffs against recorded
+  # commits, and a shallow clone never fetched them, so the gate would refuse
+  # every head for the wrong reason. No bootstrap either: the availability path
+  # is stdlib plus git, and needing the project's dependencies to refuse a
+  # missing baseline would be one more thing that could fail before the gate did.
+  suite-counts-availability:
+    name: Suite counts recorded or inheritable (every head)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Refuse A Head Whose Suite Counts Are Neither Recorded Nor Inheritable
+        run: python scripts/certify_suite_counts.py --availability
+
   # The Vulkan smoke skipped in CI from the day it was written: it needs a Vulkan
   # device, a built audiocpp_cli and the Chatterbox ggml model, and the runner had
   # none of them. A skip looks exactly like a pass in a green run, so the suite
