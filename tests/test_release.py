@@ -585,6 +585,13 @@ def test_write_checksums_manifest_is_sha256sum_compatible(tmp_path: Path) -> Non
     manifest = release.write_checksums(tmp_path, "9.9.9", artifacts)
 
     assert manifest.name == "checksums-9.9.9.sha256"
+    # The bytes matter, not just the lines: sha256sum -c is byte-oriented, so a
+    # text-mode CRLF translation would put "\r" at the end of every filename
+    # and the manifest could never verify anything on the platform that
+    # produced it (measured 2026-10-13 on a real windows-latest runner).
+    raw = manifest.read_bytes()
+    assert b"\r" not in raw, raw
+    assert raw.endswith(b"\n")
     lines = manifest.read_text(encoding="utf-8").splitlines()
     assert lines == [
         f"{hashlib.sha256(b'wheel bytes').hexdigest()}  the_oracle-9.9.9-py3-none-any.whl",

@@ -440,8 +440,16 @@ def test_remember_format_backup_dedupes_per_file_and_keeps_newest_first() -> Non
     remember_format_backup(settings, "/tmp/a.txt", "/tmp/a.txt.bak-2", stamp="t3")
 
     records = settings["recent_format_backups"]
-    assert [r["file"] for r in records] == ["/tmp/a.txt", "/tmp/b.txt"]
-    assert records[0]["backup"] == "/tmp/a.txt.bak-2"
+    # The records hold RESOLVED paths — that is what makes two spellings of one
+    # file dedupe — so the expectation is resolved the same way rather than
+    # baked as a POSIX literal (on Windows a literal "/tmp/a.txt" comes back
+    # as "D:\\tmp\\a.txt", which failed four platform-independent tests on a
+    # separator alone, measured on a real runner 2026-10-13).
+    assert [r["file"] for r in records] == [
+        str(Path("/tmp/a.txt").resolve()),
+        str(Path("/tmp/b.txt").resolve()),
+    ]
+    assert records[0]["backup"] == str(Path("/tmp/a.txt.bak-2").resolve())
     # A no-backup call records nothing.
     remember_format_backup(settings, "/tmp/c.txt", None)
     assert len(settings["recent_format_backups"]) == 2
@@ -455,8 +463,8 @@ def test_remember_format_backup_caps_the_history_at_twenty() -> None:
         )
     records = settings["recent_format_backups"]
     assert len(records) == 20
-    assert records[0]["file"] == "/tmp/f24.txt"  # newest survives
-    assert records[-1]["file"] == "/tmp/f5.txt"  # oldest five dropped
+    assert records[0]["file"] == str(Path("/tmp/f24.txt").resolve())  # newest survives
+    assert records[-1]["file"] == str(Path("/tmp/f5.txt").resolve())  # oldest five dropped
 
 
 def test_remember_format_backup_stamps_with_the_persisted_format() -> None:

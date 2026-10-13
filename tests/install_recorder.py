@@ -270,8 +270,14 @@ class InstallBoundary:
             for path in sorted(root.rglob("*")):
                 if path.is_dir() or (path.is_symlink() and not path.exists()):
                     continue
-                found[f"{root_name}/{path.relative_to(root)}"] = WrittenFile(
-                    label=f"{root_name}/{path.relative_to(root)}",
+                # as_posix(): the label is this harness's own vocabulary (a
+                # stable key the assertions compare across platforms), not a
+                # path to open. str(Path) uses the platform separator, so on
+                # Windows the labels came back "home/.local\\bin\\the-oracle"
+                # and four boundary tests failed on a separator alone.
+                label = f"{root_name}/{path.relative_to(root).as_posix()}"
+                found[label] = WrittenFile(
+                    label=label,
                     mode=path.stat().st_mode & 0o777,
                     text=_read_text(path),
                 )

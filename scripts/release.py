@@ -537,9 +537,16 @@ def write_checksums(outdir: Path, version: str, artifacts: list[Path]) -> Path:
     if not artifacts:
         raise ReleaseError(f"no artifacts to checksum in {outdir}")
     manifest = outdir / checksums_filename(version)
+    # newline="\n" is the format, not a convenience: the manifest is a
+    # sha256sum -c input, which is byte-oriented. Text-mode translation on
+    # Windows writes CRLF, and the trailing "\r" then becomes part of the
+    # filename the tool tries to open — the manifest a Windows release run
+    # produced could never be verified by the runbook's own Step 4.2 check
+    # (measured 2026-10-13 on a real windows-latest runner: exit 1).
     manifest.write_text(
         "".join(f"{_sha256(path)}  {path.name}\n" for path in sorted(artifacts, key=lambda p: p.name)),
         encoding="utf-8",
+        newline="\n",
     )
     return manifest
 
