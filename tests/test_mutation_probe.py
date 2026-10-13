@@ -491,6 +491,112 @@ def test_the_certifier_preset_still_describes_this_tree(probe_module) -> None:
     )
 
 
+# --- the certifier hermeticity presets (M1-M4) --------------------------------
+
+#: The four mutations ``tests/test_certifier_hermeticity.py``'s module docstring
+#: records as proven-live-and-reverted, each with the net that caught it and the
+#: needle that proves THAT net fired rather than some other breakage.
+#:
+#: M2's proof deliberately uses the isolation pin instead of the docstring's
+#: behavioral half: with the redirect gone, the behavioral run rewrites the
+#: developer's REAL app settings six times (the exact damage the redirect
+#: exists to stop), which makes it a destructive replay. The isolation pin
+#: asserts the same redirect through the real reader, side-effect free, and its
+#: own comment says it was found by this very mutation.
+_HERMETICITY_PRESETS = {
+    "certifier-hermeticity-paths-redirect": {
+        "file": "scripts/certify_gui.py",
+        "needle": "gui_startup_timing.json",
+        "proof": (
+            "tests/test_certifier_hermeticity.py::"
+            "test_sweep_never_touches_the_real_repo_or_config"
+        ),
+        "gone": "_app_gui.ensure_repo_default_paths = _hermetic_paths",
+    },
+    "certifier-hermeticity-config-redirect": {
+        "file": "scripts/certifier_isolation.py",
+        "needle": "the helper no longer redirects both config variables",
+        "proof": (
+            "tests/test_certifier_isolation.py::"
+            "test_the_helper_redirects_both_config_variables"
+        ),
+        "gone": 'THROWAWAY_ENV_VARS = ("XDG_CONFIG_HOME", "APPDATA")',
+    },
+    "certifier-hermeticity-crash-root": {
+        "file": "scripts/certify_gui.py",
+        "needle": "crash_handlers.install(root=_CONFIG_ROOT)",
+        "proof": (
+            "tests/test_certifier_hermeticity.py::test_crash_channel_stays_in_the_throwaway"
+        ),
+        "gone": "crash_handlers.install(root=_CONFIG_ROOT)",
+    },
+    "certifier-hermeticity-log-entry-points": {
+        "file": "scripts/certify_gui.py",
+        "needle": "the sweep must not call configure_logging(",
+        "proof": "tests/test_certifier_hermeticity.py::test_no_repo_log_entry_points",
+        "added": "configure_logging(",
+    },
+}
+
+
+@pytest.mark.parametrize("name", sorted(_HERMETICITY_PRESETS))
+def test_the_hermeticity_presets_still_describe_this_tree(probe_module, name: str) -> None:
+    """Each recorded hermeticity mutation must still be applicable and still be seen.
+
+    The same rot risk as the live-header preset, multiplied by four: the anchor
+    edited (the count guard refuses, which must read as "re-record me"), the
+    proof command renamed, or the needle loosened until any breakage counts as a
+    catch. The needle is pinned to the exact assertion message the net prints,
+    which is the whole difference between "the mutation was seen" and "something
+    else broke".
+
+    Like the live-header pin, this does NOT run the proof command (M1's is the
+    full ~20 s sweep): what is pinned is that the act would still be possible.
+    The live runs are recorded in each preset's evidence line.
+    """
+    expected = _HERMETICITY_PRESETS[name]
+    preset = probe_module.PRESETS[name]
+
+    assert preset.expect_rc == 1, (
+        "a caught mutation fails one named test, so pytest exits 1 — re-measure, "
+        "do not relax"
+    )
+    assert preset.require_stdout == expected["needle"], (
+        "the needle must be the exact message the catching net prints; a looser one "
+        "would report CAUGHT for a mutation caught some other way"
+    )
+    assert preset.evidence, "a preset is a hand run written down — say where it was run"
+    proof = list(preset.command)
+    assert proof[1:3] == ["-m", "pytest"], proof
+    assert expected["proof"] in proof, (
+        f"the preset must run {expected['proof']} — the net its evidence names"
+    )
+
+    script = probe_module.REPO_ROOT / expected["file"]
+    [mutation] = preset.resolve()
+    assert mutation.path == script, f"{name} mutates {mutation.path}, expected {script}"
+    assert mutation.path.is_file(), f"{mutation.path} is gone — re-record the preset"
+    text = mutation.path.read_text(encoding="utf-8")
+    assert text.count(mutation.old) == mutation.count, (
+        f"the mutation site no longer occurs exactly {mutation.count} time(s) in "
+        f"{mutation.path.name}: re-record {name} rather than leave it to miss"
+    )
+    mutated = text.replace(mutation.old, mutation.new)
+    assert mutated != text, "the replacement changes nothing — it is not a mutation"
+    # A mutation that cannot import exits 4 (a collection error), which the
+    # verdict logic refuses to call caught; failing here says WHY.
+    ast.parse(mutated)
+    if "gone" in expected:
+        assert expected["gone"] not in mutated, (
+            "the mutation no longer removes the line it claims to remove — re-record it"
+        )
+    if "added" in expected:
+        assert expected["added"] in mutated, (
+            "the mutation no longer introduces the forbidden text it claims to — "
+            "re-record it"
+        )
+
+
 def test_the_cli_lists_presets_and_refuses_the_ambiguous_invocations(probe_module) -> None:
     """The catalog is reachable and every half-specified run is a refusal.
 

@@ -305,6 +305,39 @@ _LIVE_HEADER_GATE_NEW = (
     '        header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px 0;")\n'
 )
 
+# The four mutations tests/test_certifier_hermeticity.py's module docstring
+# records as "proven live, reverted byte-identical" — M1 to M4 in its mutation
+# contract, recorded here so replaying them is one command instead of a hand
+# edit. Each names the net that caught it, and the needle is that net's own
+# assertion text, so a replay reports CAUGHT only when the RIGHT test fired.
+#
+# M2 is the one with a hazard: with the redirect gone, the docstring's
+# BEHAVIORAL net rewrites the developer's real app settings six times — the
+# exact damage the redirect exists to prevent. Its preset therefore proves the
+# mutation through the isolation pin instead (same redirect, asserted through
+# the real reader, no writes), and its evidence line says so rather than
+# claiming a destructive replay.
+_HERMETIC_PATHS_OLD = "_app_gui.ensure_repo_default_paths = _hermetic_paths\n"
+_HERMETIC_PATHS_NEW = (
+    "pass  # mutation-probe M1: the paths seam is no longer redirected, so "
+    "MainWindow's Output/logs timing writes land in the real repo\n"
+)
+_HERMETIC_CONFIG_OLD = 'THROWAWAY_ENV_VARS = ("XDG_CONFIG_HOME", "APPDATA")\n'
+_HERMETIC_CONFIG_NEW = (
+    "THROWAWAY_ENV_VARS = ()  # mutation-probe M2: neither config variable is redirected\n"
+)
+_HERMETIC_CRASH_OLD = "    crash_handlers.install(root=_CONFIG_ROOT)\n"
+_HERMETIC_CRASH_NEW = (
+    "    pass  # mutation-probe M3: the crash root override is gone, so the arm "
+    "resolves the repo's crash store\n"
+)
+_HERMETIC_LOG_OLD = "    crash_handlers.arm_native_capture()\n"
+_HERMETIC_LOG_NEW = (
+    "    from the_oracle.utils.logging import configure_logging\n"
+    "    configure_logging()  # mutation-probe M4: a repo-local log writer is reachable again\n"
+    "    crash_handlers.arm_native_capture()\n"
+)
+
 _PRESETS: tuple[Preset, ...] = (
     Preset(
         name="certifier-gate-live-header",
@@ -323,6 +356,127 @@ _PRESETS: tuple[Preset, ...] = (
         require_stdout="bulk-restyle gate CLOSED",
         evidence="STATE.md 2026-10-12 (second slice): all six themes failed "
         "with the gate CLOSED, 0 \"all open\" notes, restored byte-identical (sha256)",
+    ),
+    Preset(
+        name="certifier-hermeticity-paths-redirect",
+        what="M1: stop repointing app_gui.ensure_repo_default_paths at the "
+        "throwaway, so the sweep's MainWindow writes its Output/logs timing "
+        "files into the real repo — the behavioral half must catch it by name",
+        mutations=(
+            Mutation(
+                path=Path("scripts/certify_gui.py"),
+                old=_HERMETIC_PATHS_OLD,
+                new=_HERMETIC_PATHS_NEW,
+                count=1,
+            ),
+        ),
+        command=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_certifier_hermeticity.py::"
+            "test_sweep_never_touches_the_real_repo_or_config",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+        ),
+        expect_rc=1,
+        require_stdout="gui_startup_timing.json",
+        evidence="M1 of tests/test_certifier_hermeticity.py's mutation contract; "
+        "replayed 2026-10-13 on this tree — exit 1, repo-tree half naming "
+        "Output/logs/gui_startup_timing.json, source restored by the probe",
+    ),
+    Preset(
+        name="certifier-hermeticity-config-redirect",
+        what="M2: empty THROWAWAY_ENV_VARS, so the certifier family redirects "
+        "neither XDG_CONFIG_HOME nor APPDATA and the sweep reads and rewrites "
+        "the real config root (6 settings writes per run)",
+        mutations=(
+            Mutation(
+                path=Path("scripts/certifier_isolation.py"),
+                old=_HERMETIC_CONFIG_OLD,
+                new=_HERMETIC_CONFIG_NEW,
+                count=1,
+            ),
+        ),
+        command=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_certifier_isolation.py::"
+            "test_the_helper_redirects_both_config_variables",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+        ),
+        expect_rc=1,
+        require_stdout="the helper no longer redirects both config variables",
+        evidence="M2 of the hermeticity mutation contract. Proven through the "
+        "isolation pin rather than the docstring's behavioral half on purpose: "
+        "that half REWRITES THE REAL APP SETTINGS six times when the redirect "
+        "is gone, so replaying it would cost the developer their theme, layout "
+        "and last input — the pin asserts the same redirect through the real "
+        "reader and its own comment records that it was found by this mutation. "
+        "The behavioral catch is documented in the hermeticity docstring.",
+    ),
+    Preset(
+        name="certifier-hermeticity-crash-root",
+        what="M3: drop crash_handlers.install(root=_CONFIG_ROOT), so the native "
+        "dump arm resolves the repo's crash store instead of the throwaway — "
+        "a channel no snapshot can see on an already-armed machine",
+        mutations=(
+            Mutation(
+                path=Path("scripts/certify_gui.py"),
+                old=_HERMETIC_CRASH_OLD,
+                new=_HERMETIC_CRASH_NEW,
+                count=1,
+            ),
+        ),
+        command=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_certifier_hermeticity.py::test_crash_channel_stays_in_the_throwaway",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+        ),
+        expect_rc=1,
+        require_stdout="crash_handlers.install(root=_CONFIG_ROOT)",
+        evidence="M3 of the hermeticity mutation contract; replayed 2026-10-13 "
+        "on this tree — exit 1, the source-level order pin refusing on the "
+        "missing install line, source restored by the probe",
+    ),
+    Preset(
+        name="certifier-hermeticity-log-entry-points",
+        what="M4: reintroduce a repo-local log writer (configure_logging) in the "
+        "sweep's arming block, the entry point the script must never reach",
+        mutations=(
+            Mutation(
+                path=Path("scripts/certify_gui.py"),
+                old=_HERMETIC_LOG_OLD,
+                new=_HERMETIC_LOG_NEW,
+                count=1,
+            ),
+        ),
+        command=(
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_certifier_hermeticity.py::test_no_repo_log_entry_points",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+        ),
+        expect_rc=1,
+        require_stdout="the sweep must not call configure_logging(",
+        evidence="M4 of the hermeticity mutation contract; replayed 2026-10-13 "
+        "on this tree — exit 1, the entry-point scan naming configure_logging(, "
+        "source restored by the probe",
     ),
 )
 

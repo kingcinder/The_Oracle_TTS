@@ -38,6 +38,15 @@ Mutation contract (proven live, reverted byte-identical):
 - introducing ``configure_logging``/``launch_gui`` fails
   ``test_no_repo_log_entry_points``.
 
+All four are now recorded presets in ``scripts/mutation_probe.py`` (names
+``certifier-hermeticity-paths-redirect``, ``-config-redirect``, ``-crash-root``,
+``-log-entry-points``), so replaying one is a single command instead of a hand
+edit: each names this contract's own catching test and asserts that test's own
+message, so a replay reports CAUGHT only when the right net fired. M2's preset
+proves through ``tests/test_certifier_isolation.py`` rather than the behavioral
+half below, because with the redirect gone that half rewrites the developer's
+REAL app settings — see the preset's evidence line.
+
 Honest limits: the snapshot window is ~20 s wide, so a concurrent writer in
 this shared checkout (another session committing, editing tracked sources,
 or the developer's own GUI) can report a change it did not cause — the
