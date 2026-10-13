@@ -86,6 +86,23 @@ jobs:
         shell: pwsh
         run: python scripts/manage_install.py bootstrap --skip-doctor --include-dev
 
+      - name: Windows GUI Event Filter No-op Diagnostic
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          PYTHONFAULTHANDLER: "1"
+          QT_QPA_PLATFORM: "offscreen"
+        run: |
+          New-Item -ItemType Directory -Force -Path gui-certification-runs | Out-Null
+          & .\.venv\Scripts\python.exe -u scripts/probe_gui_without_tooltip_filter.py --aspects contrast,chrome,studio,wizard 2>&1 | Tee-Object -FilePath "gui-certification-runs/no-op-probe.txt"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            Write-Error "No-op diagnostic failed with exit code $code."
+            exit $code
+          }
+          Write-Host "The full six-theme certification passed with eventFilter replaced by a no-op."
+
       - name: Doctor Via Manager (Linux)
         if: runner.os == 'Linux'
         shell: bash
@@ -219,23 +236,6 @@ jobs:
             }
           }
           Write-Host "All ten consecutive full six-theme certifications passed."
-
-      - name: Windows GUI Event Filter No-op Diagnostic
-        if: runner.os == 'Windows' && always()
-        continue-on-error: true
-        shell: pwsh
-        env:
-          PYTHONFAULTHANDLER: "1"
-          QT_QPA_PLATFORM: "offscreen"
-        run: |
-          New-Item -ItemType Directory -Force -Path gui-certification-runs | Out-Null
-          & .\.venv\Scripts\python.exe -u scripts/probe_gui_without_tooltip_filter.py --aspects contrast,chrome,studio,wizard 2>&1 | Tee-Object -FilePath "gui-certification-runs/no-op-probe.txt"
-          $code = $LASTEXITCODE
-          if ($code -ne 0) {
-            Write-Error "No-op diagnostic failed with exit code $code."
-            exit $code
-          }
-          Write-Host "The full six-theme certification passed with eventFilter replaced by a no-op."
 
       - name: Upload Windows Certification Logs
         if: runner.os == 'Windows' && always()
