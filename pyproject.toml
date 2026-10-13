@@ -39,6 +39,16 @@ chatterbox = [
 dev = [
   "pytest==8.3.5",
   "pytest-xdist==3.6.1",
+  # Reproduction + audit tooling (Phase 1/3 of the 1.4.0 release work). They are
+  # DEV-ONLY: nothing here ships in the wheel, and a runtime install is not
+  # required to have them (the doctor reports a missing optional-extra pin as
+  # informational, not a failure). `packaging` is listed explicitly even though
+  # it arrives transitively, because scripts/doctor.py imports it directly for
+  # the dependency-pin check.
+  "packaging>=24.0",
+  "pip-audit==2.10.1",
+  "detect-secrets==1.5.0",
+  "pip-licenses==5.5.5",
 ]
 
 [project.scripts]
