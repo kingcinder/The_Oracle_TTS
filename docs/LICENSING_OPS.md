@@ -21,18 +21,43 @@ Generate the signing seed and its matching verify key:
 python scripts/license_sign.py keygen
 ```
 
-- Store the printed `seed_hex` in a secret manager (or offline media).
-  **Never commit it, never put it in a shell dotfile.**
+- Store the printed `signing_seed_hex` in a secret manager (or offline
+  media). **Never commit it, never put it in a shell dotfile.** Run
+  `keygen` on your own machine: its output is the only copy of the seed,
+  and a seed that passes through a chat transcript, an issue tracker, or
+  a CI log is compromised.
 - `ORACLE_LICENSE_SIGNING_KEY` (64-hex, 32 bytes) is how the seed enters
   the minting environment at mint time — export it from the secret
   manager per-session, per-command.
-- Record the `verify_key_hex` in `src/the_oracle/licensing/keys.py` under
-  a key id (`k1` is the commissioning key). The verify key is *public*
-  material: it ships inside the client and its exposure forges nothing.
+- Record ONLY `verify_key_hex` in `src/the_oracle/licensing/keys.py` under
+  a key id — the two steps above this one are the whole procedure:
 
-The registry's commissioning key is pinned to the RFC 8032 §7.1 test
-vector (`tests/test_licensing_keys.py`) — registry corruption therefore
-fails a spec pin rather than silently trusting a new key.
+  ```python
+  KEYS: tuple[VerifyKey, ...] = (
+      VerifyKey(key_id="k2", public_key=bytes.fromhex("<verify_key_hex>")),
+  )
+  ```
+
+  The verify key is *public* material: it ships inside the client and its
+  exposure forges nothing.
+
+**The registry must never hold a published key.** Until 2026-10-13 the
+commissioning key `k1` *was* the RFC 8032 §7.1 TEST 1 public key, whose
+seed is printed in the spec and was hard-coded in this repository's own
+tests — any reader could mint a licence every shipped install accepted.
+It is gone. `KEYS` is deliberately **empty until you register a
+production key**, which fails closed (every token reports `unknown_key`,
+the install runs as community), and two nets keep a forgeable key out:
+
+- `tests/test_licensing_registry_hygiene.py` fails if any registered key
+  is a published RFC 8032 vector key, or if one of the vectors' hex
+  appears in `keys.py` at all (with a vacuity probe that re-plants the
+  historical defect and requires the scan to go red);
+- `scripts/release.py` **refuses to build release artifacts** when the
+  registry is empty or holds a published vector key.
+
+So a release built from this tree today is blocked on purpose: register
+the production verify key first. See §5 for the gated feature.
 
 ## 2. Minting a license
 
@@ -40,7 +65,7 @@ fails a spec pin rather than silently trusting a new key.
 ORACLE_LICENSE_SIGNING_KEY=<seed_hex> python scripts/license_sign.py mint \
   --edition studio \
   --licensee "customer name or email (their choice)" \
-  [--key-id k1] \
+  --key-id k2 \  # required: a defaulted key id is how k1 got used
   [--expires 2027-01-31T00:00:00Z] \
   [--machine-hash <32-hex from `the-oracle machine-id`>]
 ```
@@ -120,3 +145,49 @@ Revoking a leaked or abused license means **rotation plus expiry**:
   placeholders — renaming is one table in `policy.py` plus docs, LICENSING §9.3).
 - Whether trial tokens are minted per purchase or ship as a generic eval
   token (affects only `license_sign.py` UX, LICENSING §9.4).
+
+## 8. The first gated feature (`render-report`) — and how to move it
+
+Until 1.4.0 nothing was gated: `studio_features` existed in `policy.py`
+and no code ever called `require(...)` for it, so the app advertised a
+licensing system that enforced nothing. Phase 1 of the 1.4.0 release work
+closed that with the **least destructive** option available, because the
+other branch of the requirement — "or remove the license UI and the studio
+edition" — destroys work that already shipped.
+
+**The gated capability:** `the-oracle render-report PROJECT_DIR` — a
+machine-readable technical conformance report for a finished render
+(peak/RMS level, clipping, silence ratio, sample rate, channels, frames,
+utterance and speaker counts, and whether the plan's declared durations
+agree with the audio). It is **additive**: nothing that shipped before it
+is gated, so community keeps every existing workflow, which is what
+`LICENSING_DESIGN.md` §4 requires.
+
+- Implementation: `src/the_oracle/render_report.py` (measurement) and
+  `handle_render_report` in `cli.py` (the gate).
+- The entitlement is one constant, `render_report.STUDIO_ENTITLEMENT`, and
+  exactly one `policy.require(...)` call site — pinned by
+  `tests/test_render_report.py::test_the_gate_is_one_call_site` so moving
+  the gate is a one-line change.
+- Behaviour under each license state is pinned end to end in that file:
+  community refuses with the offline purchase path and writes nothing;
+  studio produces the report; an **expired** studio token degrades to
+  community, refuses, and leaves the render byte-identical.
+- The command never writes to the project it measures (read-only, pinned).
+
+**To move or change the gate** (owner decision, still open — the feature
+was chosen as a defensible default, not as final product strategy):
+
+1. If a different capability should be Studio, change the single
+   `require(status, ...)` line in `handle_render_report` to that
+   capability's own entitlement, and add its own entitlement name to
+   `policy.EDITIONS["studio"]` (community must keep everything that
+   shipped before).
+2. If the licence system should not ship at all, the opposite branch is:
+   delete `gui_license.py`'s activation surface + the Help-menu entries +
+   the `license-status`/`activate`/`machine-id` commands, drop the `studio`
+   and `trial` editions from `policy.EDITIONS`, and remove
+   `licensing_key_problems` from `scripts/release.py`. That is a
+   destructive change to shipped work: confirm with the owner first.
+3. Either way, the honest threat model is in
+   `docs/LICENSING_THREAT_MODEL.md`; do not promise more than it says.
