@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from the_oracle.gui_render import RenderProgressDialog
 from the_oracle.gui_sections import QHSectionGroup
+from the_oracle.gui_themes import bulk_restyle
 from the_oracle.pipeline import RenderProgress
 
 
@@ -71,7 +72,14 @@ class LivePanel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
 
         header = QLabel("Live")
-        header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px 0;")
+        # Widget-level restyles run inside the bulk-restyle scope, like the
+        # gui_sections collapse toggle: measured (2026-10-10 construction-storm
+        # audit) at ~1 change event / 0.06 ms per call, so the gate costs
+        # nothing and guarantees no app-wide event filter is ever re-entered
+        # by a widget-level stylesheet — pinned by
+        # tests/test_widget_restyle_gate.py.
+        with bulk_restyle():
+            header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px 0;")
         outer.addWidget(header)
 
         self.backend_label = QLabel("Backend: idle")

@@ -15,18 +15,22 @@ stylesheet inherits the gate instead of silently taxing every filter.
 Two nets keep it:
 
 1. an AST scan (the ``test_qt_timer_ownership`` shape): every
-   ``setStyleSheet`` call in ``gui_sections.py`` / ``gui_cast.py`` must sit
-   inside a ``with bulk_restyle():`` block, with a vacuity floor so the scan
-   cannot go blind, and a synthetic self-check so a broken rule fails loudly;
-2. a runtime pin that constructs a real eager ``SpeakerGroup`` (which fires
-   all three sites) and observes, from inside a traced ``setStyleSheet``,
-   that every call found the gate OPEN.
+   ``setStyleSheet`` call in the four widget modules that own construction-
+   time stylesheet sites — ``gui_sections.py`` / ``gui_cast.py`` (gated
+   2026-10-10) and ``gui_chrome.py`` / ``gui_widgets.py`` (added 2026-10-12)
+   — must sit inside a ``with bulk_restyle():`` block, with a vacuity floor
+   so the scan cannot go blind, and a synthetic self-check so a broken rule
+   fails loudly;
+2. a runtime pin that constructs a real eager ``SpeakerGroup`` + ``_CastRow``
+   (the sections/cast sites and — through the panel's seven captioned
+   ``PerceptualSlider``s — the gui_widgets site) and a ``LivePanel`` (the
+   gui_chrome header), and observes, from inside a traced
+   ``setStyleSheet``, that every call found the gate OPEN.
 
-``gui_chrome.py:74`` and ``gui_widgets.py:68`` (the Live header and the
-PerceptualSlider caption — 7 calls per slider panel) carry the same pattern
-and are deliberately NOT covered here: they were out of scope for the slice
-that measured and gated the sections/cast sites, and are logged as the
-obvious next extension of this net.
+The two late additions were the standing "noticed, not actioned" note on the
+2026-10-10 entry: ``gui_chrome``'s Live header and ``gui_widgets``'
+PerceptualSlider caption — one call per slider, seven per speaker panel, the
+largest construction-time share — carried the same ungated pattern.
 """
 
 from __future__ import annotations
@@ -44,7 +48,7 @@ from PySide6.QtWidgets import QApplication
 REPO_SRC = Path(__file__).resolve().parents[1] / "src" / "the_oracle"
 
 #: Modules whose widget-level restyles the gate covers.
-GATED_MODULES = ("gui_sections.py", "gui_cast.py")
+GATED_MODULES = ("gui_sections.py", "gui_cast.py", "gui_chrome.py", "gui_widgets.py")
 
 
 def _styleset_calls(root: Path) -> list[tuple[str, int, ast.Call]]:
@@ -108,7 +112,7 @@ def _offenders(root: Path) -> list[str]:
     return bad
 
 
-def test_every_widget_level_styleset_in_sections_and_cast_is_gated() -> None:
+def test_every_widget_level_styleset_in_the_gated_modules_is_gated() -> None:
     offenders = _offenders(REPO_SRC)
     assert not offenders, (
         "widget-level setStyleSheet calls outside a bulk_restyle() scope — "
@@ -119,13 +123,14 @@ def test_every_widget_level_styleset_in_sections_and_cast_is_gated() -> None:
 
 
 def test_the_scan_sees_the_real_sites() -> None:
-    """Vacuity: the net must actually see the three known call sites, so a
+    """Vacuity: the net must actually see the five known call sites, so a
     rename or a moved file cannot silently blind it."""
     calls = _styleset_calls(REPO_SRC)
-    assert len(calls) >= 3, (
+    assert len(calls) >= 5, (
         f"only {len(calls)} setStyleSheet call(s) found in {GATED_MODULES}; "
-        "the known floor is 3 (the collapse toggle, the panel dividers, the "
-        "cast row key label). The scan went blind — fix the scan."
+        "the known floor is 5 (the collapse toggle, the panel-divider "
+        "factory, the cast row key label, the Live header, the slider "
+        "caption). The scan went blind — fix the scan."
     )
 
 
@@ -151,7 +156,8 @@ def test_the_scanner_catches_an_ungated_call() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "gui_sections.py").write_text(src, encoding="utf-8")
-        (root / "gui_cast.py").write_text("", encoding="utf-8")
+        for sibling in ("gui_cast.py", "gui_chrome.py", "gui_widgets.py"):
+            (root / sibling).write_text("", encoding="utf-8")
         bad = _offenders(root)
     assert len(bad) == 2, bad
     assert any(":3:" in entry for entry in bad), bad

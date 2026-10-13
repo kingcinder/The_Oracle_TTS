@@ -13,6 +13,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
+from the_oracle.gui_themes import bulk_restyle
+
 # 10k internal ticks: ms/% domains round-trip exactly and 2-decimal float
 # knobs (e.g. temperature 0.8 on 0.1-1.5) land on exact readbacks, so saving a
 # profile and reloading it never drifts the stored values.
@@ -65,7 +67,13 @@ class PerceptualSlider(QWidget):
         if caption:
             caption_label = QLabel(caption, self)
             caption_label.setWordWrap(True)
-            caption_label.setStyleSheet("color: palette(mid); font-size: 9pt;")
+            # Gated like every widget-level restyle (gui_sections' toggle):
+            # this is the biggest construction-time share of the four gated
+            # modules — one call per slider, seven per speaker panel — and the
+            # gate is the invariant (no app-wide filter re-entered), not a
+            # speedup. Pinned by tests/test_widget_restyle_gate.py.
+            with bulk_restyle():
+                caption_label.setStyleSheet("color: palette(mid); font-size: 9pt;")
             layout.addWidget(caption_label)
 
         start = float(value) if value is not None else (self._lo + self._hi) / 2.0
