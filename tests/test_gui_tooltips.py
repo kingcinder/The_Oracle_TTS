@@ -11,7 +11,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QAction, QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -52,13 +52,11 @@ def test_key_events_control_timer_and_hide(qt_app, monkeypatch):
     hidden: list[bool] = []
     monkeypatch.setattr(help, "_hide", lambda: hidden.append(True))
 
-    press = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
-    help.eventFilter(qt_app, press)
+    help.control_pressed()
     assert help._ctrl_down is True
     assert help._timer.isActive()
 
-    release = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Control, Qt.KeyboardModifier.NoModifier)
-    help.eventFilter(qt_app, release)
+    help.control_released()
     assert help._ctrl_down is False
     assert not help._timer.isActive()
     assert hidden == [True]
@@ -292,8 +290,8 @@ def test_native_tooltip_swallowed_without_ctrl(qt_app):
 
 
 def test_event_filter_short_circuits_during_a_bulk_restyle(qt_app):
-    """Inside gui_themes' bulk-restyle scope the app-wide filter must do no
-    work at all; outside it, both contracts below stay active.
+    """Inside gui_themes' bulk-restyle scope the filter must do no work;
+    outside it, the ToolTip swallow stays active.
 
     A genuine theme switch streams ~20k StyleChange/PaletteChange/FontChange
     events through this filter inside one synchronous ``setStyleSheet`` call
@@ -309,22 +307,18 @@ def test_event_filter_short_circuits_during_a_bulk_restyle(qt_app):
     help_obj._ctrl_down = False
     help_obj._timer.stop()
     tip_event = QEvent(QEvent.Type.ToolTip)
-    press = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
-
     with bulk_restyle():
         # Not even the ToolTip swallow runs — the gate is the first line.
         assert help_obj.eventFilter(qt_app, tip_event) is False
-        # And no side effects: the KeyPress branch never fires.
-        assert help_obj.eventFilter(qt_app, press) is False
+        # Keyboard state is owned by MainWindow.keyPressEvent, not this filter.
         assert help_obj._ctrl_down is False
         assert not help_obj._timer.isActive()
 
     # Outside the scope both contracts are back.
     assert help_obj.eventFilter(qt_app, tip_event) is True
-    assert help_obj.eventFilter(qt_app, press) is False
-    assert help_obj._ctrl_down is True
+    assert help_obj._ctrl_down is False
 
-    # Leave the singleton clean for the tests that follow.
+    # Leave the detached helper clean for the tests that follow.
     help_obj._ctrl_down = False
     help_obj._timer.stop()
 
@@ -363,5 +357,31 @@ def test_main_window_registers_ctrl_help(qt_app, monkeypatch, tmp_path):
             help._descriptions.get(backend_label)
             == help._descriptions.get(window.inference_backend_combo)
         )
+    finally:
+        window.close()
+
+
+def test_main_window_key_handlers_track_ctrl_for_hover_help(qt_app, monkeypatch, tmp_path):
+    from tests.test_app_gui_profiles import _build_window
+    from PySide6.QtWidgets import QLineEdit
+
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    helper = window._ctrl_help
+    assert helper is not None
+    try:
+        sink = QLineEdit(window)
+        sink.show()
+        window.show()
+        sink.setFocus()
+        qt_app.processEvents()
+        press = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier)
+        QCoreApplication.sendEvent(sink, press)
+        assert helper._ctrl_down is True
+        assert helper._timer.isActive()
+
+        release = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Control, Qt.KeyboardModifier.NoModifier)
+        QCoreApplication.sendEvent(sink, release)
+        assert helper._ctrl_down is False
+        assert not helper._timer.isActive()
     finally:
         window.close()

@@ -2,18 +2,17 @@
 
 The 1.4.0 CI certifier faulted inside ``CtrlHoverHelp.eventFilter`` ->
 ``event.type()`` on the *second* window build, after an earlier window had
-been torn down and deleted. The mechanism is scope: a Python event filter
-installed on the QApplication is handed every event of every object in the
-process, including objects that are mid-destruction, and nothing in Python
-can survive a delivery Qt considers valid but Python's object graph does not.
+been torn down and deleted. These tests pin the lifecycle mitigation: each
+window owns its helper, and no product filter is installed on QApplication.
+The original native fault remains unconfirmed on Linux.
 
-These tests pin the repair, not the crash (a segfault cannot be asserted —
+These tests pin the mitigation, not the crash (a segfault cannot be asserted —
 it takes the test process with it):
 
 * no event filter is ever installed on the QApplication,
 * the filter rides the window and each tooltipped widget in its subtree,
 * tearing a window down leaves nothing installed and nothing registered,
-* building a second window re-binds the singleton to the new window,
+* each window owns a distinct filter instance,
 * ten consecutive real MainWindow build/destroy cycles leave zero app-level
   filters and zero leftover per-widget filters.
 
@@ -53,7 +52,7 @@ def app_install_spy(qt_app, monkeypatch):
 
 
 def _release_singleton(qt_app) -> None:
-    """Leave the process-wide singleton detached for the next test."""
+    """Clear a detached test helper between cases."""
     helper = install_ctrl_hover_help(qt_app)
     if helper is not None:
         helper.release()
@@ -83,6 +82,7 @@ def test_window_target_binds_the_filter_and_registrations_survive(qt_app):
         helper = install_ctrl_hover_help(window)
         helper.register(button, "Analyzes the input script.")
         assert helper.window is window
+        assert helper.parent() is window, "Qt must own the filter for exactly this window's lifetime"
         assert helper.description_for(button) == "Analyzes the input script."
     finally:
         _release_singleton(qt_app)
@@ -140,20 +140,21 @@ def test_destroyed_window_detaches_the_filter(qt_app):
         _release_singleton(qt_app)
 
 
-def test_second_window_rebinds_the_singleton_without_keeping_the_first(qt_app):
+def test_second_window_gets_its_own_window_parented_filter(qt_app):
     """The certifier's exact shape: window A torn down, window B built."""
-    helper = install_ctrl_hover_help(qt_app)
     first, second = QWidget(), QWidget()
     try:
-        assert helper is install_ctrl_hover_help(first)
-        helper.register(QPushButton("a", first), "from the first window")
-        assert helper is install_ctrl_hover_help(second)
-        assert helper.window is second
-        # The first window's registrations went with it; none may leak into
-        # the second window's help.
-        assert not any(
-            text == "from the first window" for text in helper._descriptions.values()
-        )
+        first_helper = install_ctrl_hover_help(first)
+        assert first_helper is not None
+        assert first_helper.parent() is first
+        first_helper.register(QPushButton("a", first), "from the first window")
+
+        second_helper = install_ctrl_hover_help(second)
+        assert second_helper is not None
+        assert second_helper is not first_helper
+        assert second_helper.parent() is second
+        assert second_helper.window is second
+        assert not any(text == "from the first window" for text in second_helper._descriptions.values())
     finally:
         _release_singleton(qt_app)
         for window in (first, second):

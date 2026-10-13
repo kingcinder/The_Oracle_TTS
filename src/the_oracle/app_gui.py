@@ -321,12 +321,9 @@ class MainWindow(QMainWindow):
         self._mark_startup("mainwindow_init_begin")
         self._build_ui()
         self._build_menu()
-        # Bind Ctrl+hover help to THIS window (never to the QApplication): an
-        # app-wide Python event filter receives every event of every object,
-        # including windows mid-destruction, which is the frame the 1.4.0
-        # certifier faulted in on the second window build (2026-10-13).
-        # After the UI exists: binding sweeps the built tree for the widgets
-        # that own a tooltip, and there is nothing to sweep before that.
+        # Bind a window-owned Ctrl+hover helper after the UI exists so its
+        # tooltip-owner sweep sees the built tree. The original crash landed
+        # in the former app-wide filter, but its root cause remains unconfirmed.
         self._ctrl_help = install_ctrl_hover_help(self)
         self._register_ctrl_help_descriptions()
         self.delete_confirm_enabled = True
@@ -1591,6 +1588,20 @@ class MainWindow(QMainWindow):
         from the_oracle.gui_license import run_about_panel
 
         run_about_panel(self, dialog_cls=QDialog)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
+            helper = getattr(self, "_ctrl_help", None)
+            if helper is not None:
+                helper.control_pressed()
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
+            helper = getattr(self, "_ctrl_help", None)
+            if helper is not None:
+                helper.control_released()
+        super().keyReleaseEvent(event)
 
     def closeEvent(self, event) -> None:
         """Close only after every GUI-owned QThread has stopped.

@@ -7,10 +7,9 @@ that already explains itself needs no extra registration.
 
 Implementation notes
 --------------------
-- A single :class:`CtrlHoverHelp` is bound to the *main window*: the object
-  is parented to the QApplication (so it outlives any one window) but no
-  event filter is ever installed on the QApplication itself. An
-  application-wide Python filter is handed every event of every object in
+- A :class:`CtrlHoverHelp` is owned by its *main window*. No event filter is
+  installed on the QApplication. An application-wide Python filter receives
+  every event of every object in
   the process, including objects that are mid-destruction; that is the frame
   the 1.4.0 certifier faulted in on the second window build (2026-10-13).
   The filter rides the window, plus each widget that can raise a tooltip (see
@@ -24,8 +23,8 @@ Implementation notes
   cannot raise one, so the sweep only has to cover the widgets that carry
   text, and it re-runs when a child is polished (dialogs and lazily built
   controls appear long after the window was built).
-- While the Control key is held (tracked via that filter, with a
-  keyboard-modifier check as a safety net for releases that happened while
+- While the Control key is held (tracked by the main window's key handlers,
+  with a keyboard-modifier check as a safety net for releases that happened while
   another window had focus), a lightweight poller watches the widget under
   the cursor and drives ``QToolTip`` directly, so the description appears
   immediately instead of after Qt's native tooltip delay.
@@ -82,9 +81,9 @@ _INSTANCE: CtrlHoverHelp | None = None  # type: ignore[valid-type]
 class CtrlHoverHelp(QObject):
     """Ctrl+hover description tooltips, scoped to the window that binds them.
 
-    Bind once per main window via :func:`install_ctrl_hover_help` (the object
-    itself is a singleton per QApplication). Widgets (and menu QActions) are
-    registered with a description; while the Control key is held, the
+    Bind once per main window via :func:`install_ctrl_hover_help`. Window
+    helpers are distinct; detached helpers are reused for app-level unit tests.
+    Widgets (and menu QActions) are registered with a description; while the Control key is held, the
     description is shown as a tooltip at the cursor whenever the pointer is
     over a registered control (or a child of one).
     """
@@ -98,12 +97,11 @@ class CtrlHoverHelp(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(_POLL_MS)
         self._timer.timeout.connect(self._poll)
-        self._app = self.parent()
+        self._app = QApplication.instance()
         assert self._app is not None
-        # The window the filter rides. Nothing is installed at construction:
-        # an app-wide Python event filter is what faulted the 1.4.0 certifier
-        # (module docstring), so the filter only ever listens to a window,
-        # and only until that window is destroyed.
+        # The window the filter rides. Nothing is installed at construction;
+        # the original native fault landed in the former app-wide filter, but
+        # its root cause is unconfirmed (module docstring).
         self._window: QWidget | None = None
         #: Widgets that own a tooltip text we are swallowing ToolTip on.
         self._swept: set[QWidget] = set()
@@ -121,6 +119,8 @@ class CtrlHoverHelp(QObject):
         if self._window is window:
             return
         self.release()
+        if self.parent() is not window:
+            self.setParent(window)
         self._window = window
         window.installEventFilter(self)
         # PySide emits `destroyed` with no argument (the C++ signature's
@@ -171,6 +171,7 @@ class CtrlHoverHelp(QObject):
         ``MainWindow.closeEvent`` — so a teardown window can never leave a
         filter (or a registry entry) aimed at freed C++ objects.
         """
+        global _INSTANCE
         window = self._window
         self._window = None
         for widget in (window, *self._swept):
@@ -189,6 +190,20 @@ class CtrlHoverHelp(QObject):
         self._ctrl_down = False
         self._descriptions.clear()
         self._action_descriptions.clear()
+        if _INSTANCE is self:
+            _INSTANCE = None
+
+    def control_pressed(self) -> None:
+        """Start Ctrl-hover polling from the owning window's key handler."""
+        self._ctrl_down = True
+        self._timer.start()
+
+    def control_released(self) -> None:
+        """Stop Ctrl-hover polling from the owning window's key handler."""
+        self._ctrl_down = False
+        self._timer.stop()
+        self._hide()
+        self._last_widget = None
 
     # -- registration ------------------------------------------------------
 
@@ -263,15 +278,7 @@ class CtrlHoverHelp(QObject):
             # loop — skip the per-event Python round-trip entirely.
             return False
         etype = event.type()
-        if etype == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Control:
-            self._ctrl_down = True
-            self._timer.start()
-        elif etype == QEvent.Type.KeyRelease and event.key() == Qt.Key.Key_Control:
-            self._ctrl_down = False
-            self._timer.stop()
-            self._hide()
-            self._last_widget = None
-        elif etype in (QEvent.Type.WindowDeactivate, QEvent.Type.ApplicationDeactivate):
+        if etype in (QEvent.Type.WindowDeactivate, QEvent.Type.ApplicationDeactivate):
             self._ctrl_down = False
             self._timer.stop()
             self._hide()
@@ -372,15 +379,15 @@ class CtrlHoverHelp(QObject):
 def install_ctrl_hover_help(
     target: QApplication | QWidget | None = None,
 ) -> CtrlHoverHelp | None:
-    """Bind (once per QApplication) the Ctrl+hover help poller to a window.
+    """Bind a window-owned Ctrl+hover poller.
 
-    Pass the main window to install the event filter on it; passing a
-    QApplication (or nothing) binds the singleton and attaches it to that
-    app's active window, if one exists. Either way the filter is never
-    installed on the QApplication itself — see the module docstring.
+    Passing a QWidget creates or returns that window's helper. Passing a
+    QApplication (or nothing) returns a detached helper for unit-level callers;
+    product windows should always pass themselves so Qt owns the helper's
+    lifetime. No event filter is installed on the QApplication.
 
-    Returns the singleton instance, or ``None`` when no QApplication exists
-    yet (callers should guard on that).
+    Returns the window's helper, a detached singleton for app-level test
+    callers, or ``None`` when no QApplication exists yet.
     """
     global _INSTANCE
     target = target if target is not None else QApplication.instance()
@@ -389,14 +396,15 @@ def install_ctrl_hover_help(
     app = target if isinstance(target, QApplication) else QApplication.instance()
     if app is None:
         return None
+    if isinstance(target, QWidget):
+        if _INSTANCE is not None and _INSTANCE.window is target:
+            return _INSTANCE
+        helper = CtrlHoverHelp(target)
+        helper.attach(target)
+        _INSTANCE = helper
+        return helper
     if _INSTANCE is None or _INSTANCE.parent() is not app:
         _INSTANCE = CtrlHoverHelp(app)
-    if isinstance(target, QWidget):
-        _INSTANCE.attach(target)
-    else:
-        active_window = app.activeWindow()
-        if active_window is not None:
-            _INSTANCE.attach(active_window)
     return _INSTANCE
 
 

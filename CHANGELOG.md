@@ -88,6 +88,24 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   the fallback count: files whose guarded-UTF-8 reading differs from their
   CP1252 reading report as "mixed-encoding, recovered per cue", which states
   the per-cue salvage behavior as the report's contract.
+- **The first real Studio-gated capability: `the-oracle render-report`.** It
+  measures a *finished* render — peak/RMS level and clipping, silence ratio,
+  sample rate and channel count, utterance and speaker counts, and whether the
+  plan's declared durations agree with the audio actually assembled — from the
+  assembled FLAC and its `render_plan.json`, so it never re-renders and cannot
+  alter a deliverable. `--json` for machines, `--out` to also write the report
+  (atomically; beside the render when no path is given). The gate is
+  deliberately **additive**: nothing that shipped before is gated, so the
+  community edition loses no workflow, and the owner moves or drops the gate by
+  editing one `policy.require(status, STUDIO_ENTITLEMENT)` call site. Every
+  licence state is covered against the real verifier
+  (`tests/test_render_report.py`, `tests/test_license_state_render.py`): studio
+  runs it, community and expired licences get a refusal naming Studio, and the
+  core entitlements keep working.
+- The dependency audit and the secrets scan are pinned, reproducible steps
+  rather than one-off commands: `pip-audit` and `detect-secrets` in the `dev`
+  extra with a checked-in baseline, so a new advisory or a committed credential
+  shows up as a diff instead of as a memory of having looked.
 
 ### Changed
 
@@ -95,6 +113,14 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   The GUI certification gates leave the slow marker, so `-m "not slow"` runs
   them, and CI runs one named step per aspect per operating system — a failed
   job names which certification broke.
+- CI now tells the truth about what it covers. The Vulkan job's model-cache
+  root moved to step level: declared at job level it used the `runner` context,
+  which made GitHub reject the entire workflow file, so no job on any operating
+  system had been running. Four Windows tests stopped assuming POSIX separators
+  and resolved paths the way the records do. The Python support range is
+  asserted as one range across pyproject, the doctor, the installer and the test
+  matrix — the guard used to pin the *runner* to 3.12, which was red on the
+  matrix's own 3.11 rows.
 
 ### Fixed
 
@@ -106,6 +132,38 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   its tuple listed — the three that had gained chrome were registered but
   unverified — and measures the hidden Extra Voices section for what it
   legitimately is.
+- **The shipped licence registry trusted a published test key.** `keys.py`
+  carried exactly one entry, `k1`, whose public key is RFC 8032 §7.1 TEST 1's
+  published vector — its seed is printed in the RFC and was hard-coded
+  throughout this repository's tests, so anyone who read the spec could mint a
+  token every install accepted as a genuine licence. The entry is gone, and the
+  registry is deliberately **empty until the owner registers the production
+  key**: an empty registry fails closed (every token reports `unknown_key` and
+  the install runs as community), and `scripts/release.py` refuses to build
+  artifacts around an empty *or* forgeable registry, reading the tree being
+  packaged rather than the running installation. The licensing suite now runs
+  against an injected test-only key, so no test can pass by trusting a
+  published seed.
+- **Ed25519 verification accepted a universal forgery.** A public key that
+  decodes to the identity point made `(R = [s]B, S = s)` verify for *any*
+  message — a signature valid everywhere, from a 32-byte key. Small-order
+  public keys and R are now refused, and non-canonical point encodings
+  (`y >= p`) are rejected at decode. The RFC 8032 §7.1 vector set (TEST 1, 2, 3,
+  1024 and SHA(abc)) and malformed-input coverage — per-vector one-bit
+  mutations over R/S/message/key, non-canonical S, wrong and empty lengths, and
+  a totality check that verification never raises — pin it.
+- **Ctrl+hover help is owned by its main window.** Each window has its own
+  helper, parented to that window and released before teardown. The Control key
+  state comes from the window's key handlers; tooltip filters are scoped to the
+  window and tooltip-owning controls. Linux/offscreen churn completed 50
+  window rebuilds with zero application-scope filters, and the six-theme
+  chrome certification passed 10 consecutive runs. Windows crash certification
+  remains open.
+- The release checksum manifest is written with LF endings whatever platform
+  produced it. Text-mode translation on Windows wrote CRLF, the trailing `\r`
+  became part of the filename `sha256sum -c` tried to open, and a manifest from
+  a Windows release run could never be verified by the runbook's own check
+  (measured on a real runner: exit 1).
 
 ## [1.3.1] — 2026-09-28
 

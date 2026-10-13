@@ -1,4 +1,4 @@
-"""Window-churn repro for the certifier's second-window native fault.
+"""Exercise repeated MainWindow rebuilds related to the native fault report.
 
 The 1.4.0 CI certifier logs (2026-10-13) show the fault landing in
 ``the_oracle.gui_tooltips.CtrlHoverHelp.eventFilter`` -> ``event.type()``
@@ -8,9 +8,10 @@ down and deleted. This driver reproduces that shape deterministically:
     build a real MainWindow -> show/pump -> close -> deleteLater -> flush
     DeferredDelete -> build the next one
 
-and repeats it ``--passes`` times (default 12). ``faulthandler`` is armed
-first, so a native fault prints the Python stack of the frame that died
-instead of exiting with a bare ``Segmentation fault``.
+and repeats it ``--passes`` times (default 12). This does not force or
+reproduce the native fault; a clean run proves only that this sequence
+completed on this machine. ``faulthandler`` is armed first so a fault, if one
+occurs, prints the Python stack instead of only ``Segmentation fault``.
 
 Usage::
 
