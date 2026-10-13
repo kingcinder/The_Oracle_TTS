@@ -149,6 +149,75 @@ def test_check_is_wired_into_the_report_and_gate() -> None:
     assert 'Dependency drift detected:' in source
 
 
+def _load_script(name: str):
+    """Import a scripts/ module by path (they are entry points, not a package)."""
+    spec = importlib.util.spec_from_file_location(
+        f"oracle_{name.removesuffix('.py')}", REPO_ROOT / "scripts" / name
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_python_version_guard_matches_doctor_target() -> None:
-    """Sanity: the suite itself runs on the interpreter the doctor validates."""
-    assert sys.version_info[:2] == (3, 12)
+    """One support range, agreed on by pyproject, the doctor, the installer and CI.
+
+    This replaced an assertion that the *runner* was Python 3.12
+    (``sys.version_info[:2] == (3, 12)``). GitHub's matrix includes py3.11 on
+    both operating systems, so that assertion was red on a fully supported
+    interpreter — and it said nothing about the guard its name promises.
+
+    What must hold anywhere is agreement, not a version: pyproject's
+    ``requires-python``, the doctor's ``SUPPORTED_PYTHON_MIN``/``MAX``, the
+    installer's copies of those constants, and every ``python-version`` row the
+    test job runs. The interpreter running this suite must be inside the range
+    too, or every other check in this file is measuring an unsupported one.
+    """
+    import platform
+    import re
+    import tomllib
+
+    import packaging.specifiers
+
+    doctor = _load_doctor()
+    installer = _load_script("manage_install.py")
+
+    def declared_range(module) -> str:
+        low, high = module.SUPPORTED_PYTHON_MIN, module.SUPPORTED_PYTHON_MAX
+        return f">={low[0]}.{low[1]},<{high[0]}.{high[1]}"
+
+    def compact(text: str) -> str:
+        return re.sub(r"\s+", "", text)
+
+    requires = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["requires-python"]
+    assert (
+        compact(requires)
+        == compact(declared_range(doctor))
+        == compact(declared_range(installer))
+    ), (
+        "the supported Python range drifted: pyproject says "
+        f"{requires!r}, the doctor says {declared_range(doctor)!r}, the "
+        f"installer says {declared_range(installer)!r}"
+    )
+
+    supported = packaging.specifiers.SpecifierSet(requires)
+    assert supported.contains(platform.python_version()), (
+        f"this suite is running on Python {platform.python_version()}, which "
+        f"the project does not support ({requires})"
+    )
+
+    import yaml
+
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    )
+    matrix = workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]
+    assert matrix, "the test matrix declares no python-version rows"
+    for version in matrix:
+        assert supported.contains(str(version)), (
+            f"the CI matrix runs Python {version}, which the project does not "
+            f"support ({requires})"
+        )
