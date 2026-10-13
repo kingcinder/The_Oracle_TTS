@@ -318,8 +318,9 @@
       "gui_themes.py": {
         "DEFAULT_THEME": "DEFAULT_THEME lives in gui_themes.py and app_gui re-imports it; an app_gui-level rebind covers only app_gui's reads - rebind at gui_themes.py for both sides."
       },
-      "gui_tooltips.py": {
-        "QApplication": "QApplication: PySide6 import held by both sides; an app_gui-level rebind would miss gui_tooltips.py's uses - inject or repoint at gui_tooltips.py if a flow ever needs it; the census net escalates this pair automatically.",
+    "gui_tooltips.py": {
+      "QApplication": "QApplication: PySide6 import held by both sides; an app_gui-level rebind would miss gui_tooltips.py's uses - inject or repoint at gui_tooltips.py if a flow ever needs it; the census net escalates this pair automatically.",
+      "QWidget": "QWidget: PySide6 import held by both sides, read at runtime by gui_tooltips.py's tooltip-owner sweep (findChildren(QWidget) / isinstance(root, QWidget)) and by app_gui's own widget code; an app_gui-level rebind would miss the sweep's reads - inject or repoint at gui_tooltips.py if a flow ever needs it; the census net escalates this pair automatically.",
         "QTimer": "QTimer: PySide6 import held by both sides; an app_gui-level rebind would miss gui_tooltips.py's uses - inject or repoint at gui_tooltips.py if a flow ever needs it; the census net escalates this pair automatically.",
         "Qt": "Qt: PySide6 import held by both sides; an app_gui-level rebind would miss gui_tooltips.py's uses - inject or repoint at gui_tooltips.py if a flow ever needs it; the census net escalates this pair automatically."
       },

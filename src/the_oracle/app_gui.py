@@ -319,9 +319,15 @@ class MainWindow(QMainWindow):
         self.resize(1320, 1060)
         self.setMinimumSize(1160, 760)
         self._mark_startup("mainwindow_init_begin")
-        self._ctrl_help = install_ctrl_hover_help(QApplication.instance())
         self._build_ui()
         self._build_menu()
+        # Bind Ctrl+hover help to THIS window (never to the QApplication): an
+        # app-wide Python event filter receives every event of every object,
+        # including windows mid-destruction, which is the frame the 1.4.0
+        # certifier faulted in on the second window build (2026-10-13).
+        # After the UI exists: binding sweeps the built tree for the widgets
+        # that own a tooltip, and there is nothing to sweep before that.
+        self._ctrl_help = install_ctrl_hover_help(self)
         self._register_ctrl_help_descriptions()
         self.delete_confirm_enabled = True
         # only_built: sections the saved workspace starts collapsed stay
@@ -1726,8 +1732,15 @@ class MainWindow(QMainWindow):
         # lifetime leak suite). Close is accepted by the time we get here
         # (every refusal path returned above), so nothing needs a factory
         # after this point; built content is untouched.
-        for _key, (section, _splitter, _index) in self._section_registry.items():
-            section.release_content_factory()
+        for _key, (section, _splitter, _index) in self._section_registry.items():            section.release_content_factory()
+        # Detach Ctrl+hover help before the window starts dying: every refusal
+        # path already returned, so no hover can arrive from here on, and the
+        # filter (plus every per-widget ToolTip filter it installed) is off
+        # the C++ objects before Qt destroys them.
+        ctrl_help = getattr(self, "_ctrl_help", None)
+        if ctrl_help is not None:
+            ctrl_help.release()
+
         super().closeEvent(event)
 
     def _audio_cpp_device_value(self) -> int | None:

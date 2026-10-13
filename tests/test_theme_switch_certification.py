@@ -57,6 +57,9 @@ def _good(certifier, **overrides):
     The numbers are the ones the certifier printed when it certified HEAD
     (354 widgets, depth 13, 59 rules, ~16k change events per restyle), so the
     bounds are exercised against reality rather than against a convenient story.
+    The filter-view numbers are the window-scoped ones the repair produced
+    (2920 events, all of them with the scope open on the gated path): the
+    filter rides the window and its tooltip owners now, not the QApplication.
     """
     values = {
         "widgets": 354,
@@ -70,9 +73,11 @@ def _good(certifier, **overrides):
         "switch_open_gate_events": 18506,
         "switch_rounds": 4,
         "filter_installed": True,
-        "filter_calls_ungated": 18506,
-        "filter_closed_ungated": 18506,
-        "filter_calls_switch": 18506,
+        "filter_window_scoped": True,
+        "filter_app_scope_installs": 0,
+        "filter_calls_ungated": 2920,
+        "filter_closed_ungated": 2920,
+        "filter_calls_switch": 2920,
         "filter_closed_switch": 0,
         "small_change_events": 10806,
         "redundant_change_events": 0,
@@ -128,7 +133,7 @@ def test_a_deferred_storm_is_refused(certifier) -> None:
 
 def test_the_dead_gate_is_refused(certifier) -> None:
     """The one mutation this file exists for: apply_theme stops opening the scope."""
-    failures = certifier.evaluate(_good(certifier, filter_closed_switch=18506))
+    failures = certifier.evaluate(_good(certifier, filter_closed_switch=2920))
 
     assert any(
         "ours" in failure and "CLOSED" in failure and "must be 0" in failure
@@ -150,10 +155,28 @@ def test_the_before_picture_must_be_a_storm(certifier) -> None:
 
 
 def test_a_missing_tooltip_filter_is_refused(certifier) -> None:
-    """No filter on the app means the term this file certifies was never exercised."""
+    """No filter on the window means the term this file certifies never ran."""
     failures = certifier.evaluate(_good(certifier, filter_installed=False))
 
     assert any("never exercised" in failure for failure in failures)
+
+
+def test_a_filter_not_bound_to_the_window_is_refused(certifier) -> None:
+    """The term is the window-scoped filter, not merely some filter existing."""
+    failures = certifier.evaluate(_good(certifier, filter_window_scoped=False))
+
+    assert any("not bound to the window" in failure for failure in failures)
+
+
+def test_a_filter_installed_on_the_application_is_refused(certifier) -> None:
+    """The 1.4.0 crash contract: app-wide filtering of every object must not
+    come back, however healthy the rest of the numbers look."""
+    failures = certifier.evaluate(_good(certifier, filter_app_scope_installs=1))
+
+    assert any(
+        "installed on the QApplication" in failure and "mid-destruction" in failure
+        for failure in failures
+    )
 
 
 def test_a_run_without_a_genuine_switch_is_refused(certifier) -> None:

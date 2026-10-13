@@ -14,11 +14,14 @@ has three separable terms plus one that used to be ours:
 3. **rule matching** — QSS selector work, proportional to the rule count: the
    real stylesheet fans out far more change events than a 2-rule one on the same
    tree, which is what makes a selector diet a real lever.
-4. **ours** — the app-wide Ctrl+hover filter used to re-enter Python for every
-   one of those events even though no branch in it can fire for an event Qt
-   generated inside ``setStyleSheet`` (real input cannot arrive until the call
-   returns to the event loop). ``gui_themes.bulk_restyle`` now gates it. Measured
-   A/B in one process: gate-off 510 ms vs gate-on 373 ms.
+4. **ours** — the Ctrl+hover filter re-enters Python for every event it is
+   handed even though no branch in it can fire for an event Qt generated inside
+   ``setStyleSheet`` (real input cannot arrive until the call returns to the
+   event loop); ``gui_themes.bulk_restyle`` gates it. The filter is
+   window-scoped since the 1.4.0 repair — it rides the window and the widgets
+   that own a tooltip, never the QApplication — so the storm reaches it through
+   those objects rather than through every object in the process: ~2.9k of the
+   ~16k change events in a switch, against ~20k when it was app-wide.
 
 Only the gate is asserted as a *contract*; the rest are bounds and relationships,
 because they are facts about Qt and this tree rather than about a machine.
@@ -29,9 +32,13 @@ failed on them would be noise. What must hold anywhere:
 * the sandbox is a real tree (widget/depth floors);
 * a genuine switch fans out a storm, and it is synchronous inside the call;
 * a 2-rule stylesheet fans out measurably less than the real one;
-* during a real ``apply_theme`` switch the **app's own** Ctrl+hover filter is
-  invoked for that whole storm and finds the bulk-restyle scope open on every
-  one of those calls, while the same measurement on the ungated path (a direct
+* the app's own Ctrl+hover filter is bound to the window and installed on no
+  other object at application scope: an application-wide Python filter is the
+  frame the 1.4.0 certifier faulted in on its second window build
+  (2026-10-13), and this term fails if that install ever comes back;
+* during a real ``apply_theme`` switch that filter is invoked for the whole
+  storm it can see and finds the bulk-restyle scope open on every one of those
+  calls, while the same measurement on the ungated path (a direct
   ``setStyleSheet``, which is what the code did before the gate) finds it closed
   throughout — the A/B that makes the scope load-bearing here and fails if
   ``apply_theme`` stops opening it;
@@ -108,6 +115,15 @@ MIN_DEPTH = 5
 MIN_REAL_RULES = 40
 MAX_SMALL_RULES = 5
 MIN_STORM_CHANGE_EVENTS = 5000
+#: The Ctrl+hover filter's own traffic, counted from inside that filter. Since
+#: the 1.4.0 repair the filter is window-scoped (the window plus the widgets that
+#: own a tooltip), so this bounds a far smaller population than
+#: ``MIN_STORM_CHANGE_EVENTS``: measured 2920 events in a real switch on this
+#: tree, against ~18.5k when the same filter was installed on the QApplication.
+#: Floored well below the measurement so a differently-built runner still passes
+#: while an uninstalled filter, a scope that spares nothing, or a gutted theme
+#: cannot — it is an anti-vacuity floor, not a performance target.
+MIN_FILTER_VIEW_EVENTS = 2000
 #: What fraction of the fan-out must land inside the call for "synchronous" to be
 #: the honest word (measured ~0.83; a pump-based storm would be ~0).
 MIN_SYNCHRONOUS_SHARE = 0.5
@@ -152,6 +168,10 @@ class Measure:
 
     #: The app's OWN Ctrl+hover filter, counted from inside it (see measure()).
     filter_installed: bool = False
+    #: The filter is bound to the window (the 1.4.0 crash contract) and was
+    #: installed on no object at application scope while the product bound it.
+    filter_window_scoped: bool = False
+    filter_app_scope_installs: int = 0
     filter_calls_ungated: int = 0
     filter_closed_ungated: int = 0
     filter_calls_switch: int = 0
@@ -238,28 +258,42 @@ def evaluate(measured: Measure) -> list[str]:
         )
     if not measured.filter_installed:
         failures.append(
-            "ours: no app-wide Ctrl+hover filter is installed on this application, so "
-            "there is nothing for the bulk-restyle scope to spare -- the term this file "
+            "ours: no Ctrl+hover filter is installed on this window, so there is "
+            "nothing for the bulk-restyle scope to spare -- the term this file "
             "exists for was never exercised"
+        )
+    if not measured.filter_window_scoped:
+        failures.append(
+            "ours: the Ctrl+hover filter is not bound to the window -- the product "
+            "must install it on the window and its tooltip owners, never on the "
+            "QApplication (an application-wide Python filter is the frame the 1.4.0 "
+            "certifier faulted in on its second window build)"
+        )
+    if measured.filter_app_scope_installs:
+        failures.append(
+            f"ours: the Ctrl+hover filter was installed on the QApplication "
+            f"{measured.filter_app_scope_installs} time(s) while the product bound it to "
+            "the window -- every event of every object in the process, including "
+            "windows mid-destruction, would run through Python again"
         )
     if measured.filter_closed_switch:
         failures.append(
             f"ours: the app's own Ctrl+hover filter saw {measured.filter_closed_switch} of "
             f"its {measured.filter_calls_switch} events during a real apply_theme switch "
             "with the bulk-restyle scope CLOSED (must be 0) -- apply_theme stopped opening "
-            "the scope, so app-wide filters pay the full per-event Python round-trip again"
+            "the scope, so the filter pays the full per-event Python round-trip again"
         )
-    if measured.filter_calls_switch < MIN_STORM_CHANGE_EVENTS:
+    if measured.filter_calls_switch < MIN_FILTER_VIEW_EVENTS:
         failures.append(
             f"ours: the app's filter was only invoked {measured.filter_calls_switch} times "
-            f"during the switch (floor {MIN_STORM_CHANGE_EVENTS}) -- the gate is open when "
+            f"during the switch (floor {MIN_FILTER_VIEW_EVENTS}) -- the gate is open when "
             "there is nothing to skip, which would make the assertion above vacuous"
         )
-    if measured.filter_closed_ungated < MIN_STORM_CHANGE_EVENTS:
+    if measured.filter_closed_ungated < MIN_FILTER_VIEW_EVENTS:
         failures.append(
             f"ours: the ungated path closed the scope for only "
             f"{measured.filter_closed_ungated} of the filter's "
-            f"{measured.filter_calls_ungated} events (floor {MIN_STORM_CHANGE_EVENTS}) -- if "
+            f"{measured.filter_calls_ungated} events (floor {MIN_FILTER_VIEW_EVENTS}) -- if "
             "the before-picture is not a full storm, 'the scope spares it' is unproven"
         )
     if measured.redundant_change_events:
@@ -303,8 +337,11 @@ class _QtMessageLog:
 class _StormCounter(QObject):
     """App-wide counter, split by whether the bulk-restyle scope was open.
 
-    A second filter, installed alongside the app's own, so the *counts* of the
-    fan-out come from something whose only job is counting.
+    A second filter, installed on the application so the *counts* of the
+    fan-out come from something whose only job is counting — it is the
+    measuring instrument for terms 2 and 3, and it is deliberately app-wide
+    where the product's own filter is not (this one only counts; the product's
+    one drives user-visible behaviour, which is why it must not be app-wide).
     """
 
     def __init__(self) -> None:
@@ -421,7 +458,27 @@ def measure(
     measured = Measure()
     measured.widgets = len(window.findChildren(QWidget)) + 1
     measured.depth = _widget_depth(window)
-    measured.filter_installed = gui_tooltips.install_ctrl_hover_help(app) is not None
+    # Bind the product's filter exactly the way app_gui does — on the real
+    # window — and watch the application-scope installs while it happens: the
+    # app-wide install is the 1.4.0 crash, so its absence is now part of what
+    # this term certifies.
+    app_scope_installs: list[object] = []
+    original_install = QApplication.installEventFilter
+
+    def _spy_install(self, obj):  # noqa: ANN001 - Qt signature
+        app_scope_installs.append(obj)
+        return original_install(self, obj)
+
+    QApplication.installEventFilter = _spy_install
+    try:
+        helper = gui_tooltips.install_ctrl_hover_help(window)
+    finally:
+        QApplication.installEventFilter = original_install
+    measured.filter_installed = helper is not None
+    measured.filter_window_scoped = helper is not None and helper.window is window
+    measured.filter_app_scope_installs = sum(
+        1 for obj in app_scope_installs if isinstance(obj, gui_tooltips.CtrlHoverHelp)
+    )
 
     real_css = build_stylesheet(THEMES[DEFAULT_THEME])
     other = next(key for key in sorted(THEMES) if key != DEFAULT_THEME)
@@ -521,7 +578,11 @@ def _report(measured: Measure) -> None:
         f"{measured.small_change_events}"
     )
     print(
-        "  ours (the gate): the app's own filter was invoked "
+        f"  ours (the gate): bound to the window: {measured.filter_window_scoped}; "
+        f"installs on the QApplication: {measured.filter_app_scope_installs}"
+    )
+    print(
+        "  ours (the gate): that filter was invoked "
         f"{measured.filter_calls_switch} times during a real switch and found the scope "
         f"open every time ({measured.filter_closed_switch} closed); ungated, the same "
         f"filter saw the scope closed for {measured.filter_closed_ungated} of its "
