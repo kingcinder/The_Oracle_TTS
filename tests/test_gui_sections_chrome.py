@@ -293,6 +293,12 @@ def test_workflow_runs_each_gui_certification_aspect_as_its_own_named_step() -> 
 #: ``FAILED - see the list below`` instead, so it simply will not match.
 _OK_LINE = re.compile(r"^\s+(?P<key>[a-z_]+): OK - sections render", re.MULTILINE)
 
+#: The gate-trace evidence line: ``  tape_deck: OK - gate trace: gui_cast 6,
+#: gui_chrome 1, gui_sections 8, gui_widgets 14 - all open``. One per
+#: certified theme — the chrome aspect's construction-time bulk-restyle
+#: trace reporting its per-module counts on that theme's real window.
+_GATE_LINE = re.compile(r"^\s+(?P<key>[a-z_]+): OK - gate trace:", re.MULTILINE)
+
 
 def test_section_chrome_report_parser_cannot_pass_on_a_truncated_report() -> None:
     """The local gate leans on this parse, so pin it here too: a report cut
@@ -356,3 +362,12 @@ def test_section_chrome_certification_runs_locally_and_passes() -> None:
     # that printed the contrast line's summary while skipping chrome would
     # otherwise pass on the shared wording.
     assert "sections render, sliders move, collapse clips" in proc.stdout, detail
+    # The gate-trace evidence, one line per theme: the sweep must actually run
+    # the construction-time bulk-restyle trace on each of the six real
+    # windows and report its per-module counts — exiting 0 without the trace
+    # would drop the runtime gate proof the chrome aspect now carries.
+    gate_keys = _GATE_LINE.findall(proc.stdout)
+    assert set(gate_keys) == set(THEMES), (
+        f"the sweep did not report a gate trace for every theme "
+        f"(got {sorted(gate_keys)})\n{detail}"
+    )

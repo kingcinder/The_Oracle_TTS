@@ -24,7 +24,13 @@ step, so a failing job names the aspect rather than the harness):
   clipped, the section size sliders move splitter space, collapse clips to
   the header and restores, the review table renders rows inside its chrome,
   and the workspace round-trips (theme, sliders, splitters, section states,
-  the input file) through the app settings file and a fresh window. After the
+  the input file) through the app settings file and a fresh window. Each
+  theme's window is also built under a ``QWidget.setStyleSheet`` trace: every
+  widget-level stylesheet from the four gated modules (gui_sections,
+  gui_cast, gui_chrome, gui_widgets) must find the bulk-restyle gate OPEN
+  during construction, and every one of the four must fire at least once —
+  the runtime invariant ``tests/test_widget_restyle_gate.py`` pins in
+  isolation, proven here on six real themed windows. After the
   loop: the File menu carries the profile actions and the Theme menu carries
 * **studio** — for each theme: the RECORDING STUDIO dialog built on that
   theme is painted by it (the dialog's own rendered pixels are the theme's
@@ -120,6 +126,7 @@ operating systems (".github/workflows/ci.yml", "GUI Six-Theme Certification -
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import shutil
@@ -155,7 +162,7 @@ from the_oracle.app_paths import ensure_repo_default_paths  # noqa: E402
 from the_oracle.gui_recording import RecordingStudioDialog  # noqa: E402
 from the_oracle.inference_wizard import InferenceSetupWizard  # noqa: E402
 from the_oracle.gui_settings import app_settings_path  # noqa: E402
-from the_oracle.gui_themes import THEMES, contrast_ratio  # noqa: E402
+from the_oracle.gui_themes import THEMES, contrast_ratio, in_bulk_restyle  # noqa: E402
 
 
 def _hermetic_paths(_repo_root):
@@ -228,6 +235,27 @@ THEME_CERTIFICATIONS: dict[str, ThemeCertification] = {
     "pulp_scifi": ThemeCertification(),
     "tape_deck": ThemeCertification(),
     "ocean_depth": ThemeCertification(),
+}
+
+#: The four widget modules whose construction-time ``setStyleSheet`` calls
+#: the bulk-restyle gate must cover (the ``tests/test_widget_restyle_gate.py``
+#: net's own list, copied here because scripts cannot import tests; a test
+#: pins the two lists equal, so the copy cannot drift silently).
+GATED_WIDGET_MODULES = ("gui_sections.py", "gui_cast.py", "gui_chrome.py", "gui_widgets.py")
+
+#: Construction-time floors for the gate trace, per gated module. Measured on
+#: a real offscreen MainWindow with fresh settings (2026-10-12): gui_sections
+#: 8 (one collapse toggle per registered section), gui_widgets 14 (two
+#: SpeakerGroups x 7 captioned sliders), gui_cast 6 (2 x 3 panel dividers),
+#: gui_chrome 1 (the Live header) — and no other caller at all. The floor is
+#: one per module: the certificate claims each gated module's site ran on a
+#: real themed window, so each must have fired at least once, or the trace
+#: went blind for that module and certifies nothing about it.
+GATE_TRACE_FLOORS: dict[str, int] = {
+    "gui_sections.py": 1,
+    "gui_cast.py": 1,
+    "gui_chrome.py": 1,
+    "gui_widgets.py": 1,
 }
 
 failures: list[str] = []
@@ -324,6 +352,86 @@ def _collect_problems(widget, prefix: str = "") -> list[str]:
         if isinstance(child, QWidget):
             problems.extend(_collect_problems(child, prefix))
     return problems
+
+
+# --- the widget-restyle gate trace -------------------------------------------
+
+class _StyleSetTrace:
+    """Context manager recording ``(gate open, caller module)`` for every
+    ``QWidget.setStyleSheet`` call made while it is open.
+
+    The runtime half of ``tests/test_widget_restyle_gate.py``, run per theme
+    on the REAL window the certification builds: the unit net proves the four
+    gated modules' construction sites find the bulk-restyle gate open in
+    isolation; this proves the same on a themed, shown, pumped window — six
+    times over, once per theme. Only the initial construction is wrapped (the
+    persistence round-trip's reopen builds untraced): the construction storm
+    is the subject, and the trace costs one Python call per stylesheet.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[bool, str]] = []
+        self._original = QWidget.setStyleSheet
+
+    def __enter__(self) -> "_StyleSetTrace":
+        original = self._original
+
+        def traced(widget, style: str) -> None:
+            caller = inspect.currentframe().f_back.f_code.co_filename
+            self.calls.append((in_bulk_restyle(), Path(caller).name))
+            original(widget, style)
+
+        QWidget.setStyleSheet = traced  # type: ignore[method-assign]
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        QWidget.setStyleSheet = self._original  # type: ignore[method-assign]
+
+
+def _certify_restyle_gate(key: str, calls: list[tuple[bool, str]]) -> None:
+    """Every construction-time widget-level stylesheet found the gate OPEN.
+
+    Two ways to fail, both naming the module: a call from a gated module that
+    ran with the bulk-restyle gate closed (an app-wide filter is re-entered
+    for each of its change events), and a gated module that fired no call at
+    all during construction (the trace went blind for it, so this theme
+    certifies nothing about it). The per-module counts ride the report as
+    evidence rather than only being asserted.
+    """
+    per_module: dict[str, int] = {}
+    closed: list[str] = []
+    for gate_open, module in calls:
+        if module not in GATED_WIDGET_MODULES:
+            continue
+        per_module[module] = per_module.get(module, 0) + 1
+        if not gate_open:
+            closed.append(module)
+    check(
+        not closed,
+        f"{key}: widget-level setStyleSheet ran with the bulk-restyle gate "
+        f"CLOSED in {sorted(set(closed))} during window construction — each "
+        "call re-enters every app-wide event filter for its change events; "
+        "wrap the site in `with bulk_restyle():` (the "
+        "tests/test_widget_restyle_gate.py net names the site)",
+    )
+    for module, floor in GATE_TRACE_FLOORS.items():
+        fired = per_module.get(module, 0)
+        check(
+            fired >= floor,
+            f"{key}: the construction-time gate trace saw {fired} "
+            f"setStyleSheet call(s) from {module} (floor {floor}) — the trace "
+            "went blind for that module, so this theme certifies nothing "
+            "about it",
+        )
+    # Evidence only on the passing side: a failing theme gets its failure
+    # line, never an "all open" note beside it — the two readings of one
+    # trace must not both be printed.
+    if per_module and not closed:
+        notes.append(
+            f"{key}: OK - gate trace: "
+            + ", ".join(f"{module} {per_module[module]}" for module in sorted(per_module))
+            + " - all open"
+        )
 
 
 # --- the certification table -------------------------------------------------
@@ -975,7 +1083,12 @@ def main(argv: list[str] | None = None) -> int:
                 settings_file.unlink()
             gui_settings.save_app_settings({"theme": key})
 
-            window = _build_window(app)
+            gate_trace = _StyleSetTrace()
+            with gate_trace:
+                window = _build_window(app)
+
+            if "chrome" in aspects:
+                _certify_restyle_gate(key, gate_trace.calls)
 
             if "contrast" in aspects:
                 _certify_contrast(key, cert, window)
@@ -1035,7 +1148,8 @@ def main(argv: list[str] | None = None) -> int:
         if "chrome" in aspects:
             print(
                 f"All good across all {count} themes: sections render, sliders move, "
-                "collapse clips, layout round-trips, no truncation."
+                "collapse clips, layout round-trips, no truncation, and every "
+                "widget-level restyle found the gate open."
             )
         if "studio" in aspects:
             print(

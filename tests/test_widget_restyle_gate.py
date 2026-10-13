@@ -27,6 +27,12 @@ Two nets keep it:
    gui_chrome header), and observes, from inside a traced
    ``setStyleSheet``, that every call found the gate OPEN.
 
+The runtime half also runs per theme from the chrome aspect of
+``scripts/certify_gui.py`` (its own construction-time trace over six real
+themed windows, unit-pinned by tests/test_certify_gui_gate_trace.py), so the
+invariant is re-proven on the windows a certification actually builds — not
+only in this net's isolated constructions.
+
 The two late additions were the standing "noticed, not actioned" note on the
 2026-10-10 entry: ``gui_chrome``'s Live header and ``gui_widgets``'
 PerceptualSlider caption — one call per slider, seven per speaker panel, the
@@ -175,49 +181,73 @@ def qt_app():
 def test_the_construction_calls_find_the_gate_open_at_runtime(
     qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    """Runtime half: construct a real eager SpeakerGroup — it fires all three
-    gated sites (the collapse toggle via QHSectionGroup.__init__, the three
-    panel dividers) — while tracing QWidget.setStyleSheet, and observe the
-    real gate from inside every call."""
+    """Runtime half: construct a real eager SpeakerGroup (which fires the
+    collapse toggle, the three panel dividers, the cast row's key label and
+    the panel's seven captioned PerceptualSlider captions) plus a LivePanel
+    (the gui_chrome header) while tracing QWidget.setStyleSheet, and observe
+    the real gate from inside every call."""
     from the_oracle import gui_themes
     from the_oracle.gui_cast import SpeakerGroup, _CastRow
+    from the_oracle.gui_chrome import LivePanel
     from PySide6.QtWidgets import QWidget
 
     import inspect
 
     original = QWidget.setStyleSheet
-    # (gate open, caller is one of the two gated modules) per traced call.
-    seen: list[tuple[bool, bool]] = []
+    # (gate open, caller module) per traced call; non-gated modules map to None.
+    seen: list[tuple[bool, str | None]] = []
 
     def traced(self, style: str) -> None:
         caller = inspect.currentframe().f_back.f_code.co_filename
-        in_scope = Path(caller).name in GATED_MODULES
-        seen.append((gui_themes.in_bulk_restyle(), in_scope))
+        name = Path(caller).name
+        seen.append(
+            (gui_themes.in_bulk_restyle(), name if name in GATED_MODULES else None)
+        )
         original(self, style)
 
     QWidget.setStyleSheet = traced  # type: ignore[method-assign]
     try:
         group = SpeakerGroup("A", tmp_path)
         row = _CastRow("A", group)
+        panel = LivePanel()
     finally:
         QWidget.setStyleSheet = original  # type: ignore[method-assign]
     try:
-        gated_calls = [gate_open for gate_open, in_scope in seen if in_scope]
-        # Non-vacuity: the collapse toggle, the three panel dividers and the
-        # cast row's key label — five in-scope calls must be observed.
-        assert len(gated_calls) >= 5, (
-            f"only {len(gated_calls)} in-scope setStyleSheet call(s) traced "
-            "during an eager SpeakerGroup + _CastRow construction; the known "
-            "floor is 5 (toggle + 3 dividers + key label). The trace went "
-            "blind — fix the trace."
-        )
-        assert all(gated_calls), (
+        per_module: dict[str, int] = {}
+        closed: list[str] = []
+        for gate_open, name in seen:
+            if name is None:
+                continue
+            per_module[name] = per_module.get(name, 0) + 1
+            if not gate_open:
+                closed.append(name)
+        # Non-vacuity, per module: every gated construction site must have
+        # fired, so a rename or a lazily-skipped build cannot pass silently.
+        # Known floors (measured 2026-10-12): sections = the collapse toggle;
+        # cast = 3 panel dividers + the row key label; widgets = the speaker
+        # panel's 7 captioned sliders; chrome = the Live header.
+        floors = {
+            "gui_sections.py": 1,
+            "gui_cast.py": 4,
+            "gui_widgets.py": 7,
+            "gui_chrome.py": 1,
+        }
+        for module, floor in floors.items():
+            fired = per_module.get(module, 0)
+            assert fired >= floor, (
+                f"only {fired} in-scope setStyleSheet call(s) traced from "
+                f"{module} during an eager SpeakerGroup + _CastRow + "
+                f"LivePanel construction; the known floor is {floor}. The "
+                "trace went blind — fix the trace."
+            )
+        assert not closed, (
             "a construction-time setStyleSheet in the gated modules ran with "
-            "the bulk-restyle gate CLOSED — an app-wide filter would be "
-            "re-entered for its change events; wrap the call in "
-            "`with bulk_restyle():`"
+            "the bulk-restyle gate CLOSED (" + ", ".join(sorted(set(closed))) +
+            ") — an app-wide filter would be re-entered for its change "
+            "events; wrap the call in `with bulk_restyle():`"
         )
     finally:
         row.container.deleteLater()
         group.deleteLater()
+        panel.deleteLater()
         qt_app.processEvents()
