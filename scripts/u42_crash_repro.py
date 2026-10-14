@@ -19,7 +19,7 @@ import sys
 import traceback
 from pathlib import Path
 
-REPO = Path("/home/cody/Documents/the oracle tts")
+REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # Fully isolated user state; also exercises crash-report capture end to end.

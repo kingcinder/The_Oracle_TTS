@@ -15,7 +15,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from the_oracle.crash import sanitize  # noqa: E402
 
-HOME = "/home/cody"
+HOME = "/home/test-user"
 
 
 def test_home_prefix_becomes_tilde() -> None:

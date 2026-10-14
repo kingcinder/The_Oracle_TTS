@@ -16,7 +16,7 @@
 #   /tmp/gui_crash_gdb_full.log         full gdb session (for context)
 set -u
 
-REPO="/home/cody/Documents/the oracle tts"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$REPO/.venv/bin/python"
 LOG_BT="/tmp/gui_crash_backtrace.log"
 LOG_PY="/tmp/gui_crash_pyfaulthandler.log"
