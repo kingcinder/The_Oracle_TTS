@@ -259,14 +259,13 @@ def test_workflow_runs_the_idempotence_check_on_every_runner() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["test"]["steps"]
 
-    step = next(
+    idempotence_steps = [
         step for step in steps if "doctor_idempotence.py" in step.get("run", "")
-    )
-    # No `if:` and no `shell:` override, so each runner uses its own default
-    # shell (bash on Linux, pwsh on Windows) and the check runs on both.
-    assert "if" not in step
-    assert "shell" not in step
-    assert step["run"].strip() == "python scripts/doctor_idempotence.py --skip-model-init --ci"
+    ]
+    assert len(idempotence_steps) == 2
+    by_os = {step["if"].split("==", 1)[1].strip().strip("'"): step for step in idempotence_steps}
+    assert by_os["Linux"]["run"].strip() == "./.venv/bin/python scripts/doctor_idempotence.py --skip-model-init --ci"
+    assert by_os["Windows"]["run"].strip() == "python scripts/doctor_idempotence.py --skip-model-init --ci"
 
     # Same mode as the doctor steps the gate already runs, so the check measures
     # the gate as it is actually invoked.
