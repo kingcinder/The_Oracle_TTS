@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+# detect-secrets stores one-way hashes of findings, not the source values.
+# They are audit metadata and are intentionally not treated as credentials.
+[allowlist]
+paths = ['''\.secrets\.baseline$''']
