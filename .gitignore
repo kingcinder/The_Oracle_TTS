@@ -109,3 +109,14 @@ Seashells/seashell fransisco_TTS_clean_v5_aggressive_targeted_cleanup.wav
 Seashells/Cody's Seashell.wav
 Seashells/Cody's Seashell1.wav
 Input/recording prompt.txt
+# Private release-engineering records and local crash evidence.
+Profiles/oracle_profile.json
+crash_reports/*
+crash_hunt_captures/
+PLAN-*.md
+JUNO_FIXES.log
+STATE.md
+RELEASE-CHECKLIST-*.md
+docs/superpowers/
+docs/DEBUG_SWEEP-*
+docs/CONSUMER_CHANGELOG_DRAFT-*
