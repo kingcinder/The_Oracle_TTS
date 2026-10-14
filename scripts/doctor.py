@@ -1879,14 +1879,6 @@ def main(argv: list[str] | None = None) -> int:
     from the_oracle.crash import handlers as crash_handlers
 
     crash_handlers.install()
-    crash_handlers.arm_native_capture()
-    # The doctor constructs the Chatterbox model and prefetches the turbo
-    # checkpoint, so on an offline install those probes must resolve from the
-    # seeded cache. Applied before run() so every subprocess probe inherits it
-    # through _probe_environment().
-    from the_oracle.offline import apply_offline_environment
-
-    apply_offline_environment()
     parser = argparse.ArgumentParser(description="Install and launch diagnostics for The Oracle.")
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT_DEFAULT)
@@ -1895,6 +1887,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-model-init", action="store_true")
     parser.add_argument("--ci", action="store_true", help="Ignore optional environment-only checks such as ffmpeg, wrapper PATH, and turbo prefetch.")
     args = parser.parse_args(argv)
+
+    # Resolve the requested tree before arming native capture.  A doctor run
+    # against another checkout must never create a dump in the process cwd's
+    # crash_reports/ directory; install() keeps the entry-point hooks in place
+    # while this second call applies the parsed root override.
+    crash_handlers.install(root=args.repo_root)
+    crash_handlers.arm_native_capture()
+
+    # The doctor constructs the Chatterbox model and prefetches the turbo
+    # checkpoint, so on an offline install those probes must resolve from the
+    # seeded cache. Applied before run() so every subprocess probe inherits it
+    # through _probe_environment().
+    from the_oracle.offline import apply_offline_environment
+
+    apply_offline_environment()
 
     report = run(
         args.repo_root,
