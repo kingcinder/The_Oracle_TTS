@@ -276,21 +276,10 @@
       ],
       "skipped_ids_complete": false
     },
-    "a6efc07fd0d6": {
+    "a6efc07fd0d62e780d5f5dabbea40e0914acb82c": {
       "errors": 0,
       "exit_code": 0,
       "failed": 0,
-      "passed": 1921,
-      "skipped": 3,
-      "skipped_ids": [
-        "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
-      ],
-      "skipped_ids_complete": false
-    },
-    "a6efc07fd0d62e780d5f5dabbea40e0914acb82c": {
-      "errors": 0,
-      "exit_code": 1,
-      "failed": 2,
       "passed": 1921,
       "skipped": 3,
       "skipped_ids": [
