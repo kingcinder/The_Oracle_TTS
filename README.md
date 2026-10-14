@@ -30,7 +30,7 @@ Chatterbox outputs include built-in Perth watermarking by design. This project d
 
 ## One-Stop Manager (Install / Start / Update / Uninstall)
 
-Linux/macOS, from the repository root:
+Linux, from the repository root:
 
 ```bash
 ./oracle install      # set up the venv, register launchers, verify (doctor)
