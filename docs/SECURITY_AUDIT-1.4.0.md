@@ -70,9 +70,9 @@ one module plus `keys.py`'s import if that ever changes.
 ## 3. Dependency vulnerability audit — residual advisories, OPEN
 
 Rechecked 2026-10-14 with `.venv/bin/python -m pip_audit --progress-spinner off`
-(pip-audit 2.10.1). Exit 1 (advisories found). Raising Pillow to 12.3.0,
-setuptools to 83.0.0, and urllib3 to 2.8.0 reduced the live result from 103
-advisories across 9 packages to 73 advisories across 6 packages. These installed
+(pip-audit 2.10.1). Exit 1 (advisories found). Raising Pillow to 12.3.0 and
+urllib3 to 2.8.0 reduced the live result from 103 advisories across 9 packages
+to 75 advisories across 7 packages. These installed
 versions and totals are from that run;
 fixing one package to the first listed version does not necessarily clear every
 advisory for that package.

@@ -35,7 +35,7 @@ def _online_pip_commands(venv_python: Path) -> list[tuple[str, ...]]:
     """The five pip installs an online install runs, verbatim."""
     python = str(venv_python)
     return [
-        (python, "-m", "pip", "install", "--upgrade", "pip", "setuptools>=83.0.0,<84", "wheel"),
+        (python, "-m", "pip", "install", "--upgrade", "pip", "setuptools<81", "wheel"),
         (
             python, "-m", "pip", "install",
             "--index-url", "https://download.pytorch.org/whl/cpu",
@@ -150,7 +150,7 @@ def _offline_pip_commands(venv_python: Path, wheels_dir: Path) -> list[tuple[str
     wheel_args = ("--no-index", "--find-links", str(wheels_dir))
     python = str(venv_python)
     return [
-        (python, "-m", "pip", "install", *wheel_args, "--upgrade", "pip", "setuptools>=83.0.0,<84", "wheel"),
+        (python, "-m", "pip", "install", *wheel_args, "--upgrade", "pip", "setuptools<81", "wheel"),
         (
             python, "-m", "pip", "install", *wheel_args,
             "torch==2.6.0", "torchaudio==2.6.0", "torchvision==0.21.0",

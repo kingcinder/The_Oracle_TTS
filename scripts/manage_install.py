@@ -37,7 +37,7 @@ CUDA_WHEEL_PYTHON = "CUDA 12.4"
 # builder (scripts/build_offline_bundle.py) imports these so the wheel set it
 # downloads can never drift from what the installer installs.
 TORCH_PACKAGES = ("torch==2.6.0", "torchaudio==2.6.0", "torchvision==0.21.0")
-BOOTSTRAP_PACKAGES = ("pip", "setuptools>=83.0.0,<84", "wheel")
+BOOTSTRAP_PACKAGES = ("pip", "setuptools<81", "wheel")
 CHATTERBOX_ENGINE_PACKAGES = (
     "librosa==0.11.0",
     "s3tokenizer",
