@@ -67,6 +67,7 @@ BANNER_SITES: tuple[tuple[str, str], ...] = (
     ("README.md", "**Release V"),
     ("STATE.md", "**Current release: V"),
 )
+OPTIONAL_BANNER_SITES = frozenset({"STATE.md"})
 
 _BANNER_VERSION_RE = re.compile(r"V(\d+\.\d+\.\d+)")
 
@@ -248,6 +249,8 @@ def banner_problems(repo_root: Path, version: str) -> list[str]:
     for filename, prefix in BANNER_SITES:
         path = repo_root / filename
         if not path.is_file():
+            if filename in OPTIONAL_BANNER_SITES:
+                continue
             problems.append(f"{filename}: missing (expected a banner line starting {prefix!r})")
             continue
         banner_lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.startswith(prefix)]
