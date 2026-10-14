@@ -11,8 +11,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def test_debug_tools_derive_their_checkout_path() -> None:
     shell_source = (REPO_ROOT / "scripts/u42_crash_catcher.sh").read_text(encoding="utf-8")
     python_source = (REPO_ROOT / "scripts/u42_crash_repro.py").read_text(encoding="utf-8")
-    assert "/home/cody/Documents/the oracle tts" not in shell_source
-    assert "/home/cody/Documents/the oracle tts" not in python_source
+    assert "/home/" not in shell_source
+    assert "/home/" not in python_source
     assert 'dirname "${BASH_SOURCE[0]}"' in shell_source
     assert "Path(__file__).resolve().parents[1]" in python_source
 
