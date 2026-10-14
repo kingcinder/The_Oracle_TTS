@@ -122,7 +122,7 @@ history scrub. The scan covered 780 commits reachable from the local release
 checkout's refs and reported no leaks. The scrub verification also searched all
 reachable path names and the current tree for the removed personal files; both
 counts were zero. The recovery branch
-`pre-history-scrub-release-20261014` preserves the pre-rewrite history for
+`pre-history-scrub-release-2026-10-14` preserves the pre-rewrite history for
 rollback.
 
 Commands and results:
