@@ -75,7 +75,7 @@ STAGES: tuple[RecordingGuideStage, ...] = (
     RecordingGuideStage(
         "naming",
         "4. Confirm the naming policy",
-        "A generated Seashell_No_N.wav name is a safe boilerplate name, but it does not tell you who, when, or under which conditions the take was recorded. The first time you record with a generic name, The Oracle shows a caution and lets you disable that caution. For a production library, close the warning, replace the name with something descriptive such as Cody_close_mic_warm.wav, and then record. The warning preference is independent of the recording itself and can be restored in Settings.",
+        "A generated Seashell_No_N.wav name is a safe boilerplate name, but it does not tell you who, when, or under which conditions the take was recorded. The first time you record with a generic name, The Oracle shows a caution and lets you disable that caution. For a production library, close the warning, replace the name with something descriptive such as close_mic_warm.wav, and then record. The warning preference is independent of the recording itself and can be restored in Settings.",
         "name_edit",
     ),
     RecordingGuideStage(

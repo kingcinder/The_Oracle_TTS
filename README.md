@@ -595,7 +595,6 @@ The portable sample inputs under `Input/` include:
 
 - `Read Aloud transcript.txt`
 - `What is, reality.txt`
-- `fransisco help.txt`
 - `stream_of_consciousness_dialogue_with_typos.txt` (intentionally messy —
   exercises the text-repair/correction modes)
 - `cli_short.txt`
@@ -680,4 +679,4 @@ name again replaces the entry.
 
 This project is publicly visible for inspection and evaluation, but it is not open-source. All rights are reserved.
 
-Commercial licensing and leasing inquiries: codysa90@gmail.com
+Commercial licensing and leasing inquiries: licensing@example.invalid
