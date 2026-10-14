@@ -270,10 +270,12 @@ jobs:
       # visible in a single run. This runs the gate twice in the mode the steps
       # above use and fails if the two reports differ.
       #
-      # Deliberately no `if:` and no `shell:` override: it is one command, and
-      # each runner's default shell (bash, pwsh) runs it identically, so the
-      # check covers both operating systems instead of silently covering one.
-      - name: Doctor Is Idempotent Across Runs
+      - name: Doctor Is Idempotent Across Runs (Linux)
+        if: runner.os == 'Linux'
+        run: ./.venv/bin/python scripts/doctor_idempotence.py --skip-model-init --ci
+
+      - name: Doctor Is Idempotent Across Runs (Windows)
+        if: runner.os == 'Windows'
         run: python scripts/doctor_idempotence.py --skip-model-init --ci
 
       # The working tree is not a fresh checkout: it accumulates a venv, a native
