@@ -220,6 +220,17 @@
         "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
       ],
       "skipped_ids_complete": false
+    },
+    "fe4d089508ee575d18907677f181aec0504d11fa": {
+      "errors": 0,
+      "exit_code": 0,
+      "failed": 0,
+      "passed": 1921,
+      "skipped": 3,
+      "skipped_ids": [
+        "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
+      ],
+      "skipped_ids_complete": false
     }
   }
 }
