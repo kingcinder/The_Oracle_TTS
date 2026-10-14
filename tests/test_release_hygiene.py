@@ -19,6 +19,7 @@ def test_private_voice_recordings_are_not_tracked() -> None:
         "Seashells/Seashell_ fransisco.wav",
         "Seashells/seashell fransisco.wav",
         "Seashells/seashell fransisco_TTS_clean_v5_aggressive_targeted_cleanup.wav",
+        "Input/fransisco help.txt",
         "Seashells/Seashell_No_1.wav",
         "Seashells/Seashell_No_2.wav",
     }

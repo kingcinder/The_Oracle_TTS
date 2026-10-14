@@ -8,7 +8,6 @@ Place dialogue source files here for rendering.
 - `What is, reality.txt` - Example dialogue
 - `stream_of_consciousness_dialogue_with_typos.txt` - Intentionally messy
   sample for testing the text-repair/correction modes
-- `fransisco help.txt` - Short dramatic monologue sample
 - `cli_short.txt` - Short CLI test input
 - `local_audio_test.txt` - Local-audio render test input
 - `test.txt` - Basic test input
