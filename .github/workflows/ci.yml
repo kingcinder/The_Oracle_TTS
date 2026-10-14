@@ -376,6 +376,7 @@ jobs:
             mesa-vulkan-drivers \
             ninja-build \
             pkg-config \
+            spirv-headers \
             vulkan-tools
 
       # This is the smoke's own device gate, run by hand first so a missing ICD

@@ -24,11 +24,48 @@ GGML_FILE="$AUDIOCPP_DIR/external/ggml/src/ggml-vulkan/ggml-vulkan.cpp"
 SP_FILE="$AUDIOCPP_DIR/external/sentencepiece/CMakeLists.txt"
 GGML_MARKER="===== BEGIN ORACLE VENDORED PATCH (RDNA1 buffer memset) ====="
 SP_MARKER="===== BEGIN ORACLE VENDORED PATCH (space-safe macro-prefix-map) ====="
+SPIRV_MARKER="===== BEGIN ORACLE VENDORED PATCH (portable SPIR-V headers) ====="
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 if [[ ! -f "$GGML_FILE" ]]; then
   echo "ERROR: ggml-vulkan.cpp not found at $GGML_FILE (run scripts/build_audio_cpp.sh first)." >&2
   exit 1
+fi
+
+# ggml uses `spv::` opcode constants but does not include the Khronos SPIR-V
+# header on a clean Linux checkout. Add a portable SDK-layout include before
+# the RDNA1 patch; this is intentionally source-local and platform neutral.
+if grep -Fq "$SPIRV_MARKER" "$GGML_FILE"; then
+  echo "[patch] portable SPIR-V headers: already applied (no-op)."
+elif grep -Fq 'include <spirv/unified1/spirv.hpp>' "$GGML_FILE"; then
+  echo "[patch] portable SPIR-V headers: source already includes a Khronos header (no-op)."
+else
+  "$PYTHON_BIN" - "$GGML_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+raw = open(path, "rb").read()
+anchor = b"#include <vulkan/vulkan.hpp>"
+block = b"""#include <vulkan/vulkan.hpp>
+
+// ===== BEGIN ORACLE VENDORED PATCH (portable SPIR-V headers) =====
+// ggml uses the `spv::` opcode constants below; include the Khronos header
+// explicitly because Vulkan-Hpp does not provide it transitively on Linux.
+#if __has_include(<spirv/unified1/spirv.hpp>)
+#    include <spirv/unified1/spirv.hpp>
+#elif __has_include(<spirv-headers/spirv.hpp>)
+#    include <spirv-headers/spirv.hpp>
+#elif __has_include(<spirv.hpp>)
+#    include <spirv.hpp>
+#else
+#    include <spirv/unified1/spirv.hpp>
+#endif
+// ===== END ORACLE VENDORED PATCH (portable SPIR-V headers) ====="""
+if raw.count(anchor) != 1:
+    raise SystemExit(f"ANCHOR NOT FOUND or duplicated in {path}")
+open(path, "wb").write(raw.replace(anchor, block, 1))
+PYEOF
+  grep -Fq "$SPIRV_MARKER" "$GGML_FILE"
+  echo "[patch] Applied portable SPIR-V headers"
 fi
 
 apply_patch() {
