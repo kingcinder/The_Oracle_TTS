@@ -62,6 +62,19 @@ def app_config_dir(app_name: str = "the_oracle") -> Path:
     return user_config_root() / app_name
 
 
+def user_data_root() -> Path:
+    """Return the platform data root used for mutable application content."""
+    if is_windows():
+        appdata = os.environ.get("APPDATA")
+        return Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    return Path(xdg_data) if xdg_data else Path.home() / ".local" / "share"
+
+
+def app_data_dir(app_name: str = "the_oracle") -> Path:
+    return user_data_root() / app_name
+
+
 def managed_launcher_dir() -> Path:
     if is_windows():
         appdata = os.environ.get("APPDATA")

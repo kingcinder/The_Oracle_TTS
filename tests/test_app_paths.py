@@ -1,11 +1,35 @@
 from pathlib import Path
 
 from the_oracle.app_paths import (
+    PORTABLE_MARKER,
     default_output_filename,
     ensure_repo_default_paths,
     normalize_output_filename,
     resolve_output_filename,
 )
+
+
+def test_portable_marker_keeps_repo_local_paths(tmp_path: Path) -> None:
+    (tmp_path / PORTABLE_MARKER).touch()
+    paths = ensure_repo_default_paths(tmp_path)
+    assert paths.input_dir == tmp_path / "Input"
+    assert paths.output_dir == tmp_path / "Output"
+
+
+def test_installed_root_migrates_repo_content_without_deleting_it(tmp_path: Path, monkeypatch) -> None:
+    import the_oracle.app_paths as app_paths
+
+    repo = tmp_path / "repo"
+    (repo / "Input").mkdir(parents=True)
+    (repo / "Input" / "story.txt").write_text("A: hello\n", encoding="utf-8")
+    monkeypatch.setattr(app_paths, "__file__", str(repo / "src" / "the_oracle" / "app_paths.py"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    paths = app_paths.ensure_repo_default_paths(repo)
+
+    assert paths.input_dir == tmp_path / "data" / "the_oracle" / "Input"
+    assert (paths.input_dir / "story.txt").read_text(encoding="utf-8") == "A: hello\n"
+    assert (repo / "Input" / "story.txt").is_file()
 
 
 def test_ensure_repo_default_paths_creates_expected_directories(tmp_path: Path) -> None:

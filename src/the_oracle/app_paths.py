@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import os
+import shutil
+
+from the_oracle.platform_support import app_data_dir
+
+
+PORTABLE_MARKER = ".oracle-portable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,14 +22,40 @@ class OraclePaths:
     voice_dir: Path
 
 
+def _portable_mode(root: Path) -> bool:
+    value = os.environ.get("ORACLE_PORTABLE", "").strip().lower()
+    return value in {"1", "true", "yes", "on"} or (root / PORTABLE_MARKER).is_file()
+
+
+def _migrate_tree(source: Path, destination: Path) -> None:
+    """Copy a legacy repo-local tree without deleting or overwriting files."""
+    if not source.is_dir():
+        return
+    destination.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir():
+        target = destination / item.name
+        if target.exists():
+            continue
+        if item.is_dir():
+            shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
+
+
 def ensure_repo_default_paths(repo_root: str | Path) -> OraclePaths:
     root = Path(repo_root).expanduser().resolve()
+    installed_root = Path(__file__).resolve().parents[2]
+    data_root = root
+    if root == installed_root and not _portable_mode(root):
+        data_root = app_data_dir()
+        for name in ("Input", "Output", "Profiles", "Seashells"):
+            _migrate_tree(root / name, data_root / name)
     paths = OraclePaths(
         repo_root=root,
-        input_dir=root / "Input",
-        output_dir=root / "Output",
-        profile_dir=root / "Profiles",
-        voice_dir=root / "Seashells",
+        input_dir=data_root / "Input",
+        output_dir=data_root / "Output",
+        profile_dir=data_root / "Profiles",
+        voice_dir=data_root / "Seashells",
     )
     for path in (paths.input_dir, paths.output_dir, paths.profile_dir, paths.voice_dir):
         path.mkdir(parents=True, exist_ok=True)
