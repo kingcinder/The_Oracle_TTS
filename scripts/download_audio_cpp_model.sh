@@ -126,8 +126,8 @@ needs to be exported:
 (The export line is only for raw shell sessions.) Render with:
 
     the-oracle render --input Input/cli_short.txt --outdir Output \\
-      --speakerA-ref "Seashells/Cody's Seashell.wav" \\
-      --speakerB-ref "Seashells/Cody's Seashell1.wav" \\
+      --speakerA-ref "Seashells/generic/english_reader_1.wav" \\
+      --speakerB-ref "Seashells/generic/english_reader_2.wav" \\
       --inference-backend vulkan
 
 The model manager refuses to overwrite an existing install; pass --overwrite

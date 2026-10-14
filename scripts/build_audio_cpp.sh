@@ -117,8 +117,8 @@ Next steps:
    a different precision, or --overwrite to re-download)
 2. Render -- The Oracle locates the binary and model automatically:
      the-oracle render --input Input/cli_short.txt --outdir Output \\
-       --speakerA-ref "Seashells/Cody's Seashell.wav" \\
-       --speakerB-ref "Seashells/Cody's Seashell1.wav" \\
+       --speakerA-ref "Seashells/generic/english_reader_1.wav" \\
+       --speakerB-ref "Seashells/generic/english_reader_2.wav" \\
        --inference-backend vulkan
 EOF
 fi
