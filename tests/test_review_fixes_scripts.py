@@ -87,6 +87,10 @@ def manage_install():
     return _load_script_module("oracle_manage_install_scripts", "manage_install.py")
 
 
+def test_bootstrap_installs_packaging_before_doctor(manage_install) -> None:
+    assert any(str(requirement).startswith("packaging") for requirement in manage_install.BOOTSTRAP_PACKAGES)
+
+
 @pytest.fixture()
 def doctor_module():
     return _load_script_module("oracle_doctor_scripts", "doctor.py")
