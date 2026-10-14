@@ -113,13 +113,29 @@ public RFC 8032 test-vector values in test-only fixtures and regression tests.
 They are recorded with `is_secret: false`. The findings are public test
 vectors, test-only registry material, pinned public Hugging Face commit SHAs,
 and public Git commit SHAs. **No API key, token, production private key,
-password, or personal credential was found in the tracked tree.** No
-`gitleaks`/`trufflehog` binary exists on this host; `detect-secrets` is the
+password, or personal credential was found in the tracked tree.** The host's
+gitleaks binary was used for the history scan below; detect-secrets remains the
 repeatable tree-scan fallback.
 
-Not covered by this sweep: Git history. The current branch has 414 commits;
-Phase 3 must scan history before deciding how to publish. A tree scan is not a
-history scan and this file does not claim otherwise.
+The rewritten release history was scanned separately with gitleaks after the
+history scrub. The scan covered 780 commits reachable from the local release
+checkout's refs and reported no leaks. The scrub verification also searched all
+reachable path names and the current tree for the removed personal files; both
+counts were zero. The recovery branch
+`pre-history-scrub-release-20261014` preserves the pre-rewrite history for
+rollback.
+
+Commands and results:
+```
+/home/cody/redteam-tools/bin/gitleaks detect --source . --no-banner --redact \
+  --config .gitleaks.toml --report-format json \
+  --report-path /tmp/oracle-gitleaks-final.json
+# 780 commits scanned; no leaks found; exit 0
+
+git log --all --name-only --format='' | rg -c \
+  "Cody's Seashell|fransisco|Seashell_No_[12]|Input/fransisco help|JUNO_FIXES|STATE.md|docs/superpowers"
+# 0
+```
 
 ## 5. Reproduce
 
