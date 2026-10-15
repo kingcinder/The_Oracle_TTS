@@ -679,4 +679,4 @@ name again replaces the entry.
 
 This project is publicly visible for inspection and evaluation, but it is not open-source. All rights are reserved.
 
-Commercial licensing and leasing inquiries: licensing@example.invalid
+Licensing and support inquiries: codysa90@gmail.com

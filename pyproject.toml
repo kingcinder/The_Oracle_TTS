@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = { text = "Proprietary" }
 authors = [
-  { name = "The Oracle contributors", email = "licensing@example.invalid" }
+  { name = "The Oracle contributors", email = "codysa90@gmail.com" }
 ]
 dependencies = [
   "markdown-it-py==3.0.0",
