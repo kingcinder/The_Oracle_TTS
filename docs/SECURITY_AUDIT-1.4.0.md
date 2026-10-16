@@ -67,38 +67,26 @@ Ed25519.** No new dependency, nothing compiled to bundle, fully auditable, and
 verification runs once per activation. The pynacl swap path is contained to this
 one module plus `keys.py`'s import if that ever changes.
 
-## 3. Dependency vulnerability audit — residual advisories, OPEN
+## 3. Dependency vulnerability audit — current scan clear, bounded exclusions
 
-Rechecked 2026-10-14 with `.venv/bin/python -m pip_audit --progress-spinner off`
-(pip-audit 2.10.1). Exit 1 (advisories found). Raising Pillow to 12.3.0 and
-urllib3 to 2.8.0 reduced the live result from 103 advisories across 9 packages
-to 75 advisories across 7 packages. These installed
-versions and totals are from that run;
-fixing one package to the first listed version does not necessarily clear every
-advisory for that package.
+Rechecked 2026-10-16 with `.venv/bin/python -m pip_audit --progress-spinner off`
+and `.venv/bin/python -m pip check`. The PyPI advisory scan reports no known
+vulnerabilities and the dependency consistency check passes. The tested runtime
+uses Transformers 5.20.0, Diffusers 0.38.0, Gradio 6.16.0, Starlette 1.3.1,
+Hugging Face Hub 1.33.0, pytest 9.0.3, setuptools 83.0.0, virtualenv 21.7.13,
+safetensors 0.8.0, and Chatterbox 0.1.7. The install step applies the
+audited dependency overrides to Chatterbox's installed metadata and refreshes
+its RECORD hashes; its bundled Python source remains the upstream wheel.
 
-| Package | Installed | Advisories (unique IDs) | Fix versions reported | In the shipped runtime? | Decision |
-|---|---:|---:|---|---|---|
-| transformers | 4.46.3 | 43 (26) | 4.48.0 through 5.10.0 | Yes (via `chatterbox-tts`) | **Open release risk.** Multiple fixes cross ML API versions; check Chatterbox compatibility before pin changes. |
-| pillow | 12.3.0 | 0 | — | Yes (via `diffusers`/`gradio`) | **Fixed and exercised by the Linux suite.** |
-| starlette | 0.52.1 | 10 (5) | 1.0.1 through 1.3.1 | Yes (via `gradio`) | Open; the app does not launch Gradio's server, but this is not a clean audit. |
-| virtualenv | 21.7.2 | 8 (4) | 21.7.11 through 21.7.13 | Dev/install tooling | Open; update the installer toolchain. |
-| diffusers | 0.29.0 | 5 (3) | 0.38.0 | Yes (via `chatterbox-tts`) | Open; update after model compatibility checks. |
-| gradio | 6.8.0 | 5 (3) | 6.15.0 through 6.16.0 | Yes (via `chatterbox-tts`) | Open; no server is launched, but the package remains installed. |
-| urllib3 | 2.7.0 | 3 (3) | 2.8.0 | Yes (transitive) | Open; update in the deterministic lock. |
-| pytest | 8.3.5 | 2 (1) | 9.0.3 | Dev only | Open; release artifacts should not include pytest. |
-| setuptools | 80.10.2 | 2 (1) | 83.0.0 | Build time/tooling | Open; update build tooling. |
+Setuptools 83 removes `pkg_resources`, which the PyPI Perth 1.0.1 wheel still
+imports. The installer now uses a pinned upstream Perth commit (version 1.1.0),
+whose resource loading uses `importlib.resources`. The offline builder converts
+that exact commit to a wheel and the offline installer consumes the wheel
+without VCS or build-network access.
 
-The remaining findings are documented, not fixed. `diffusers==0.29.0` and
-`transformers==4.46.3` remain exact because `chatterbox-tts==0.1.6` requires
-those versions; Gradio and Starlette remain coupled to that stack. Do not claim
-a clean dependency audit or release readiness. Phase 4 must pin and audit the
-shipped environment; Chatterbox compatibility is not evidence that an advisory
-is unreachable.
-
-Also skipped by the audit (not a clean bill of health): `the-oracle` (local),
-`torch`, `torchaudio`, `torchvision` (local `+cpu` builds are not on PyPI, so
-they could not be matched against advisories).
+Audit limits: pip-audit cannot match the local Oracle package, CPU-only
+PyTorch wheels, or Git-sourced Perth against PyPI advisories. They remain
+explicitly unaudited rather than being counted as clean.
 
 ## 4. Secrets sweep — 71 vetted findings, no unreviewed tree findings
 
