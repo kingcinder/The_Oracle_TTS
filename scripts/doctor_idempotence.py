@@ -14,10 +14,12 @@ durations of the machine rather than statements about the install. Any field tha
 differs is named with both values, so a new measurement shows up as a precise
 failure rather than a mystery.
 
-Run by ``.github/workflows/ci.yml`` from the test matrix, via each runner's
-default shell, so it gates every push and pull request on Linux and Windows::
+Run by ``.github/workflows/ci.yml`` from the test matrix with the project's
+virtual-environment interpreter, so both doctor invocations use the declared
+runtime dependencies on Linux and Windows::
 
-    python scripts/doctor_idempotence.py --skip-model-init --ci
+    ./.venv/bin/python scripts/doctor_idempotence.py --skip-model-init --ci
+    .\.venv\Scripts\python.exe scripts/doctor_idempotence.py --skip-model-init --ci
 
 Exit 0 means the two reports were identical; exit 1 means they differed. It does
 *not* fail because the doctor reports the install is not ready: that verdict is

@@ -276,7 +276,7 @@ jobs:
 
       - name: Doctor Is Idempotent Across Runs (Windows)
         if: runner.os == 'Windows'
-        run: python scripts/doctor_idempotence.py --skip-model-init --ci
+        run: .\.venv\Scripts\python.exe scripts/doctor_idempotence.py --skip-model-init --ci
 
       # The working tree is not a fresh checkout: it accumulates a venv, a native
       # build, and reference clips that change what the gate says. This runs the

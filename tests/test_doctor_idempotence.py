@@ -265,7 +265,9 @@ def test_workflow_runs_the_idempotence_check_on_every_runner() -> None:
     assert len(idempotence_steps) == 2
     by_os = {step["if"].split("==", 1)[1].strip().strip("'"): step for step in idempotence_steps}
     assert by_os["Linux"]["run"].strip() == "./.venv/bin/python scripts/doctor_idempotence.py --skip-model-init --ci"
-    assert by_os["Windows"]["run"].strip() == "python scripts/doctor_idempotence.py --skip-model-init --ci"
+    assert by_os["Windows"]["run"].strip() == (
+        r".\.venv\Scripts\python.exe scripts/doctor_idempotence.py --skip-model-init --ci"
+    )
 
     # Same mode as the doctor steps the gate already runs, so the check measures
     # the gate as it is actually invoked.
