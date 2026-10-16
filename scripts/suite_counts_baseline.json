@@ -34,6 +34,17 @@
       ],
       "skipped_ids_complete": false
     },
+    "10f3a81afe43e243f995bae1e32d932f3af6ff1e": {
+      "errors": 0,
+      "exit_code": 0,
+      "failed": 0,
+      "passed": 1948,
+      "skipped": 3,
+      "skipped_ids": [
+        "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
+      ],
+      "skipped_ids_complete": false
+    },
     "17a82da2c1cc445040c4aaf5c4bf15cb75846d72": {
       "errors": 0,
       "exit_code": 0,
@@ -270,6 +281,17 @@
       "exit_code": 0,
       "failed": 0,
       "passed": 1922,
+      "skipped": 3,
+      "skipped_ids": [
+        "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
+      ],
+      "skipped_ids_complete": false
+    },
+    "990133875b6341e661dfe48344f569d83a12507c": {
+      "errors": 0,
+      "exit_code": 0,
+      "failed": 0,
+      "passed": 1948,
       "skipped": 3,
       "skipped_ids": [
         "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
