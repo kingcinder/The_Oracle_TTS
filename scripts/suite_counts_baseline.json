@@ -474,6 +474,17 @@
       ],
       "skipped_ids_complete": false
     },
+    "ead55e852706034d5f02aca4cb15cc148f015e9b": {
+      "errors": 0,
+      "exit_code": 0,
+      "failed": 0,
+      "passed": 1953,
+      "skipped": 3,
+      "skipped_ids": [
+        "tests/test_vulkan_backend.py::test_vulkan_backend_smoke_requires_device"
+      ],
+      "skipped_ids_complete": false
+    },
     "ed72f6d6626c6246db64e8e8bfb907fcb95bf4f8": {
       "errors": 0,
       "exit_code": 0,
