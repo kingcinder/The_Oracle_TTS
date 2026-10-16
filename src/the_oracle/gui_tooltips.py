@@ -8,13 +8,18 @@ that already explains itself needs no extra registration.
 Implementation notes
 --------------------
 - A :class:`CtrlHoverHelp` is owned by its *main window*. No event filter is
-  installed on the QApplication. An application-wide Python filter receives
+  installed on the QApplication. On Windows it uses timer polling without
+  native event filters because Qt delivered an invalid event wrapper during
+  window layout on the 2026-10-16 CI runner. On other platforms the filter
+  rides the window and tooltip owners. An application-wide Python filter receives
   every event of every object in
   the process, including objects that are mid-destruction; that is the frame
   the 1.4.0 certifier faulted in on the second window build (2026-10-13).
-  The filter rides the window, plus each widget that can raise a tooltip (see
-  the next bullet), and :meth:`CtrlHoverHelp.release` detaches all of them
-  before the window goes away.
+  The filter rides the window plus each widget that can raise a tooltip on
+  platforms that support the event-filter path; Windows stores and suppresses
+  those native tips while the same timer poller supplies Ctrl+hover help.
+  :meth:`CtrlHoverHelp.release` restores native tips and detaches filters before
+  the window goes away.
 - The ToolTip swallow is per tooltip *owner*, not per window: Qt delivers
   ``QEvent::ToolTip`` to the widget that owns the tooltip and never to its
   ancestors (verified against Qt 6 offscreen — a window-level filter sees

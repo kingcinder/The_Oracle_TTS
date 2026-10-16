@@ -101,6 +101,7 @@ from the_oracle.gui_themes import (  # noqa: E402
     build_stylesheet,
     in_bulk_restyle,
 )
+from the_oracle.platform_support import is_windows  # noqa: E402
 
 #: The event types Qt sends while repolishing. The storm's size is the
 #: propagation term; the exact mix is reported, not asserted (Qt's choice).
@@ -168,6 +169,7 @@ class Measure:
 
     #: The app's OWN Ctrl+hover filter, counted from inside it (see measure()).
     filter_installed: bool = False
+    safe_polling_mode: bool = False
     #: The filter is bound to the window (the 1.4.0 crash contract) and was
     #: installed on no object at application scope while the product bound it.
     filter_window_scoped: bool = False
@@ -283,13 +285,18 @@ def evaluate(measured: Measure) -> list[str]:
             "with the bulk-restyle scope CLOSED (must be 0) -- apply_theme stopped opening "
             "the scope, so the filter pays the full per-event Python round-trip again"
         )
-    if measured.filter_calls_switch < MIN_FILTER_VIEW_EVENTS:
+    if measured.safe_polling_mode:
+        if measured.filter_calls_switch or measured.filter_calls_ungated:
+            failures.append(
+                "ours: Windows polling mode unexpectedly installed a native Qt event filter"
+            )
+    elif measured.filter_calls_switch < MIN_FILTER_VIEW_EVENTS:
         failures.append(
             f"ours: the app's filter was only invoked {measured.filter_calls_switch} times "
             f"during the switch (floor {MIN_FILTER_VIEW_EVENTS}) -- the gate is open when "
             "there is nothing to skip, which would make the assertion above vacuous"
         )
-    if measured.filter_closed_ungated < MIN_FILTER_VIEW_EVENTS:
+    if not measured.safe_polling_mode and measured.filter_closed_ungated < MIN_FILTER_VIEW_EVENTS:
         failures.append(
             f"ours: the ungated path closed the scope for only "
             f"{measured.filter_closed_ungated} of the filter's "
@@ -476,6 +483,9 @@ def measure(
         QApplication.installEventFilter = original_install
     measured.filter_installed = helper is not None
     measured.filter_window_scoped = helper is not None and helper.window is window
+    measured.safe_polling_mode = (
+        is_windows() and helper is not None and helper._sweep_timer.isActive()
+    )
     measured.filter_app_scope_installs = sum(
         1 for obj in app_scope_installs if isinstance(obj, gui_tooltips.CtrlHoverHelp)
     )
@@ -581,13 +591,16 @@ def _report(measured: Measure) -> None:
         f"  ours (the gate): bound to the window: {measured.filter_window_scoped}; "
         f"installs on the QApplication: {measured.filter_app_scope_installs}"
     )
-    print(
-        "  ours (the gate): that filter was invoked "
-        f"{measured.filter_calls_switch} times during a real switch and found the scope "
-        f"open every time ({measured.filter_closed_switch} closed); ungated, the same "
-        f"filter saw the scope closed for {measured.filter_closed_ungated} of its "
-        f"{measured.filter_calls_ungated} events"
-    )
+    if measured.safe_polling_mode:
+        print("  ours (Windows safe mode): timer polling active; no Qt event filters installed")
+    else:
+        print(
+            "  ours (the gate): that filter was invoked "
+            f"{measured.filter_calls_switch} times during a real switch and found the scope "
+            f"open every time ({measured.filter_closed_switch} closed); ungated, the same "
+            f"filter saw the scope closed for {measured.filter_closed_ungated} of its "
+            f"{measured.filter_calls_ungated} events"
+        )
     print(
         f"  redundant switch: {measured.redundant_change_events} events, "
         f"{measured.redundant_restyles} restyle(s)"

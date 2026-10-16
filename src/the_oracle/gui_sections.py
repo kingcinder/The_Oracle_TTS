@@ -26,7 +26,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QTimer, Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QGroupBox, QSlider, QToolButton, QWidget
 
@@ -69,6 +69,9 @@ class QHSectionGroup(QGroupBox):
         self._splitter = None
         self._splitter_index = -1
         self._collapsed = False
+        self._title_update = QTimer(self)
+        self._title_update.setSingleShot(True)
+        self._title_update.timeout.connect(self._elide_title)
         # Lazy content: no factory registered means the caller populated the
         # section eagerly, i.e. content is "built" by definition.
         self._content_factory: Callable[[], None] | None = None
@@ -269,6 +272,9 @@ class QHSectionGroup(QGroupBox):
         if self._size_slider is not None:
             self._size_slider.move(max(4, toggle_x - self._size_slider.width() - 8), 3)
         self._elide_title()
+        # QSplitter may deliver the section resize before its title controls
+        # receive their final geometry, especially on Windows.
+        self._title_update.start(0)
 
     def changeEvent(self, event) -> None:  # noqa: N802 (Qt casing)
         super().changeEvent(event)
@@ -276,6 +282,7 @@ class QHSectionGroup(QGroupBox):
         # resize; re-elide so the title still clears the chrome.
         if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange):
             self._elide_title()
+            self._title_update.start(0)
 
     def _elide_title(self) -> None:
         """Elide the title so it never paints underneath the header chrome.

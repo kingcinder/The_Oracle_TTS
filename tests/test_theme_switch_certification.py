@@ -92,6 +92,17 @@ def test_a_real_measurement_is_accepted(certifier) -> None:
     assert certifier.evaluate(_good(certifier)) == []
 
 
+def test_windows_safe_polling_mode_needs_no_native_filter_events(certifier) -> None:
+    measured = _good(
+        certifier,
+        safe_polling_mode=True,
+        filter_calls_switch=0,
+        filter_calls_ungated=0,
+        filter_closed_ungated=0,
+    )
+    assert certifier.evaluate(measured) == []
+
+
 def test_a_stub_tree_cannot_certify(certifier) -> None:
     failures = certifier.evaluate(_good(certifier, widgets=40))
 

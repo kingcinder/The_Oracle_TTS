@@ -28,6 +28,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QObject
 from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton, QWidget
 
+import the_oracle.gui_tooltips as gui_tooltips
 from the_oracle.gui_tooltips import CtrlHoverHelp, install_ctrl_hover_help
 
 
@@ -105,16 +106,26 @@ def test_release_detaches_everything_it_installed(qt_app):
 
     try:
         helper = install_ctrl_hover_help(window)
-        # Tooltip owners are filtered individually; empty-tooltip widgets are not.
+        # Windows stores and suppresses native tips without installing a Qt
+        # event filter; other platforms filter tooltip owners individually.
         assert button in helper._swept
         assert field in helper._swept
         assert window not in helper._swept
+        if gui_tooltips.is_windows():
+            assert not removed
+            assert button.toolTip() == ""
+            assert field.toolTip() == ""
 
         import unittest.mock as _mock
 
         with _mock.patch.object(QWidget, "removeEventFilter", spy):
             helper.release()
-        assert removed, "release() must detach every filter it installed"
+        if gui_tooltips.is_windows():
+            assert not removed
+            assert button.toolTip() == "native text"
+            assert field.toolTip() == "another native text"
+        else:
+            assert removed, "release() must detach every filter it installed"
         assert helper.window is None
         assert helper._swept == set()
         assert helper._descriptions == {}
@@ -272,9 +283,14 @@ def test_real_main_window_churn_leaves_no_filters_behind(qt_app, app_install_spy
                 for widget in window.findChildren(QWidget)
                 if widget.toolTip()
             ]
-            assert owners, "the real window is expected to carry tooltips"
-            missing = [w for w in owners if w not in helper._swept]
-            assert missing == [], "every tooltip owner must be swallowed"
+            if gui_tooltips.is_windows():
+                assert helper._original_tooltips
+                assert helper._sweep_timer.isActive()
+                assert not installed
+            else:
+                assert owners, "the real window is expected to carry tooltips"
+                missing = [w for w in owners if w not in helper._swept]
+                assert missing == [], "every tooltip owner must be swallowed"
 
             # Exercise the same Ctrl-held hover path on a real registered
             # control. Offscreen Qt cannot provide reliable global cursor or
@@ -298,6 +314,7 @@ def test_real_main_window_churn_leaves_no_filters_behind(qt_app, app_install_spy
             assert helper.window is None
             assert helper._swept == set()
             assert not helper._timer.isActive()
+            assert not helper._sweep_timer.isActive()
             assert installed.get(helper, 0) == removed.get(helper, 0)
             window.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
