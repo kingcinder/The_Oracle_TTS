@@ -687,7 +687,14 @@ class MainWindow(QMainWindow):
     def _build_shared_content(self, section: QHSectionGroup) -> None:
         """The Shared Render Settings form (extracted from the former
         ``_build_project_settings``)."""
-        form = QFormLayout(section)
+        scroll = QScrollArea(section)
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        form = QFormLayout(content)
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(scroll)
+        scroll.setWidget(content)
         self._project_settings_form = form  # kept so Ctrl+hover help can register row labels
         self.variant_combo = QComboBox()
         self.variant_combo.addItems(list(SUPPORTED_VARIANTS))
@@ -910,6 +917,8 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(section)
         layout.setContentsMargins(0, 0, 0, 0)
         self.table = QTableWidget(0, 9)
+        self.table.setAccessibleName("Review plan")
+        self.table.setAccessibleDescription("Editable repaired text and review status for each script line.")
         # Floor for the review table: splitters can shrink it, but never to
         # an unreadable sliver (the settings sections above are tall).
         self.table.setMinimumHeight(140)

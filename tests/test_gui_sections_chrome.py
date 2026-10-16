@@ -190,7 +190,8 @@ def test_paths_collapse_and_splitter_survive_persist_round_trip(
         assert index2 == 0
         assert section2.is_collapsed() is False
         sizes = window2._paths_splitter.sizes()
-        assert abs(sizes[0] - 150) <= 30, f"paths pane not restored: {sizes}"
+        actual_share = sizes[0] / sum(sizes)
+        assert abs(actual_share - 150 / 800) <= 0.04, f"paths pane share not restored: {sizes}"
         # Registry-driven restore covers the new keys too: the Review and
         # Extra Voices entries flow through _apply_workspace_layout.
         assert "table" in window2._section_registry

@@ -137,6 +137,7 @@ class SpeakerGroup(QHSectionGroup):
             value=50,
             suffix="%",
             int_mode=True,
+            accessible_name="Voice Dominance",
             caption=(
                 "0% = the blend target's voice dominates; 100% = this speaker's "
                 "base voice dominates."
@@ -172,14 +173,17 @@ class SpeakerGroup(QHSectionGroup):
         if self.on_process_voice is not None:
             self.pitch_shift = PerceptualSlider(
                 minimum=-12.0, maximum=12.0, value=0.0, suffix=" st",
+                accessible_name="Pitch Shift",
                 caption="Shift the recorded voice while keeping its duration.",
             )
             self.tone_db = PerceptualSlider(
                 minimum=-12.0, maximum=12.0, value=0.0, suffix=" dB",
+                accessible_name="Tone",
                 caption="Adjust the recording's low tone.",
             )
             self.timbre_db = PerceptualSlider(
                 minimum=-12.0, maximum=12.0, value=0.0, suffix=" dB",
+                accessible_name="Timbre",
                 caption="Adjust high-frequency brightness and timbre.",
             )
             self.save_voice_button = QPushButton("Save?")
@@ -203,6 +207,7 @@ class SpeakerGroup(QHSectionGroup):
         # the spin boxes used, so profiles/projects/manifests are unchanged.
         self.cfg_weight = PerceptualSlider(
             minimum=0.0, maximum=1.5, value=0.5,
+            accessible_name="Identity Lock",
             caption=(
                 "How strictly this voice stays glued to its reference. High = "
                 "steadier and closer to the original; low = freer, drifts more."
@@ -219,6 +224,7 @@ class SpeakerGroup(QHSectionGroup):
         )
         self.exaggeration = PerceptualSlider(
             minimum=0.0, maximum=1.5, value=0.5,
+            accessible_name="Emphasis Punch",
             caption=(
                 "How hard emphasis lands. High = bigger swings in pitch and "
                 "stress; low = flat, matter-of-fact delivery."
@@ -233,6 +239,7 @@ class SpeakerGroup(QHSectionGroup):
         )
         self.temperature = PerceptualSlider(
             minimum=0.1, maximum=1.5, value=0.8,
+            accessible_name="Delivery Variety",
             caption=(
                 "How surprising the delivery can be. High = livelier, more "
                 "varied takes; low = steady, predictable, closer to the "
@@ -248,6 +255,7 @@ class SpeakerGroup(QHSectionGroup):
         )
         self.emotion_intensity = PerceptualSlider(
             minimum=0.0, maximum=2.0, value=1.0,
+            accessible_name="Emotion Depth",
             caption=(
                 "How strongly detected emotions color the performance "
                 "(emphasis and pacing only - the voice's character stays "
@@ -265,6 +273,7 @@ class SpeakerGroup(QHSectionGroup):
         )
         self.naturalness = PerceptualSlider(
             minimum=0.0, maximum=1.0, value=0.0,
+            accessible_name="Human Drift",
             caption=(
                 "Loosens sampling for a more natural, less mechanical voice; "
                 "held steady for the whole render so the character stays "
@@ -282,6 +291,7 @@ class SpeakerGroup(QHSectionGroup):
         )
         self.pause_spin = PerceptualSlider(
             minimum=0, maximum=2000, value=180, suffix=" ms", int_mode=True,
+            accessible_name="Breath After This Speaker",
             caption=(
                 "Silence after this speaker's turns, scaled by how each line "
                 "ends - longer after !? and ellipses, shorter when a line "
@@ -297,7 +307,14 @@ class SpeakerGroup(QHSectionGroup):
             "instead of the full pause."
         )
 
-        form = QFormLayout(self)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        form = QFormLayout(content)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(scroll)
+        scroll.setWidget(content)
         self.form = form  # kept so Ctrl+hover help can register row labels
 
         def _section_divider(text: str) -> QLabel:
@@ -607,7 +624,7 @@ class CastManagementDialog(QDialog):
         self._model = CastModel.from_parts(
             main_window.cast_keys(),
             main_window.speaker_names(),
-            {key: self._settings_to_dict(settings) for key, settings in main_window.speaker_settings().items()},
+            {key: self._settings_to_dict(settings) for key, settings in main_window._speaker_settings().items()},
         )
         self._variant = main_window.variant_combo.currentText()
 

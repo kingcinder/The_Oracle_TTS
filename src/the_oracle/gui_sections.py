@@ -256,10 +256,9 @@ class QHSectionGroup(QGroupBox):
     _MIN_SECTION_WIDTH = 260
 
     def _relayout_header(self) -> None:
-        # Reserve top-right space for the toggle (+ slider) so content never
-        # underlaps the header controls.
-        reserved = 30 if self._size_slider is None else 130
-        self.setContentsMargins(8, 22, reserved, 8)
+        # The header controls live above the content area; reserving their
+        # width for every row needlessly narrows forms and sliders.
+        self.setContentsMargins(8, 22, 8, 8)
         self.setMinimumWidth(self._MIN_SECTION_WIDTH)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt casing)

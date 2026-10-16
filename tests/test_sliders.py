@@ -52,3 +52,9 @@ def test_tooltip_forwards_to_inner_slider():
     slider.setToolTip("hello")
     assert slider.toolTip() == "hello"
     assert slider.slider().toolTip() == "hello"
+
+
+def test_accessible_label_and_description_reach_inner_slider():
+    slider = _make(accessible_name="Voice pitch", caption="Raise or lower the voice.")
+    assert slider.slider().accessibleName() == "Voice pitch"
+    assert slider.slider().accessibleDescription() == "Raise or lower the voice."

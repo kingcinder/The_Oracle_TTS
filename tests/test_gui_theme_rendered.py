@@ -58,6 +58,7 @@ def test_mainwindow_paints_readable_text_per_theme(
     assert applied == theme_key
     window, _paths = _build_window(monkeypatch, tmp_path)
     try:
+        window.error_panel.setPlainText("Status message sample")
         window.show()
         qt_app.processEvents()
         grab = window.grab()
@@ -85,7 +86,7 @@ def test_mainwindow_paints_readable_text_per_theme(
             rect = widget.geometry()
             # Map into window coordinates (geometry of direct children is
             # already window-relative for these two; nested widgets walk up).
-            pos = widget.mapTo(window, rect.topLeft())
+            pos = widget.mapTo(window, widget.rect().topLeft())
             low, high = _region_luminance_range(image, pos.x(), pos.y(), rect.width(), rect.height())
             spread = (high + 0.05) / (low + 0.05)
             assert spread >= bar, (

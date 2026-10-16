@@ -37,6 +37,7 @@ class PerceptualSlider(QWidget):
         suffix: str = "",
         caption: str = "",
         int_mode: bool = False,
+        accessible_name: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -46,6 +47,8 @@ class PerceptualSlider(QWidget):
         self._int_mode = int_mode
 
         self._slider = QSlider(Qt.Orientation.Horizontal, self)
+        self._slider.setAccessibleName(accessible_name)
+        self._slider.setAccessibleDescription(caption)
         self._slider.setRange(0, _TICKS)
         self._slider.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._slider.valueChanged.connect(self._sync_readout)

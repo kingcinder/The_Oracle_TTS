@@ -2287,6 +2287,49 @@ def test_reference_picker_single_dialog_on_custom_pick(qt_app, monkeypatch: pyte
         window.close()
 
 
+def test_manage_cast_opens_dialog_from_real_main_window(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The main-stage Manage Cast action must snapshot the real window state."""
+    from the_oracle import gui_cast
+
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    opened = []
+
+    def capture_exec(dialog) -> int:
+        opened.append(dialog)
+        return 0
+
+    monkeypatch.setattr(gui_cast.CastManagementDialog, "exec", capture_exec)
+    try:
+        window.open_cast_manager()
+        assert len(opened) == 1
+        assert opened[0]._model.keys() == ["A", "B"]
+    finally:
+        window.close()
+
+
+def test_main_settings_and_speaker_panels_scroll_at_minimum_window_size(
+    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from PySide6.QtWidgets import QScrollArea
+
+    window, _paths = _build_window(monkeypatch, tmp_path)
+    try:
+        window.resize(1160, 760)
+        window.show()
+        qt_app.processEvents()
+        for key in ("shared", "speaker_a", "speaker_b"):
+            section = window._section_registry[key][0]
+            scroll = section.findChild(QScrollArea)
+            assert scroll is not None, f"{key} controls need a scrollable viewport"
+            assert scroll.verticalScrollBar().maximum() > 0, (
+                f"{key} controls are not reachable below the minimum-size viewport"
+            )
+    finally:
+        window.close()
+
+
 def test_reference_picker_still_fires_when_custom_already_current(qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The activated-only connection keeps the first-click behavior."""
     window, _paths = _build_window(monkeypatch, tmp_path)

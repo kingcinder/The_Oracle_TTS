@@ -166,14 +166,17 @@ class RecordingStudioDialog(QDialog):
         self.remember_output_default = False
         self.pitch_shift = PerceptualSlider(
             minimum=-12.0, maximum=12.0, value=0.0, suffix=" st",
+            accessible_name="Pitch Shift",
             caption="Raise or lower the recorded voice while keeping its duration.",
         )
         self.tone_db = PerceptualSlider(
             minimum=-12.0, maximum=12.0, value=0.0, suffix=" dB",
+            accessible_name="Tone",
             caption="Adjust the low tone of the recording.",
         )
         self.timbre_db = PerceptualSlider(
             minimum=-12.0, maximum=12.0, value=0.0, suffix=" dB",
+            accessible_name="Timbre",
             caption="Adjust the high-frequency brightness and timbre.",
         )
         self.name_edit.textChanged.connect(self._refresh_target)
