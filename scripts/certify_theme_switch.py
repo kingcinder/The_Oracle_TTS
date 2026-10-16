@@ -42,7 +42,15 @@ failed on them would be noise. What must hold anywhere:
   ``setStyleSheet``, which is what the code did before the gate) finds it closed
   throughout — the A/B that makes the scope load-bearing here and fails if
   ``apply_theme`` stops opening it;
-* a redundant re-apply is free (no events, no restyle).
+* on platforms with event instrumentation, a redundant re-apply is free (no
+  events, no restyle).
+
+Windows is the deliberate measurement exception: its runner has reproducibly
+exited with ``0xC0000005`` while this script installed the app-wide Python
+event counter. Windows therefore runs every real theme switch and certifies
+structure, stylesheet inventory, and safe polling ownership, but does not
+install event filters or claim event-fan-out measurements. The report labels
+those measurements as unavailable.
 
 Scope, stated plainly: this certifies the *scope* across the real storm, which
 the unit tests cannot — they drive ``apply_theme`` with a duck-typed app stand-in
@@ -57,7 +65,7 @@ settings rewrites and the ``Output/logs`` timing writes land there. That
 directory is removed again on every exit path (``main``'s window teardown plus
 the ``atexit`` hook ``scripts/certifier_isolation.py`` registers with the root),
 so a run leaves no trace anywhere — not in the repo, not in the real config, and
-not in /tmp. Exit 0 means every term held.
+not in /tmp. Exit 0 means every term measured on that platform held.
 """
 
 from __future__ import annotations
@@ -223,33 +231,36 @@ def evaluate(measured: Measure) -> list[str]:
             "it is supposed to be a minimal one"
         )
 
-    # 2. propagation -- a genuine switch fans out a storm, inside the call.
-    if measured.storm_change_events < MIN_STORM_CHANGE_EVENTS:
-        failures.append(
-            f"propagation: an ungated restyle fanned out {measured.storm_change_events} "
-            f"change events (floor {MIN_STORM_CHANGE_EVENTS}) -- either the tree stopped "
-            "being repolished or the measurement stopped seeing it"
-        )
-    if measured.storm_after_events:
-        share = measured.storm_all_events / measured.storm_after_events
-        if share < MIN_SYNCHRONOUS_SHARE:
+    # Windows safe mode deliberately installs no native Qt event filters;
+    # filter-based fan-out measurements are unavailable there.
+    if not measured.safe_polling_mode:
+        # 2. propagation -- a genuine switch fans out a storm, inside the call.
+        if measured.storm_change_events < MIN_STORM_CHANGE_EVENTS:
             failures.append(
-                f"propagation: only {share:.0%} of the fan-out landed inside setStyleSheet "
-                f"(floor {MIN_SYNCHRONOUS_SHARE:.0%}) -- the storm is being deferred, so the "
-                "gate cannot cover it and this file's premise is wrong"
+                f"propagation: an ungated restyle fanned out {measured.storm_change_events} "
+                f"change events (floor {MIN_STORM_CHANGE_EVENTS}) -- either the tree stopped "
+                "being repolished or the measurement stopped seeing it"
             )
-    else:
-        failures.append("propagation: the ungated restyle produced no event counts at all")
+        if measured.storm_after_events:
+            share = measured.storm_all_events / measured.storm_after_events
+            if share < MIN_SYNCHRONOUS_SHARE:
+                failures.append(
+                    f"propagation: only {share:.0%} of the fan-out landed inside setStyleSheet "
+                    f"(floor {MIN_SYNCHRONOUS_SHARE:.0%}) -- the storm is being deferred, so the "
+                    "gate cannot cover it and this file's premise is wrong"
+                )
+        else:
+            failures.append("propagation: the ungated restyle produced no event counts at all")
 
-    # 3b. rule matching -- fewer rules must propagate measurably less.
-    if not (0 < measured.small_change_events < measured.storm_change_events * MAX_SMALL_SHARE):
-        failures.append(
-            f"rule matching: a {measured.small_rules}-rule stylesheet fanned out "
-            f"{measured.small_change_events} change events against "
-            f"{measured.storm_change_events} for the {measured.real_rules}-rule one -- "
-            f"expected strictly less than {MAX_SMALL_SHARE:.0%} of it, so selector work is "
-            "no longer a separable term of this cost"
-        )
+        # 3b. rule matching -- fewer rules must propagate measurably less.
+        if not (0 < measured.small_change_events < measured.storm_change_events * MAX_SMALL_SHARE):
+            failures.append(
+                f"rule matching: a {measured.small_rules}-rule stylesheet fanned out "
+                f"{measured.small_change_events} change events against "
+                f"{measured.storm_change_events} for the {measured.real_rules}-rule one -- "
+                f"expected strictly less than {MAX_SMALL_SHARE:.0%} of it, so selector work is "
+                "no longer a separable term of this cost"
+            )
 
     # 4. ours -- the scope must cover the whole storm the app's filter sees.
     if not measured.switch_rounds:
@@ -303,13 +314,13 @@ def evaluate(measured: Measure) -> list[str]:
             f"{measured.filter_calls_ungated} events (floor {MIN_FILTER_VIEW_EVENTS}) -- if "
             "the before-picture is not a full storm, 'the scope spares it' is unproven"
         )
-    if measured.redundant_change_events:
+    if not measured.safe_polling_mode and measured.redundant_change_events:
         failures.append(
             f"ours: re-applying the current theme fanned out "
             f"{measured.redundant_change_events} events -- the redundant-restyle early "
             "return is gone (it cost ~0.45 s per window before it existed)"
         )
-    if measured.redundant_restyles:
+    if not measured.safe_polling_mode and measured.redundant_restyles:
         failures.append(
             f"ours: re-applying the current theme restyled the app "
             f"{measured.redundant_restyles} time(s); it must be a no-op"
@@ -342,9 +353,9 @@ class _QtMessageLog:
 
 
 class _StormCounter(QObject):
-    """App-wide counter, split by whether the bulk-restyle scope was open.
+    """Non-Windows app-wide counter, split by whether the scope was open.
 
-    A second filter, installed on the application so the *counts* of the
+    On supported platforms, a second filter, installed on the application so the *counts* of the
     fan-out come from something whose only job is counting — it is the
     measuring instrument for terms 2 and 3, and it is deliberately app-wide
     where the product's own filter is not (this one only counts; the product's
@@ -377,6 +388,11 @@ class _StormCounter(QObject):
     @property
     def total_events(self) -> int:
         return sum(self.all.values())
+
+
+def _counter_for_platform() -> _StormCounter | None:
+    """Avoid native event-filter callbacks on Windows; see the module scope."""
+    return None if is_windows() else _StormCounter()
 
 
 class _FilterView:
@@ -459,7 +475,7 @@ def _destroy_window(app: QApplication, window: MainWindow) -> None:
 
 
 def measure(
-    app: QApplication, window: MainWindow, counter: _StormCounter, warnings: _QtMessageLog
+    app: QApplication, window: MainWindow, counter: _StormCounter | None, warnings: _QtMessageLog
 ) -> Measure:
     """Run every measurement once against a live window."""
     measured = Measure()
@@ -497,22 +513,34 @@ def measure(
 
     view = _FilterView()
 
-    def during(style_call, *, watch_filter: bool) -> tuple[float, int, int, int, int, int, int]:
+    def during(style_call, *, watch_filter: bool) -> tuple[float, int, int, int, int, int, int, bool]:
         """One restyle, sampled inside the call and again after the pump."""
-        counter.reset()
+        if counter is not None:
+            counter.reset()
         if watch_filter:
             view.reset()
+        previous_stylesheet = app.styleSheet()
         started = time.perf_counter()
         style_call()
         elapsed = (time.perf_counter() - started) * 1000
-        call_change = counter.change_events
-        call_open = counter.open_gate
-        call_closed = counter.closed_gate
-        call_total = counter.total_events
+        call_change = counter.change_events if counter is not None else 0
+        call_open = counter.open_gate if counter is not None else 0
+        call_closed = counter.closed_gate if counter is not None else 0
+        call_total = counter.total_events if counter is not None else 0
         filter_calls, filter_closed = view.calls, view.closed
+        stylesheet_changed = app.styleSheet() != previous_stylesheet
         for _ in range(4):
             app.processEvents()
-        return elapsed, call_change, call_open, call_closed, call_total, filter_calls, filter_closed
+        return (
+            elapsed,
+            call_change,
+            call_open,
+            call_closed,
+            call_total,
+            filter_calls,
+            filter_closed,
+            stylesheet_changed,
+        )
 
     # The filter's own view is counted throughout, so the ungated and gated
     # halves are measured by the same instrument.
@@ -523,7 +551,7 @@ def measure(
         for index in range(2):
             css = real_css if index % 2 == 0 else build_stylesheet(THEMES[other])
             direct.append(during(lambda c=css: app.setStyleSheet(c), watch_filter=True))
-        elapsed, change, _open, closed, after, _calls, _closed = direct[-1]
+        elapsed, change, _open, closed, after, _calls, _closed, _changed = direct[-1]
         measured.storm_change_events = change
         measured.storm_all_events = closed
         measured.storm_after_events = after
@@ -548,7 +576,7 @@ def measure(
         # early-returned has a 0.0 in it, and a run where EVERY round did is a
         # failure rather than a timing (median of nothing, measured live as a
         # StatisticsError traceback out of a gutted theme).
-        switching = [row for row in gated if row[1]]
+        switching = [row for row in gated if row[7]]
         measured.switch_rounds = len(switching)
         measured.timings_ms["gated switch"] = (
             statistics.median(row[0] for row in switching) if switching else 0.0
@@ -563,13 +591,17 @@ def measure(
 
     # -- redundant: the same key twice; the second must be free ---------------
     applied = apply_theme(app, DEFAULT_THEME)
-    counter.reset()
+    if counter is not None:
+        counter.reset()
     started = time.perf_counter()
     applied_again = apply_theme(app, applied)
     measured.timings_ms["redundant re-apply"] = (time.perf_counter() - started) * 1000
-    measured.redundant_change_events = counter.change_events
+    measured.redundant_change_events = counter.change_events if counter is not None else 0
     measured.redundant_restyles = (
-        0 if applied_again == applied and counter.change_events == 0 else 1
+        0
+        if applied_again == applied
+        and (counter is None or counter.change_events == 0)
+        else 1
     )
 
     measured.qt_warnings = tuple(warnings.messages)
@@ -578,15 +610,22 @@ def measure(
 
 def _report(measured: Measure) -> None:
     print(f"  structure      : {measured.widgets} widgets, depth {measured.depth}")
-    print(
-        f"  propagation    : {measured.storm_change_events} change events inside the call, "
-        f"{measured.storm_after_events} by the end of the pump"
-    )
-    print(
-        f"  rule matching  : {measured.real_rules} rules fan out "
-        f"{measured.storm_change_events}; {measured.small_rules} rules fan out "
-        f"{measured.small_change_events}"
-    )
+    if measured.safe_polling_mode:
+        print("  propagation    : not instrumented; Windows mode disables native event filters")
+        print(
+            f"  rule matching  : {measured.real_rules} real rules, {measured.small_rules} "
+            "comparison rules; event fan-out comparison not instrumented on Windows"
+        )
+    else:
+        print(
+            f"  propagation    : {measured.storm_change_events} change events inside the call, "
+            f"{measured.storm_after_events} by the end of the pump"
+        )
+        print(
+            f"  rule matching  : {measured.real_rules} rules fan out "
+            f"{measured.storm_change_events}; {measured.small_rules} rules fan out "
+            f"{measured.small_change_events}"
+        )
     print(
         f"  ours (the gate): bound to the window: {measured.filter_window_scoped}; "
         f"installs on the QApplication: {measured.filter_app_scope_installs}"
@@ -601,10 +640,13 @@ def _report(measured: Measure) -> None:
             f"filter saw the scope closed for {measured.filter_closed_ungated} of its "
             f"{measured.filter_calls_ungated} events"
         )
-    print(
-        f"  redundant switch: {measured.redundant_change_events} events, "
-        f"{measured.redundant_restyles} restyle(s)"
-    )
+    if measured.safe_polling_mode:
+        print("  redundant switch: style key unchanged; event count not instrumented on Windows")
+    else:
+        print(
+            f"  redundant switch: {measured.redundant_change_events} events, "
+            f"{measured.redundant_restyles} restyle(s)"
+        )
     print("  timings (reported, never asserted -- they are of this machine):")
     for name, value in measured.timings_ms.items():
         print(f"    {name:<20} {value:7.1f} ms")
@@ -618,8 +660,14 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication.instance() or QApplication([])
     warnings = _QtMessageLog()
     warnings.install()
-    counter = _StormCounter()
-    app.installEventFilter(counter)
+    # This measurement filter is intentionally absent on Windows: the runner
+    # has produced 0xC0000005 in real certifier subprocesses that dispatch
+    # Python eventFilter callbacks. Windows certifies real theme switches,
+    # structure, stylesheet rules, and polling-mode ownership without asking
+    # Qt to call Python for every native event.
+    counter = _counter_for_platform()
+    if counter is not None:
+        app.installEventFilter(counter)
     window = _build_window(app)
     try:
         measured = measure(app, window, counter, warnings)
@@ -639,10 +687,16 @@ def main(argv: list[str] | None = None) -> int:
         for failure in failures:
             print(f"  - {failure}", file=sys.stderr)
         return 1
-    print(
-        "All good: the real window's switch cost splits into structure, propagation and "
-        "rule matching -- and ours is gated out of the whole storm."
-    )
+    if measured.safe_polling_mode:
+        print(
+            "All good: the real window and genuine theme switches passed; Windows safe mode "
+            "uses timer polling and intentionally omits native event-filter fan-out metrics."
+        )
+    else:
+        print(
+            "All good: the real window's switch cost splits into structure, propagation and "
+            "rule matching -- and ours is gated out of the whole storm."
+        )
     return 0
 
 

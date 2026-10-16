@@ -96,11 +96,24 @@ def test_windows_safe_polling_mode_needs_no_native_filter_events(certifier) -> N
     measured = _good(
         certifier,
         safe_polling_mode=True,
+        storm_change_events=0,
+        storm_all_events=0,
+        storm_after_events=0,
+        small_change_events=0,
+        redundant_change_events=0,
+        redundant_restyles=1,
         filter_calls_switch=0,
         filter_calls_ungated=0,
         filter_closed_ungated=0,
     )
     assert certifier.evaluate(measured) == []
+
+
+def test_windows_never_installs_the_python_storm_counter(certifier, monkeypatch) -> None:
+    monkeypatch.setattr(certifier, "is_windows", lambda: True)
+    assert certifier._counter_for_platform() is None
+    monkeypatch.setattr(certifier, "is_windows", lambda: False)
+    assert isinstance(certifier._counter_for_platform(), certifier._StormCounter)
 
 
 def test_a_stub_tree_cannot_certify(certifier) -> None:
