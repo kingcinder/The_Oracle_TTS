@@ -27,7 +27,7 @@ LOG_FULL="/tmp/gui_crash_gdb_full.log"
 : > "$LOG_FULL"
 
 export PYTHONFAULTHANDLER=1
-cd "$REPO"
+cd "$REPO" || exit 1
 
 GDB_CMDS=/tmp/gui_crash_gdb_cmds
 if [ "$#" -eq 0 ]; then

@@ -28,7 +28,7 @@ register_user_assets() {
   # App-grid launchers (idempotent). The install flow later rewrites the
   # uninstall entry with absolute paths once $PREFIX exists.
   local dt
-  for dt in "$HERE"/${APP_SLUG}-*.desktop; do
+  for dt in "$HERE/${APP_SLUG}-"*.desktop; do
     [ -e "$dt" ] || continue
     cp -f "$dt" "$app_dir/"
     chmod +x "$app_dir/$(basename "$dt")"
