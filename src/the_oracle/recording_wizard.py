@@ -1,11 +1,10 @@
 """First-open Recording Studio setup and speaking guide.
 
-This dialog is intentionally separate from the recorder itself.  It lets a
-new user configure the microphone, source script, Seashell folder, and naming
-policy before recording, then walks through the techniques that make a useful
-voice-reference clip.  The wizard edits the live RecordingStudioDialog only
-when the user continues/finishes, so abandoning it never leaves half-applied
-settings behind.
+This dialog is intentionally separate from the recorder itself. It lets a
+new user configure the microphone, source script, and naming policy before
+recording, then walks through techniques for a useful voice-reference clip.
+The wizard edits the live RecordingStudioDialog only when the user continues
+or finishes, so abandoning it never leaves half-applied settings behind.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QLabel,
     QLineEdit,
@@ -68,8 +66,8 @@ STAGES: tuple[RecordingGuideStage, ...] = (
     ),
     RecordingGuideStage(
         "folder",
-        "3. Choose the Seashell folder",
-        "Seashells/ is the default recording destination and is reserved for voice-reference recordings, not finished dialogue renders. The folder can be changed to another directory; the selected folder is remembered when you tick the checkbox below. The name preview is kept inside this folder and the next free Seashell_No_N.wav is generated so normal takes never overwrite an earlier take.",
+        "3. Confirm the Seashell folder",
+        "Recording Studio takes are stored in the program's dedicated Seashells folder so the main stage can find them as voice references. Save As in the main stage lets you export a processed copy to another location.",
         "outdir_combo",
     ),
     RecordingGuideStage(
@@ -141,23 +139,17 @@ class RecordingStudioSetupWizard(QDialog):
         self.rate_picker = QComboBox()
         self.script_picker = QComboBox()
         self.folder_edit = QLineEdit()
-        self.folder_browse = QPushButton("Browse…")
-        self.folder_browse.clicked.connect(self._browse_folder)
-        folder_row = QWidget()
-        folder_layout = QVBoxLayout(folder_row)
-        folder_layout.setContentsMargins(0, 0, 0, 0)
-        folder_line = QFormLayout()
-        folder_line.setContentsMargins(0, 0, 0, 0)
-        folder_line.addRow(self.folder_edit, self.folder_browse)
-        folder_layout.addLayout(folder_line)
+        self.folder_edit.setReadOnly(True)
         self.name_edit = QLineEdit()
         self.remember_input = QCheckBox("Remember this input script for future sessions")
-        self.remember_output = QCheckBox("Remember this recording folder for future sessions")
+        self.remember_output = QCheckBox("Always save recordings in the program Seashells folder")
+        self.remember_output.setChecked(True)
+        self.remember_output.setEnabled(False)
         self.generic_warning = QCheckBox("Show the caution before generic Seashell names")
         form.addRow("Microphone", self.mic_picker)
         form.addRow("Sample rate", self.rate_picker)
         form.addRow("Input script", self.script_picker)
-        form.addRow("Seashell folder", folder_row)
+        form.addRow("Seashell folder", self.folder_edit)
         form.addRow("Next file name", self.name_edit)
         form.addRow("", self.remember_input)
         form.addRow("", self.remember_output)
@@ -211,7 +203,7 @@ class RecordingStudioSetupWizard(QDialog):
         self.name_edit.setText(studio.name_edit.text())
         self.generic_warning.setChecked(bool(getattr(studio, "generic_name_warning_enabled", True)))
         self.remember_input.setChecked(bool(getattr(studio, "remember_input_default", True)))
-        self.remember_output.setChecked(bool(getattr(studio, "remember_output_default", True)))
+        self.remember_output.setChecked(True)
         self.mic_picker.currentIndexChanged.connect(self._wizard_mic_changed)
 
     def _wizard_mic_changed(self, index: int) -> None:
@@ -232,13 +224,6 @@ class RecordingStudioSetupWizard(QDialog):
         for rate in rates:
             self.rate_picker.addItem(f"{rate} Hz", rate)
         self.rate_picker.setEnabled(True)
-
-    def _browse_folder(self) -> None:
-        start = self.folder_edit.text().strip() or str(self.studio.voice_dir)
-        chosen = QFileDialog.getExistingDirectory(self, "Choose Seashell folder", start)
-        if chosen:
-            self.folder_edit.setText(chosen)
-            self.name_edit.setText(recorder.next_seashell_name(chosen) + ".wav")
 
     def _summary_text(self) -> str:
         devices = getattr(self.studio, "_devices", [])
@@ -304,10 +289,10 @@ class RecordingStudioSetupWizard(QDialog):
             "microphone_index": int(mic) if isinstance(mic, int) else None,
             "samplerate": int(rate) if isinstance(rate, int) else None,
             "input_file": str(script),
-            "output_dir": self.folder_edit.text().strip(),
+            "output_dir": str(self.studio.voice_dir),
             "output_filename": self.name_edit.text().strip(),
             "remember_input_default": self.remember_input.isChecked(),
-            "remember_output_default": self.remember_output.isChecked(),
+            "remember_output_default": False,
             "generic_name_warning": self.generic_warning.isChecked(),
         }
 

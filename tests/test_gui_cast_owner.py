@@ -629,7 +629,7 @@ def test_the_moved_bodies_use_the_collaborators_they_are_handed() -> None:
     built: list[str] = []
 
     class FakeGroup:
-        def __init__(self, key, voice_dir, on_save_blend=None) -> None:
+        def __init__(self, key, voice_dir, on_save_blend=None, on_process_voice=None) -> None:
             built.append(key)
 
         def setTitle(self, text: str) -> None:  # noqa: N802 - Qt casing

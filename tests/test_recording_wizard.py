@@ -82,7 +82,7 @@ def test_wizard_continue_applies_live_preferences_and_reaches_speaking_step(tmp_
     wizard = RecordingStudioSetupWizard(dialog, on_apply=apply)
     try:
         wizard.script_picker.setCurrentIndex(wizard.script_picker.findData(str(script)))
-        wizard.folder_edit.setText(str(voice / "takes"))
+        assert wizard.folder_edit.isReadOnly()
         wizard.name_edit.setText("Cody_warm.wav")
         wizard.remember_input.setChecked(True)
         wizard.remember_output.setChecked(True)
@@ -91,7 +91,8 @@ def test_wizard_continue_applies_live_preferences_and_reaches_speaking_step(tmp_
         wizard._continue()
         wizard._continue()
         assert applied
-        assert dialog.outdir_combo.currentText() == str(voice / "takes")
+        assert applied[-1]["output_dir"] == str(voice)
+        assert dialog.outdir_combo.currentText() == str(voice)
         assert dialog.name_edit.text() == "Cody_warm.wav"
         while wizard._stages[wizard._stage_index].key != "technique":
             wizard._continue()

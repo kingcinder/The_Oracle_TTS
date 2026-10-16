@@ -89,6 +89,7 @@ from the_oracle.gui_utils import (
 # gui_recording's globals, so an app_gui-level patch of it would be a silent
 # no-op (the _CastRow precedent; pinned in tests/test_gui_recording_owner.py).
 from the_oracle.gui_recording import RecordingStudioDialog
+from the_oracle.audio.voice_effects import process_voice_file
 from the_oracle.device_support import CUDADeviceInfo, cuda_devices, cuda_reason
 from the_oracle.gui_themes import DEFAULT_THEME, THEMES, apply_theme
 # build_menu (gui_menu) and register_ctrl_help_descriptions (gui_tooltips) are
@@ -472,12 +473,14 @@ class MainWindow(QMainWindow):
             "A",
             self.paths.voice_dir,
             on_save_blend=self._save_blend_as_voice,
+            on_process_voice=self._process_selected_voice,
             lazy=self._section_starts_collapsed("speaker_a"),
         )
         self.speaker_b = SpeakerGroup(
             "B",
             self.paths.voice_dir,
             on_save_blend=self._save_blend_as_voice,
+            on_process_voice=self._process_selected_voice,
             lazy=self._section_starts_collapsed("speaker_b"),
         )
         # Extra character voices (C..X) for audiobook casts. They are created
@@ -2228,6 +2231,8 @@ class MainWindow(QMainWindow):
         # a second dialog never steals or drops the first one's recording.
         self._recording_studios.discard(dialog)
         self._persist_recording_dialog_state(dialog)
+        if dialog._last_saved_path is not None:
+            remember_recent_reference_path(str(dialog._last_saved_path))
         self._refresh_reference_pickers()
         if dialog._last_saved_path is not None:
             self.error_panel.append(
@@ -2276,6 +2281,69 @@ class MainWindow(QMainWindow):
             return
         self._refresh_reference_pickers()
         self.error_panel.append(f"Saved blend voice '{name}' — select it under Saved Blends in any speaker panel.")
+
+    def _process_selected_voice(self, group: SpeakerGroup, save_as: bool) -> None:
+        """Apply the recorded-audio controls to the selected Seashell."""
+        source = Path(group.reference_path.text().strip()).expanduser()
+        if not source.is_file():
+            QMessageBox.information(
+                self,
+                "Process Recording",
+                "Choose an existing voice recording before applying audio changes.",
+            )
+            return
+        destination = source
+        if save_as:
+            suggested = self.paths.voice_dir / f"{source.stem}_processed.wav"
+            chosen, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Processed Recording As",
+                str(suggested),
+                "WAV audio (*.wav);;FLAC audio (*.flac)",
+            )
+            if not chosen:
+                return
+            destination = Path(chosen).expanduser()
+            if not destination.suffix:
+                destination = destination.with_suffix(".wav")
+            if destination.exists():
+                answer = QMessageBox.warning(
+                    self,
+                    "Replace Existing Recording?",
+                    f"{destination.name} already exists. Replace it?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+        else:
+            answer = QMessageBox.warning(
+                self,
+                "Replace Original Recording?",
+                f"This permanently replaces {source.name} with the processed audio. "
+                "Use Save As to keep the original recording unchanged.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            process_voice_file(
+                str(source),
+                str(destination),
+                pitch_semitones=group.pitch_shift.value(),
+                tone_db=group.tone_db.value(),
+                timbre_db=group.timbre_db.value(),
+            )
+        except Exception as exc:
+            self.error_panel.append(f"Could not process recording: {exc}")
+            QMessageBox.critical(self, "Process Recording", str(exc))
+            return
+        if save_as:
+            group.reference_path.setText(str(destination))
+            remember_recent_reference_path(str(destination))
+        self._refresh_reference_pickers()
+        self.error_panel.append(f"Saved processed recording: {destination}")
 
     # --------------------
     # Prewarm management

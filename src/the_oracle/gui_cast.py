@@ -76,12 +76,14 @@ class SpeakerGroup(QHSectionGroup):
         speaker: str,
         custom_reference_dir: Path,
         on_save_blend: Callable[["SpeakerGroup"], None] | None = None,
+        on_process_voice: Callable[["SpeakerGroup", bool], None] | None = None,
         *,
         lazy: bool = False,
     ) -> None:
         super().__init__(f"Speaker {speaker}")
         self.custom_reference_dir = custom_reference_dir
         self.on_save_blend = on_save_blend
+        self.on_process_voice = on_process_voice
         self._available_reference_paths: set[str] = set()
         if lazy:
             # Restored-collapsed speaker sections register the whole panel as
@@ -166,6 +168,30 @@ class SpeakerGroup(QHSectionGroup):
             "voice picker, just like the bundled generic voices."
         )
         self.save_blend_button.clicked.connect(self._save_blend_clicked)
+
+        if self.on_process_voice is not None:
+            self.pitch_shift = PerceptualSlider(
+                minimum=-12.0, maximum=12.0, value=0.0, suffix=" st",
+                caption="Shift the recorded voice while keeping its duration.",
+            )
+            self.tone_db = PerceptualSlider(
+                minimum=-12.0, maximum=12.0, value=0.0, suffix=" dB",
+                caption="Adjust the recording's low tone.",
+            )
+            self.timbre_db = PerceptualSlider(
+                minimum=-12.0, maximum=12.0, value=0.0, suffix=" dB",
+                caption="Adjust high-frequency brightness and timbre.",
+            )
+            self.save_voice_button = QPushButton("Save?")
+            self.save_voice_as_button = QPushButton("Save As?")
+            self.save_voice_button.setToolTip(
+                "Apply these audio effects to the selected recording and replace it after confirmation."
+            )
+            self.save_voice_as_button.setToolTip(
+                "Save a processed copy of the selected recording as a new WAV file."
+            )
+            self.save_voice_button.clicked.connect(lambda: self._process_voice_clicked(False))
+            self.save_voice_as_button.clicked.connect(lambda: self._process_voice_clicked(True))
 
         self.language_combo = QComboBox()
         # Perceptual voice-modulation sliders: the scale and caption say what
@@ -300,6 +326,16 @@ class SpeakerGroup(QHSectionGroup):
         form.addRow("Hybrid Second Voice", blend_row)
         form.addRow("Voice Dominance", self.blend_weight_spin)
         form.addRow("Hybridize Mode", self.blend_mode_combo)
+        if self.on_process_voice is not None:
+            form.addRow(_section_divider("PROCESS THIS RECORDING"))
+            form.addRow("Pitch Shift", self.pitch_shift)
+            form.addRow("Tone", self.tone_db)
+            form.addRow("Timbre", self.timbre_db)
+            save_row = QHBoxLayout()
+            save_row.addWidget(self.save_voice_button)
+            save_row.addWidget(self.save_voice_as_button)
+            save_row.addStretch(1)
+            form.addRow("Save processed voice", save_row)
 
     def _pick_audio(self) -> None:
         current_reference = Path(self.reference_path.text()).expanduser()
@@ -440,6 +476,10 @@ class SpeakerGroup(QHSectionGroup):
     def _save_blend_clicked(self) -> None:
         if self.on_save_blend is not None:
             self.on_save_blend(self)
+
+    def _process_voice_clicked(self, save_as: bool) -> None:
+        if self.on_process_voice is not None:
+            self.on_process_voice(self, save_as)
 
 
 def _speaker_settings_from_group(
@@ -867,7 +907,12 @@ def _sync_extra_speaker_groups(
     extras = sorted(speaker for speaker in speakers if speaker not in ("A", "B"))
     for key in extras:
         if key not in main_window.extra_speaker_groups:
-            group = speaker_group_cls(key, main_window.paths.voice_dir, on_save_blend=main_window._save_blend_as_voice)
+            group = speaker_group_cls(
+                key,
+                main_window.paths.voice_dir,
+                on_save_blend=main_window._save_blend_as_voice,
+                on_process_voice=main_window._process_selected_voice,
+            )
             main_window.extra_speaker_groups[key] = group
             main_window.extra_speaker_layout.addWidget(group)
             main_window._update_speaker_group_title(key, group)

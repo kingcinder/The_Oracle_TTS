@@ -44,7 +44,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -60,8 +59,17 @@ from PySide6.QtWidgets import (
 )
 
 from the_oracle.audio import recorder
+from the_oracle.audio.voice_effects import process_voice_audio
 from the_oracle.gui_utils import recording_target_path, sanitize_recording_filename
+from the_oracle.gui_widgets import PerceptualSlider
 
+
+_BUILTIN_SCRIPT = (
+    "What is real? Read this example clearly and at a natural pace.\n\n"
+    "The quick brown fox jumps over the lazy dog. Bright stars shimmer above "
+    "the quiet valley. Please speak each word naturally, with a little pause "
+    "between sentences."
+)
 class RecordStudioWorker(QThread):
     """Records microphone input until stopped, emitting live level updates.
 
@@ -150,14 +158,24 @@ class RecordingStudioDialog(QDialog):
         self.outdir_combo = QComboBox()
         self.outdir_combo.setEditable(True)
         self.outdir_combo.addItem(str(self.voice_dir), str(self.voice_dir))
-        self.outdir_combo.currentTextChanged.connect(self._on_output_folder_changed)
-        self.outdir_browse = QPushButton("Browse...")
-        self.outdir_browse.clicked.connect(self._browse_outdir)
+        self.outdir_combo.setEnabled(False)
         self.name_edit = QLineEdit()
         self.name_edit.editingFinished.connect(lambda: setattr(self, "_name_edited", True))
         self.generic_name_warning_enabled = True
         self.remember_input_default = True
-        self.remember_output_default = True
+        self.remember_output_default = False
+        self.pitch_shift = PerceptualSlider(
+            minimum=-12.0, maximum=12.0, value=0.0, suffix=" st",
+            caption="Raise or lower the recorded voice while keeping its duration.",
+        )
+        self.tone_db = PerceptualSlider(
+            minimum=-12.0, maximum=12.0, value=0.0, suffix=" dB",
+            caption="Adjust the low tone of the recording.",
+        )
+        self.timbre_db = PerceptualSlider(
+            minimum=-12.0, maximum=12.0, value=0.0, suffix=" dB",
+            caption="Adjust the high-frequency brightness and timbre.",
+        )
         self.name_edit.textChanged.connect(self._refresh_target)
         self.level_bar = QProgressBar()
         self.level_bar.setRange(0, 100)
@@ -203,14 +221,6 @@ class RecordingStudioDialog(QDialog):
         self._refresh_devices()
         self._refresh_target()
 
-    def _on_output_folder_changed(self, folder: str) -> None:
-        """Keep the suggested name aligned with a newly chosen folder."""
-        if not self._name_edited:
-            self.name_edit.blockSignals(True)
-            self.name_edit.setText(f"{recorder.next_seashell_name(folder or self.voice_dir)}.wav")
-            self.name_edit.blockSignals(False)
-        self._refresh_target()
-
     def apply_setup_preferences(self, payload: dict) -> None:
         """Apply Recording Studio wizard settings to this live dialog."""
         mic = payload.get("microphone_index")
@@ -228,16 +238,16 @@ class RecordingStudioDialog(QDialog):
             index = self.script_combo.findData(script)
             if index >= 0:
                 self.script_combo.setCurrentIndex(index)
-        folder = str(payload.get("output_dir") or "").strip()
-        if folder:
-            self.outdir_combo.setCurrentText(folder)
+        # Studio takes belong to the application's reference library. Ignore
+        # stale wizard preferences that used to redirect recordings elsewhere.
+        self.outdir_combo.setCurrentText(str(self.voice_dir))
         name = str(payload.get("output_filename") or "").strip()
         if name:
             self.name_edit.setText(name)
             self._name_edited = not name.lower().startswith("seashell_no_")
         self.generic_name_warning_enabled = bool(payload.get("generic_name_warning", True))
         self.remember_input_default = bool(payload.get("remember_input_default", True))
-        self.remember_output_default = bool(payload.get("remember_output_default", True))
+        self.remember_output_default = False
         self._refresh_target()
 
     # -- layout -------------------------------------------------------------
@@ -262,9 +272,11 @@ class RecordingStudioDialog(QDialog):
         form.addRow("Sample rate", self.rate_combo)
         outdir_row = QHBoxLayout()
         outdir_row.addWidget(self.outdir_combo, 1)
-        outdir_row.addWidget(self.outdir_browse)
         form.addRow("Save to", outdir_row)
         form.addRow("File name", self.name_edit)
+        form.addRow("Pitch", self.pitch_shift)
+        form.addRow("Tone", self.tone_db)
+        form.addRow("Timbre", self.timbre_db)
 
         control_row = QHBoxLayout()
         control_row.addWidget(self.record_button)
@@ -303,13 +315,21 @@ class RecordingStudioDialog(QDialog):
         default_index = self.script_combo.findData(str(default_script))
         if default_index >= 0:
             self.script_combo.setCurrentIndex(default_index)
+        else:
+            self.script_combo.addItem("<boilerplate example>", "__builtin_example__")
+            default_index = self.script_combo.count() - 1
+            self.script_combo.setCurrentIndex(default_index)
         self.script_combo.blockSignals(False)
-        if default_index >= 0:
-            self._load_script(default_index)
+        self._load_script(default_index)
 
     def _load_script(self, _index: int) -> None:
         path = self.script_combo.currentData()
         if not path:
+            self.prompt_area.clear()
+            return
+        if path == "__builtin_example__":
+            self.prompt_area.setPlainText(_BUILTIN_SCRIPT)
+            self.status.setText("Loaded the built-in example into the prompt.")
             return
         try:
             text = Path(path).read_text(encoding="utf-8")
@@ -363,14 +383,8 @@ class RecordingStudioDialog(QDialog):
             self.rate_combo.addItem(f"{rate} Hz", rate)
         self.rate_combo.setEnabled(True)
 
-    def _browse_outdir(self) -> None:
-        start = self.voice_dir if self.voice_dir.is_dir() else self.repo_root
-        chosen = QFileDialog.getExistingDirectory(self, "Save recordings to", str(start))
-        if chosen:
-            self.outdir_combo.setCurrentText(chosen)
-
     def _refresh_target(self) -> None:
-        folder = self.outdir_combo.currentText().strip() or str(self.voice_dir)
+        folder = str(self.voice_dir)
         if not self.name_edit.text().strip():
             # Empty name: fall back to the next free auto-name.
             self._name_edited = False
@@ -404,8 +418,7 @@ class RecordingStudioDialog(QDialog):
         return f"{recorder.next_seashell_name(self._out_folder())}.wav"
 
     def _out_folder(self) -> Path:
-        folder = self.outdir_combo.currentText().strip()
-        return Path(folder) if folder else self.voice_dir
+        return self.voice_dir
 
     def _toggle_record(self) -> None:
         # isRunning() guards the brief window where the terminal captured/
@@ -511,7 +524,18 @@ class RecordingStudioDialog(QDialog):
             self.status.setText("No audio was captured - check the microphone and try again.")
             return
         try:
-            saved = recorder.save_recording_wav(self._target_path, audio, int(self.rate_combo.currentData()))
+            adjusted = process_voice_audio(
+                audio,
+                int(self.rate_combo.currentData()),
+                pitch_semitones=self.pitch_shift.value(),
+                tone_db=self.tone_db.value(),
+                timbre_db=self.timbre_db.value(),
+            )
+            saved = recorder.save_recording_wav(
+                self.voice_dir / self._target_path.name,
+                adjusted,
+                int(self.rate_combo.currentData()),
+            )
         except Exception as exc:
             self.status.setText(f"Could not save the recording: {exc}")
             return
@@ -655,5 +679,3 @@ class RecordingStudioDialog(QDialog):
             self._worker = None
         self._stop_playback()
         super().closeEvent(event)
-
-

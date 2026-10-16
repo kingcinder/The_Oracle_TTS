@@ -48,6 +48,26 @@ def test_teleprompter_lists_only_text_scripts(tmp_path, monkeypatch, qt_app):
     assert not any(name.endswith(".wav") for name in names)
 
 
+def test_teleprompter_switch_replaces_prompt_and_empty_selection_clears_it(
+    tmp_path, monkeypatch, qt_app
+):
+    dialog, _ = _dialog(tmp_path, monkeypatch)
+    scene_index = dialog.script_combo.findText("scene one.md")
+    dialog.script_combo.setCurrentIndex(scene_index)
+    assert dialog.prompt_area.toPlainText() == "# Scene\n"
+
+    dialog.script_combo.setCurrentIndex(0)
+    assert dialog.prompt_area.toPlainText() == ""
+
+
+def test_boilerplate_prompt_is_shown_when_bundled_example_is_missing(
+    tmp_path, monkeypatch, qt_app
+):
+    repo, voice, inputs = _make_dirs(tmp_path)
+    dialog = RecordingStudioDialog(repo, voice, inputs)
+    assert dialog.prompt_area.toPlainText().strip()
+
+
 def test_default_filename_auto_increments_and_never_overwrites(tmp_path, monkeypatch, qt_app):
     dialog, voice = _dialog(tmp_path, monkeypatch)
     assert dialog.name_edit.text() == "Seashell_No_1.wav"
@@ -60,6 +80,15 @@ def test_default_filename_auto_increments_and_never_overwrites(tmp_path, monkeyp
     (voice2 / "Seashell_No_3.wav").write_bytes(b"x")
     second = RecordingStudioDialog(tmp_path / "repo", voice2, inputs)
     assert second.name_edit.text() == "Seashell_No_4.wav"
+
+
+def test_recording_destination_cannot_be_redirected_by_stale_setup_preferences(
+    tmp_path, monkeypatch, qt_app
+):
+    dialog, voice = _dialog(tmp_path, monkeypatch)
+    stale_folder = tmp_path / "old-recordings"
+    dialog.apply_setup_preferences({"output_dir": str(stale_folder)})
+    assert dialog._out_folder() == voice
 
 
 def test_no_microphone_disables_record(tmp_path, monkeypatch, qt_app):
@@ -183,6 +212,27 @@ def test_auto_audition_can_be_disabled(tmp_path, monkeypatch, qt_app):
     dialog._on_captured(np.full(4800, 0.2, dtype=np.float32))
     assert (voice / "Seashell_No_1.wav").exists()
     assert _FakeMediaPlayer.last is None  # nothing auto-played
+
+
+def test_recording_applies_selected_voice_effects_before_writing(tmp_path, monkeypatch, qt_app):
+    import numpy as np
+    import the_oracle.gui_recording as gui_recording
+
+    observed = {}
+
+    def process(audio, rate, **effects):
+        observed.update(effects)
+        return audio
+
+    monkeypatch.setattr(gui_recording, "process_voice_audio", process)
+    dialog, voice = _enabled_dialog(tmp_path, monkeypatch)
+    dialog.pitch_shift.setValue(3.0)
+    dialog.tone_db.setValue(-2.0)
+    dialog.timbre_db.setValue(4.0)
+    dialog._on_captured(np.full(4800, 0.2, dtype=np.float32))
+
+    assert observed == {"pitch_semitones": 3.0, "tone_db": -2.0, "timbre_db": 4.0}
+    assert (voice / "Seashell_No_1.wav").is_file()
 
 
 class _TakeSignal:
@@ -562,8 +612,12 @@ def test_open_recording_studio_launches_the_guide_from_the_child_timer(
 
 
 def test_main_window_reports_saved_seashell_and_refreshes(monkeypatch, tmp_path, qt_app):
+    import the_oracle.app_gui as app_gui
+
     window, paths = _build_main_window(monkeypatch, tmp_path)
     refresh_calls = []
+    remembered = []
+    monkeypatch.setattr(app_gui, "remember_recent_reference_path", remembered.append)
     window._refresh_reference_pickers = lambda: refresh_calls.append(1)
 
     window.open_recording_studio()
@@ -573,4 +627,5 @@ def test_main_window_reports_saved_seashell_and_refreshes(monkeypatch, tmp_path,
     dialog._last_saved_path = recorded
     dialog.close()
     assert refresh_calls
+    assert remembered == [str(recorded)]
     assert "Recorded new Seashell: Seashell_No_1.wav" in window.error_panel.toPlainText()
