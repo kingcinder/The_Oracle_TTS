@@ -539,6 +539,9 @@ class _StubWindow:
         self.refreshed = 0
         self.titles: dict[str, str] = {}
 
+    def _process_selected_voice(self, group, save_as: bool) -> None:
+        pass
+
     def _all_speaker_groups(self) -> dict[str, object]:
         from the_oracle.gui_cast import _all_speaker_groups
 
@@ -627,10 +630,12 @@ def test_the_moved_bodies_use_the_collaborators_they_are_handed() -> None:
     window = _StubWindow()
 
     built: list[str] = []
+    process_callbacks = []
 
     class FakeGroup:
         def __init__(self, key, voice_dir, on_save_blend=None, on_process_voice=None) -> None:
             built.append(key)
+            process_callbacks.append(on_process_voice)
 
         def setTitle(self, text: str) -> None:  # noqa: N802 - Qt casing
             self.title = text
@@ -643,6 +648,7 @@ def test_the_moved_bodies_use_the_collaborators_they_are_handed() -> None:
         "the moved _sync_extra_speaker_groups ignored the class it was handed "
         f"(constructed {built})"
     )
+    assert process_callbacks == [window._process_selected_voice]
 
     seen: list[tuple] = []
 
