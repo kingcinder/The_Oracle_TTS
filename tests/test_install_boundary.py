@@ -16,6 +16,7 @@ recorded command touches a path outside scratch.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -107,6 +108,7 @@ def test_online_install_verifies_once_after_registering_the_launchers(
     assert "--skip-model-init" not in boundary.commands[-1].args
 
 
+@pytest.mark.skipif(os.name == "nt", reason="asserts POSIX launcher and desktop-entry layout")
 def test_online_install_writes_exactly_these_files(manage_install, install_boundary) -> None:
     boundary = install_boundary(manage_install)
 
@@ -247,6 +249,7 @@ def test_fresh_repo_creates_the_venv_before_installing_anything(manage_install, 
     assert boundary.doctor_commands == [boundary.commands[-1]]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="asserts POSIX-only desktop integration tools")
 def test_missing_desktop_tools_are_skipped_silently(manage_install, install_boundary) -> None:
     """No update-desktop-database / gio on the box: fewer commands, same files."""
     without = install_boundary(manage_install, tools=())

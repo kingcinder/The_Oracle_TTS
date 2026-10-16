@@ -669,19 +669,23 @@ def test_check_input_json_omits_subtitle_classification_for_plain_text(
     assert "subtitle_encoding" not in doc
 
 
-def test_check_input_json_marks_unreadable_subtitle_file(tmp_path: Path, capsys) -> None:
+def test_check_input_json_marks_unreadable_subtitle_file(tmp_path: Path, capsys, monkeypatch) -> None:
     """A subtitle file the checker cannot read is reported as unreadable, not
     silently dropped from the classification."""
     import json
 
     target = tmp_path / "gone.srt"
     target.write_bytes(b"1\n00:00:01,000 --> 00:00:02,000\nhi\n")
-    target.chmod(0o000)
-    try:
-        handle_check_input(_check_args(str(target), "--json"))
-        doc = json.loads(capsys.readouterr().out)
-    finally:
-        target.chmod(0o644)
+    original_read_bytes = Path.read_bytes
+
+    def denied_read(candidate: Path):
+        if candidate == target:
+            raise PermissionError("simulated unreadable subtitle")
+        return original_read_bytes(candidate)
+
+    monkeypatch.setattr(Path, "read_bytes", denied_read)
+    handle_check_input(_check_args(str(target), "--json"))
+    doc = json.loads(capsys.readouterr().out)
     assert doc["subtitle_encoding"] == "unreadable"
 
 

@@ -23,7 +23,7 @@ def test_installed_root_migrates_repo_content_without_deleting_it(tmp_path: Path
     (repo / "Input").mkdir(parents=True)
     (repo / "Input" / "story.txt").write_text("A: hello\n", encoding="utf-8")
     monkeypatch.setattr(app_paths, "__file__", str(repo / "src" / "the_oracle" / "app_paths.py"))
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(app_paths, "app_data_dir", lambda: tmp_path / "data" / "the_oracle")
 
     paths = app_paths.ensure_repo_default_paths(repo)
 

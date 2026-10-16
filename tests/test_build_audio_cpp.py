@@ -89,6 +89,9 @@ def _run_script(
     env = {
         **os.environ,
         "AUDIOCPP_DIR": str(audio_cpp),
+        # Keep this fixture hermetic when the Vulkan CI job redirects real
+        # model downloads to its runner cache.
+        "AUDIOCPP_MODELS_ROOT": str(audio_cpp / "models"),
         "PATCH_AUDIOCPP_GGML_SH": str(patch),
         **(extra_env or {}),
     }

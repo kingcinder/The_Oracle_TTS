@@ -322,16 +322,15 @@ class MainWindow(QMainWindow):
         self._mark_startup("mainwindow_init_begin")
         self._build_ui()
         self._build_menu()
-        # Bind a window-owned Ctrl+hover helper after the UI exists so its
-        # tooltip-owner sweep sees the built tree. The original crash landed
-        # in the former app-wide filter, but its root cause remains unconfirmed.
-        self._ctrl_help = install_ctrl_hover_help(self)
-        self._register_ctrl_help_descriptions()
         self.delete_confirm_enabled = True
         # only_built: sections the saved workspace starts collapsed stay
         # deferred through the default apply too (they replay their slice on
         # first build); a fresh window builds everything, as before.
         self._apply_gui_settings_payload(self._default_gui_settings_payload(), only_built=True)
+        # Attach after startup styling and state restoration so Qt does not
+        # deliver construction-time event wrappers through the hover filter.
+        self._ctrl_help = install_ctrl_hover_help(self)
+        self._register_ctrl_help_descriptions()
         self._mark_startup("mainwindow_init_end")
         self._write_startup_timeline()
         # Arm the deferred startup callbacks from single-shot children of the

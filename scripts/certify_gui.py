@@ -336,7 +336,7 @@ def _find_header(section) -> str | None:
     for full in TITLES.values():
         if title and (title in full or full in title):
             return full
-        visible_prefix = title.removesuffix("\u2026").rstrip()
+        visible_prefix = title.removesuffix("\u2026").removesuffix("...").removesuffix("\ufffd").rstrip()
         if len(visible_prefix) >= 5 and full.startswith(visible_prefix):
             return full
     return None

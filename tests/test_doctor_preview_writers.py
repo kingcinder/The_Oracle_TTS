@@ -23,6 +23,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 from tests.test_doctor_input_subtitles import (
     _full_report,
     _load_doctor,
@@ -94,17 +96,21 @@ def test_five_digit_index_is_still_the_gated_writer(tmp_path: Path) -> None:
     assert status["foreign"] == []
 
 
-def test_unreadable_previews_dir_fails_the_check(tmp_path: Path) -> None:
+def test_unreadable_previews_dir_fails_the_check(tmp_path: Path, monkeypatch) -> None:
     doctor = _load_doctor()
     previews = tmp_path / "proj" / "previews"
     previews.mkdir(parents=True)
     (previews / "preview_A_0000.wav").write_bytes(b"")
     # Make the directory unreadable AFTER planting the file.
-    previews.chmod(0o000)
-    try:
-        status = doctor._preview_writers_status(tmp_path)
-    finally:
-        previews.chmod(0o755)
+    original_iterdir = Path.iterdir
+
+    def denied_iterdir(candidate: Path):
+        if candidate == previews:
+            raise PermissionError("simulated unreadable previews directory")
+        return original_iterdir(candidate)
+
+    monkeypatch.setattr(Path, "iterdir", denied_iterdir)
+    status = doctor._preview_writers_status(tmp_path)
     assert status["ok"] is False
     assert status["unreadable"], status
     assert "previews" in status["error"]

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+
+import pytest
 
 from the_oracle.tts_engines import vulkan_backend
 
@@ -43,6 +46,7 @@ def test_vulkan_backend_status_reports_missing_pieces(monkeypatch, tmp_path: Pat
     assert status["caveat"] == ""
 
 
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX executable stub and Linux Vulkan device output")
 def test_vulkan_backend_status_ready_with_rdna1_caveat(monkeypatch, tmp_path: Path) -> None:
     doctor = _load_doctor()
     binary = tmp_path / "audiocpp_cli"
@@ -73,6 +77,7 @@ def test_vulkan_backend_status_ready_with_rdna1_caveat(monkeypatch, tmp_path: Pa
     assert "VK_ERROR_DEVICE_LOST" in status["caveat"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX executable stub and Linux Vulkan device output")
 def test_vulkan_backend_status_flags_missing_vendored_patch(monkeypatch, tmp_path: Path) -> None:
     doctor = _load_doctor()
     binary = tmp_path / "audiocpp_cli"
@@ -483,6 +488,7 @@ def test_human_report_lists_device_indexes(monkeypatch, capsys) -> None:
     assert "ORACLE_AUDIOCPP_DEVICE" in captured
 
 
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX executable stub and Linux Vulkan device output")
 def test_vulkan_backend_status_ready_via_auto_detected_model(monkeypatch, tmp_path: Path) -> None:
     """A repo-local model with no ORACLE_AUDIOCPP_MODEL counts as ready --
     the exact case this machine hit (binary built, model downloaded, env

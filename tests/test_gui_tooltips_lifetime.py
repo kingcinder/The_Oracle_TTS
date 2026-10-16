@@ -197,6 +197,41 @@ def test_event_filter_ignores_a_deleted_qevent_wrapper(qt_app):
         helper.release()
 
 
+def test_event_filter_ignores_a_deleted_receiver_wrapper(qt_app):
+    """A stale receiver can accompany an event while its Python proxy lives."""
+    import shiboken6
+
+    helper = CtrlHoverHelp(qt_app)
+    receiver = QWidget()
+    event = QEvent(QEvent.Type.User)
+    shiboken6.delete(receiver)
+    try:
+        assert not shiboken6.isValid(receiver)
+        assert helper.eventFilter(receiver, event) is False
+    finally:
+        helper.release()
+
+
+def test_windows_tooltips_use_safe_polling_without_qevent_filters(qt_app, monkeypatch):
+    """Windows uses the cursor poller and suppresses native hover tips."""
+    import the_oracle.gui_tooltips as gui_tooltips
+
+    monkeypatch.setattr(gui_tooltips, "is_windows", lambda: True)
+    window = QWidget()
+    button = QPushButton("Help", window)
+    button.setToolTip("A useful description")
+    helper = CtrlHoverHelp(qt_app)
+    try:
+        helper.attach(window)
+        assert helper._sweep_timer.isActive()
+        assert button.toolTip() == ""
+        assert helper.description_for(button) == "A useful description"
+    finally:
+        helper.release()
+        assert button.toolTip() == "A useful description"
+        window.close()
+
+
 def test_real_main_window_churn_leaves_no_filters_behind(qt_app, app_install_spy, monkeypatch, tmp_path):
     """Fifty real build/destroy cycles with Ctrl-hover: no filter survives.
 

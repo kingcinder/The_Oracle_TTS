@@ -9,6 +9,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGING_DIR = REPO_ROOT / "packaging"
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="packaging assets are POSIX shell entrypoints")
 
 
 @pytest.mark.parametrize("name", ["_launcher.sh", "install.sh", "uninstall.sh"])

@@ -58,6 +58,8 @@ from PySide6.QtCore import QChildEvent, QElapsedTimer, QEvent, QObject, QPoint, 
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QApplication, QFormLayout, QMenu, QMenuBar, QToolTip, QWidget
 
+from the_oracle.platform_support import is_windows
+
 from the_oracle.gui_themes import in_bulk_restyle
 
 _POLL_MS = 90
@@ -98,6 +100,9 @@ class CtrlHoverHelp(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(_POLL_MS)
         self._timer.timeout.connect(self._poll)
+        self._sweep_timer = QTimer(self)
+        self._sweep_timer.setInterval(1000)
+        self._sweep_timer.timeout.connect(self._maybe_resweep)
         self._app = QApplication.instance()
         assert self._app is not None
         # The window the filter rides. Nothing is installed at construction;
@@ -106,6 +111,7 @@ class CtrlHoverHelp(QObject):
         self._window: QWidget | None = None
         #: Widgets that own a tooltip text we are swallowing ToolTip on.
         self._swept: set[QWidget] = set()
+        self._original_tooltips: dict[QWidget, str] = {}
         self._sweep_clock = QElapsedTimer()
 
     # -- installation ------------------------------------------------------
@@ -123,7 +129,14 @@ class CtrlHoverHelp(QObject):
         if self.parent() is not window:
             self.setParent(window)
         self._window = window
-        window.installEventFilter(self)
+        if not is_windows():
+            window.installEventFilter(self)
+        else:
+            # Native Windows QEvent wrappers can be invalidated during Qt
+            # layout churn before PySide calls eventFilter. Use the existing
+            # cursor poller and a bounded tooltip sweep there, with no native
+            # event-filter callbacks in the path.
+            self._sweep_timer.start()
         # PySide emits `destroyed` with no argument (the C++ signature's
         # default), so the window is bound explicitly rather than taken from
         # the signal.
@@ -142,11 +155,24 @@ class CtrlHoverHelp(QObject):
         if not isinstance(root, QWidget):
             return
         for widget in (root, *root.findChildren(QWidget)):
-            if widget is self._window or widget in self._swept:
+            if widget is self._window:
+                continue
+            if widget in self._swept:
+                if is_windows() and widget.toolTip():
+                    tip = widget.toolTip()
+                    self._original_tooltips.setdefault(widget, tip)
+                    self._descriptions.setdefault(widget, tip)
+                    widget.setToolTip("")
                 continue
             if not widget.toolTip():
                 continue
-            widget.installEventFilter(self)
+            if is_windows():
+                tip = widget.toolTip()
+                self._original_tooltips.setdefault(widget, tip)
+                self._descriptions.setdefault(widget, tip)
+                widget.setToolTip("")
+            else:
+                widget.installEventFilter(self)
             self._swept.add(widget)
             widget.destroyed.connect(lambda *_args, _w=widget: self._swept.discard(_w))
 
@@ -178,13 +204,22 @@ class CtrlHoverHelp(QObject):
         for widget in (window, *self._swept):
             if widget is None:
                 continue
+            if not is_windows():
+                try:
+                    widget.removeEventFilter(self)
+                except RuntimeError:
+                    # The C++ widget is already gone; the filter went with it.
+                    pass
+        for widget, text in self._original_tooltips.items():
             try:
-                widget.removeEventFilter(self)
+                if _shiboken_is_valid(widget):
+                    widget.setToolTip(text)
             except RuntimeError:
-                # The C++ widget is already gone; the filter went with it.
                 pass
         self._swept.clear()
+        self._original_tooltips.clear()
         self._sweep_clock.invalidate()
+        self._sweep_timer.stop()
         self._timer.stop()
         self._hide()
         self._last_widget = None
@@ -281,7 +316,9 @@ class CtrlHoverHelp(QObject):
         # During native Qt teardown, Windows/PySide can dispatch a Python
         # wrapper whose QEvent was already deleted. Calling event.type() on
         # that stale wrapper can access-violate before Python can catch it.
-        if not _shiboken_is_valid(event):
+        if not _shiboken_is_valid(event) or (
+            isinstance(obj, QObject) and not _shiboken_is_valid(obj)
+        ):
             return False
         etype = event.type()
         if etype in (QEvent.Type.WindowDeactivate, QEvent.Type.ApplicationDeactivate):

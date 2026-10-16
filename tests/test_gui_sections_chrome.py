@@ -151,7 +151,7 @@ def test_section_title_elides_before_header_chrome_at_floor_width(
             "long title was not elided at the section floor — it paints "
             "under the header chrome"
         )
-        assert section.title().endswith("…")
+        assert section.title().endswith("...")
         # Widening restores the full text.
         window._sections_splitter.setSizes([460, 360, 360])
         qt_app.processEvents()

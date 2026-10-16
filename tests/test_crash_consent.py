@@ -24,14 +24,18 @@ def test_missing_file_means_opted_out(tmp_path: Path) -> None:
     assert consent.read_consent(tmp_path) is False
 
 
-def test_unreadable_file_means_opted_out(tmp_path: Path) -> None:
+def test_unreadable_file_means_opted_out(tmp_path: Path, monkeypatch) -> None:
     path = consent.consent_path(tmp_path)
     path.write_text('{"crash_reports_enabled": true}', encoding="utf-8")
-    path.chmod(0o000)
-    try:
-        assert consent.read_consent(tmp_path) is False
-    finally:
-        path.chmod(0o600)
+    original_read_text = Path.read_text
+
+    def denied_read(candidate: Path, *args, **kwargs):
+        if candidate == path:
+            raise PermissionError("simulated unreadable consent file")
+        return original_read_text(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied_read)
+    assert consent.read_consent(tmp_path) is False
 
 
 def test_malformed_json_means_opted_out(tmp_path: Path) -> None:

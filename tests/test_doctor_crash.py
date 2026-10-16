@@ -87,20 +87,23 @@ def test_native_dump_is_surfaced(tmp_path: Path) -> None:
     assert status["native_dump_present"] is True
 
 
-def test_unwritable_directory_fails_with_local_remedy(tmp_path: Path) -> None:
+def test_unwritable_directory_fails_with_local_remedy(tmp_path: Path, monkeypatch) -> None:
     from the_oracle import crash
 
     crash.write_consent(tmp_path, True)
     directory = crash.crash_dir(tmp_path)
     directory.mkdir()
-    directory.chmod(0o500)
-    try:
-        status = _status(tmp_path)
-        assert status["ok"] is False
-        assert "not writable" in status["detail"]
-        assert "go online" not in status["detail"].lower()
-    finally:
-        directory.chmod(0o700)
+    doctor = _load_doctor()
+    original_access = doctor.os.access
+    monkeypatch.setattr(
+        doctor.os,
+        "access",
+        lambda path, mode: False if Path(path) == directory else original_access(path, mode),
+    )
+    status = doctor._crash_reports_status(tmp_path)
+    assert status["ok"] is False
+    assert "not writable" in status["detail"]
+    assert "go online" not in status["detail"].lower()
 
 
 def test_check_is_read_only_and_idempotent(tmp_path: Path) -> None:

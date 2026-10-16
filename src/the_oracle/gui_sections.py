@@ -303,7 +303,17 @@ class QHSectionGroup(QGroupBox):
         if fm.horizontalAdvance(self._full_title) <= available:
             elided = self._full_title
         else:
-            elided = fm.elidedText(self._full_title, Qt.ElideRight, available)
+            suffix = "..."
+            low, high = 0, len(self._full_title)
+            elided = suffix if fm.horizontalAdvance(suffix) <= available else ""
+            while low <= high and elided:
+                middle = (low + high) // 2
+                candidate = self._full_title[:middle].rstrip() + suffix
+                if fm.horizontalAdvance(candidate) <= available:
+                    elided = candidate
+                    low = middle + 1
+                else:
+                    high = middle - 1
         if self.title() != elided:
             self.setTitle(elided)
 
