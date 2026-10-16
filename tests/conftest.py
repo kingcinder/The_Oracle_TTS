@@ -170,9 +170,10 @@ def _tests_tree_function(obj: object) -> bool:
     return resolved.parent == _TESTS_DIR or _TESTS_DIR in resolved.parents
 
 
-def widget_builds_reachable_from(func, extra_names=()) -> tuple[str, str] | None:
+def widget_builds_reachable_from(func, extra_names=(), extra_functions=()) -> tuple[str, str] | None:
     """``(marker, origin-qualname)`` when ``func`` itself — or a tests/-tree
-    helper it calls, or a fixture it requests via ``extra_names`` —
+    helper it calls, or a fixture it requests via ``extra_names`` or
+    ``extra_functions`` —
     constructs a Qt widget; else None.
 
     Breadth/depth bounded (depth 2, capped branch) so a pathological module
@@ -187,6 +188,7 @@ def widget_builds_reachable_from(func, extra_names=()) -> tuple[str, str] | None
         obj = namespace.get(name)
         if obj is not None:
             frontier.append((name, obj))
+    frontier.extend(extra_functions)
     seen: set[object] = set()
     depth = 0
     while frontier and depth <= _MAX_HELPER_DEPTH:
@@ -273,8 +275,21 @@ def _qt_standalone_app_guard(request):
     if target is None:
         yield
         return
+    fixture_names = [name for name in request.fixturenames if name not in _QT_APP_FIXTURES]
+    fixture_functions = []
+    fixture_info = getattr(request.node, "_fixtureinfo", None)
+    definitions_by_name = getattr(fixture_info, "name2fixturedefs", {}) or {}
+    for name in fixture_names:
+        definitions = definitions_by_name.get(name) or ()
+        fixture = definitions[-1] if definitions else None
+        function = getattr(fixture, "func", None)
+        if function is not None:
+            fixture_functions.append((name, function))
+    resolved_fixture_names = {name for name, _function in fixture_functions}
     hit = widget_builds_reachable_from(
-        target, [name for name in request.fixturenames if name not in _QT_APP_FIXTURES]
+        target,
+        [name for name in fixture_names if name not in resolved_fixture_names],
+        fixture_functions,
     )
     if hit is not None:
         marker, origin = hit

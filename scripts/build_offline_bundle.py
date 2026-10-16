@@ -127,6 +127,11 @@ def download_wheels(wheels_dir: Path, *, platform: str, python_version: str, pyt
     run([sys.executable, "-m", "pip", "download", "--dest", str(wheels_dir),
          "--index-url", torch_index, *plat_args, *manage_install.TORCH_PACKAGES])
 
+    # Build the pinned Perth source revision into a wheel now so offline
+    # installs never need a VCS checkout or build backend network access.
+    run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(wheels_dir),
+         manage_install.PERTH_GIT_PACKAGE])
+
     pypi_reqs = [
         *project_requirements(),
         *manage_install.CHATTERBOX_ENGINE_PACKAGES,

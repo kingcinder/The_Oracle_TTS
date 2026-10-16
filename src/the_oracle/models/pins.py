@@ -32,7 +32,7 @@ HELPER_MODEL_PATTERNS: dict[str, list[str]] = {
     PUNCTUATION_REPO: ["*.json", "*.model", "model.safetensors"],
 }
 
-#: Chatterbox engine file sets, matching the loaders in chatterbox-tts 0.1.6.
+#: Chatterbox engine file sets, matching the loaders in chatterbox-tts 0.1.7.
 CHATTERBOX_STANDARD_PATTERNS = [
     "ve.safetensors",
     "t3_cfg.safetensors",

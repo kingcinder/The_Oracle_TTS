@@ -331,23 +331,32 @@ def test_bundle_launchers_invoke_offline_install(bundle_builder, tmp_path: Path)
     bat = (tmp_path / "install.bat").read_text(encoding="utf-8")
     assert "--offline-bundle" in sh
     assert "--offline-bundle" in bat
+
     assert "repo.tar.gz" in sh and "repo.tar.gz" in bat
-    # %~dp0 always ends with a backslash. Left on, `--offline-bundle
-    # "%BUNDLE_DIR%"` expands to `...\bundle\"`, whose trailing backslash-quote
-    # PowerShell's argument parser reads as an escaped quote, mangling the
-    # path. Pin the strip plus a separator at the child-path use site.
     assert ':~-1%' in bat and ':~0,-1%' in bat
     assert '--offline-bundle "%BUNDLE_DIR%"' in bat
     assert 'tar -xzf "%BUNDLE_DIR%\\repo.tar.gz"' in bat
 
+def test_offline_wheel_builder_packs_the_pinned_perth_git_commit(bundle_builder, tmp_path, monkeypatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(bundle_builder, "run", lambda args: calls.append(list(args)))
 
-# --- the manager's own launch path must honour the offline marker --------------
-# The generated launchers export HF_HUB_OFFLINE=1 when the marker exists, but
-# `manage_install run` (i.e. ./run_oracle_tts.sh) executes the venv entrypoint
-# directly and used to skip that check — so a documented launch path bypassed the
-# offline guarantee and model loaders could reach for the network.
+    bundle_builder.download_wheels(
+        tmp_path / "wheels",
+        platform="linux",
+        python_version="3.12",
+        pytorch="cpu",
+    )
 
-
+    assert len(calls) == 3
+    perth_wheel = calls[1]
+    assert perth_wheel[1:3] == ["-m", "pip"]
+    assert "wheel" in perth_wheel
+    assert bundle_builder.manage_install.PERTH_GIT_PACKAGE in perth_wheel
+    pypi_download = calls[2]
+    assert bundle_builder.manage_install.PERTH_GIT_PACKAGE not in pypi_download
+    assert bundle_builder.manage_install.PERTH_OFFLINE_PACKAGE not in pypi_download
+    assert "PyYAML>=6.0" in pypi_download
 def _make_fake_run_capture():
     captured: dict = {}
 

@@ -37,20 +37,28 @@ CUDA_WHEEL_PYTHON = "CUDA 12.4"
 # builder (scripts/build_offline_bundle.py) imports these so the wheel set it
 # downloads can never drift from what the installer installs.
 TORCH_PACKAGES = ("torch==2.6.0", "torchaudio==2.6.0", "torchvision==0.21.0")
-BOOTSTRAP_PACKAGES = ("pip", "setuptools<81", "wheel", "packaging>=24.0")
+BOOTSTRAP_PACKAGES = ("pip", "setuptools>=83.0.0", "wheel", "packaging>=24.0")
+PERTH_GIT_PACKAGE = (
+    "resemble-perth @ git+https://github.com/resemble-ai/Perth.git@"
+    "ff1c8ac55a976971245cdd53c18d6131ca00d993"
+)
+PERTH_OFFLINE_PACKAGE = "resemble-perth==1.1.0"
 CHATTERBOX_ENGINE_PACKAGES = (
     "librosa==0.11.0",
     "s3tokenizer",
-    "diffusers==0.29.0",
-    "resemble-perth==1.0.1",
+    "diffusers==0.38.0",
+    "gradio==6.16.0",
+    "starlette==1.3.1",
+    "huggingface-hub==1.33.0",
     "conformer==0.3.2",
-    "safetensors==0.5.3",
+    "safetensors==0.8.0",
+    "PyYAML>=6.0",
     "spacy-pkuseg",
     "pykakasi==2.3.0",
     "pyloudnorm",
     "omegaconf",
 )
-CHATTERBOX_TTS_PACKAGE = "chatterbox-tts==0.1.6"
+CHATTERBOX_TTS_PACKAGE = "chatterbox-tts==0.1.7"
 #: Marker file written into REPO_ROOT by an offline install (defined by
 #: the_oracle.offline, which is also what the runtime checks). The managed
 #: wrapper exports HF_HUB_OFFLINE=1 when it exists, so every model loader
@@ -179,11 +187,13 @@ def install_dependencies(
 
     extras = ".[ml,dev]" if include_dev else ".[ml]"
     run_command([str(venv_python), "-m", "pip", "install", *pip_base, "-e", extras], env=env)
+    perth_package = PERTH_OFFLINE_PACKAGE if offline_bundle else PERTH_GIT_PACKAGE
     run_command(
-        [str(venv_python), "-m", "pip", "install", *pip_base, *CHATTERBOX_ENGINE_PACKAGES],
+        [str(venv_python), "-m", "pip", "install", *pip_base, *CHATTERBOX_ENGINE_PACKAGES, perth_package],
         env=env,
     )
     run_command([str(venv_python), "-m", "pip", "install", *pip_base, "--no-deps", CHATTERBOX_TTS_PACKAGE], env=env)
+    run_command([str(venv_python), str(REPO_ROOT / "scripts" / "patch_chatterbox_metadata.py")], env=env)
     passed("Installed The Oracle runtime bundle into the project venv")
 
 

@@ -35,7 +35,7 @@ def _online_pip_commands(venv_python: Path) -> list[tuple[str, ...]]:
     """The five pip installs an online install runs, verbatim."""
     python = str(venv_python)
     return [
-        (python, "-m", "pip", "install", "--upgrade", "pip", "setuptools<81", "wheel", "packaging>=24.0"),
+        (python, "-m", "pip", "install", "--upgrade", "pip", "setuptools>=83.0.0", "wheel", "packaging>=24.0"),
         (
             python, "-m", "pip", "install",
             "--index-url", "https://download.pytorch.org/whl/cpu",
@@ -44,11 +44,14 @@ def _online_pip_commands(venv_python: Path) -> list[tuple[str, ...]]:
         (python, "-m", "pip", "install", "-e", ".[ml]"),
         (
             python, "-m", "pip", "install",
-            "librosa==0.11.0", "s3tokenizer", "diffusers==0.29.0", "resemble-perth==1.0.1",
-            "conformer==0.3.2", "safetensors==0.5.3", "spacy-pkuseg", "pykakasi==2.3.0",
+            "librosa==0.11.0", "s3tokenizer", "diffusers==0.38.0", "gradio==6.16.0", "starlette==1.3.1",
+            "huggingface-hub==1.33.0",
+            "conformer==0.3.2", "safetensors==0.8.0", "PyYAML>=6.0", "spacy-pkuseg", "pykakasi==2.3.0",
             "pyloudnorm", "omegaconf",
+            "resemble-perth @ git+https://github.com/resemble-ai/Perth.git@ff1c8ac55a976971245cdd53c18d6131ca00d993",
         ),
-        (python, "-m", "pip", "install", "--no-deps", "chatterbox-tts==0.1.6"),
+        (python, "-m", "pip", "install", "--no-deps", "chatterbox-tts==0.1.7"),
+        (python, str(venv_python.parent.parent.parent / "scripts" / "patch_chatterbox_metadata.py")),
     ]
 
 
@@ -150,7 +153,7 @@ def _offline_pip_commands(venv_python: Path, wheels_dir: Path) -> list[tuple[str
     wheel_args = ("--no-index", "--find-links", str(wheels_dir))
     python = str(venv_python)
     return [
-        (python, "-m", "pip", "install", *wheel_args, "--upgrade", "pip", "setuptools<81", "wheel", "packaging>=24.0"),
+        (python, "-m", "pip", "install", *wheel_args, "--upgrade", "pip", "setuptools>=83.0.0", "wheel", "packaging>=24.0"),
         (
             python, "-m", "pip", "install", *wheel_args,
             "torch==2.6.0", "torchaudio==2.6.0", "torchvision==0.21.0",
@@ -158,11 +161,13 @@ def _offline_pip_commands(venv_python: Path, wheels_dir: Path) -> list[tuple[str
         (python, "-m", "pip", "install", *wheel_args, "-e", ".[ml]"),
         (
             python, "-m", "pip", "install", *wheel_args,
-            "librosa==0.11.0", "s3tokenizer", "diffusers==0.29.0", "resemble-perth==1.0.1",
-            "conformer==0.3.2", "safetensors==0.5.3", "spacy-pkuseg", "pykakasi==2.3.0",
-            "pyloudnorm", "omegaconf",
+            "librosa==0.11.0", "s3tokenizer", "diffusers==0.38.0", "gradio==6.16.0", "starlette==1.3.1",
+            "huggingface-hub==1.33.0",
+            "conformer==0.3.2", "safetensors==0.8.0", "PyYAML>=6.0", "spacy-pkuseg", "pykakasi==2.3.0",
+            "pyloudnorm", "omegaconf", "resemble-perth==1.1.0",
         ),
-        (python, "-m", "pip", "install", *wheel_args, "--no-deps", "chatterbox-tts==0.1.6"),
+        (python, "-m", "pip", "install", *wheel_args, "--no-deps", "chatterbox-tts==0.1.7"),
+        (python, str(venv_python.parent.parent.parent / "scripts" / "patch_chatterbox_metadata.py")),
     ]
 
 
@@ -236,7 +241,7 @@ def test_fresh_repo_creates_the_venv_before_installing_anything(manage_install, 
     assert boundary.commands[0].args[3] == str(boundary.repo / ".venv")
     assert [command.args for command in boundary.pip_commands] == _online_pip_commands(
         boundary.venv_python
-    )
+    )[:-1]
     # The rest of the install ran against the venv the recorded command created.
     assert boundary.venv_python.is_file()
     assert boundary.doctor_commands == [boundary.commands[-1]]

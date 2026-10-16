@@ -73,7 +73,7 @@ def _format_turbo_error(exc: Exception, *, cached_only: bool = False) -> str:
     download_command = f"{repo_python_display()} scripts/download_models.py --variant turbo --device cpu"
     if isinstance(exc, LocalTokenNotFoundError) or "Token is required (`token=True`)" in str(exc):
         return (
-            f"{prefix} chatterbox-tts 0.1.6 forces HF auth for the public turbo checkpoint. "
+            f"{prefix} chatterbox-tts 0.1.7 forces HF auth for the public turbo checkpoint. "
             "The Oracle bypasses that broken loader, but this environment still does not have a usable turbo checkpoint. "
             f"Connect to the internet and run {download_command} "
             "or set HF_TOKEN if your HF environment requires auth. "
@@ -93,31 +93,33 @@ def _format_turbo_error(exc: Exception, *, cached_only: bool = False) -> str:
 def download_chatterbox_repo(*, local_files_only: bool = False) -> Path:
     """Pinned, offline-safe checkout of the ``ResembleAI/chatterbox`` repo.
 
-    chatterbox-tts 0.1.6's own ``from_pretrained`` loaders call
+    chatterbox-tts 0.1.7's own ``from_pretrained`` loaders call
     ``hf_hub_download()`` without a revision (standard) or explicitly request
     ``revision="main"`` (multilingual), so they would fetch the moving tip of
     the repo. We bypass them: download the pinned commit once, then load with
     ``from_local()``. With ``HF_HUB_OFFLINE=1`` (set by the managed launcher
     on offline installs) this resolves purely from the local cache.
     """
+    offline = local_files_only or os.environ.get("HF_HUB_OFFLINE", "").lower() in {"1", "true", "yes"}
     return Path(
         snapshot_download(
             repo_id=CHATTERBOX_REPO,
             revision=pin_for(CHATTERBOX_REPO),
             token=_hf_token(),
-            local_files_only=local_files_only,
+            local_files_only=offline,
             allow_patterns=sorted(set(CHATTERBOX_STANDARD_PATTERNS) | set(CHATTERBOX_MULTILINGUAL_PATTERNS)),
         )
     )
 
 
 def download_turbo_checkpoint(*, local_files_only: bool = False) -> Path:
+    offline = local_files_only or os.environ.get("HF_HUB_OFFLINE", "").lower() in {"1", "true", "yes"}
     return Path(
         snapshot_download(
             repo_id=TURBO_REPO_ID,
             revision=TURBO_REVISION,
             token=_hf_token(),
-            local_files_only=local_files_only,
+            local_files_only=offline,
             allow_patterns=TURBO_ALLOW_PATTERNS,
         )
     )

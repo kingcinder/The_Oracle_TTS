@@ -21,11 +21,24 @@ class PunctuationRestorer:
     def _try_load_punctuator(self):
         try:
             from deepmultilingualpunctuation import PunctuationModel  # type: ignore
+            from deepmultilingualpunctuation import punctuationmodel as punctuation_module  # type: ignore
         except Exception as exc:
             _LOG.warning("deepmultilingualpunctuation not available, punctuation restoration disabled: %s", exc)
             return None
         try:
-            return PunctuationModel()
+            original_pipeline = punctuation_module.pipeline
+
+            def compatible_pipeline(task, model, **kwargs):
+                grouped_entities = kwargs.pop("grouped_entities", None)
+                if grouped_entities is not None:
+                    kwargs.setdefault("aggregation_strategy", "simple" if grouped_entities else "none")
+                return original_pipeline(task, model, **kwargs)
+
+            punctuation_module.pipeline = compatible_pipeline
+            try:
+                return PunctuationModel()
+            finally:
+                punctuation_module.pipeline = original_pipeline
         except Exception as exc:
             _LOG.warning("PunctuationModel failed to initialise, punctuation restoration disabled: %s", exc)
             return None
