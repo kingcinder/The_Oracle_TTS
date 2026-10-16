@@ -23,7 +23,8 @@ from PySide6.QtTest import QTest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QSplitter, QWidget
 
 from the_oracle.gui_sections import QHSectionGroup, _COLLAPSED_HEADER_HEIGHT
 from the_oracle.gui_themes import THEMES
@@ -132,20 +133,24 @@ def test_hidden_extra_voices_pane_does_not_break_size_slider(
 
 
 def test_section_title_elides_before_header_chrome_at_floor_width(
-    qt_app, monkeypatch: pytest.MonkeyPatch, tmp_path
+    qt_app,
 ) -> None:
     """Regression pin for the title-under-chrome overlap: at the 260 px
     section floor the long "Shared Render Settings" title must be elided
     before it reaches the size slider, and the original text kept for when
     the pane widens again."""
-    window, _paths = _build_window(monkeypatch, tmp_path)
+    splitter = QSplitter(Qt.Orientation.Horizontal)
+    splitter.setChildrenCollapsible(False)
+    section = QHSectionGroup("Shared Render Settings")
+    sibling = QWidget()
+    splitter.addWidget(section)
+    splitter.addWidget(sibling)
     try:
-        window.resize(1160, 760)
-        window.show()
+        splitter.resize(1000, 240)
+        splitter.show()
         qt_app.processEvents()
-        window._sections_splitter.setSizes([260, 260, 389])
+        splitter.setSizes([260, 734])
         qt_app.processEvents()
-        section, _splitter, _index = window._section_registry["shared"]
         assert section.width() <= 270, "expected the pane at its floor"
         assert section._full_title == "Shared Render Settings"
         assert section.title() != section._full_title, (
@@ -154,12 +159,13 @@ def test_section_title_elides_before_header_chrome_at_floor_width(
         )
         assert section.title().endswith("...")
         # Widening restores the full text.
-        window._sections_splitter.setSizes([460, 360, 360])
+        splitter.setSizes([700, 294])
         QTest.qWait(50)
         qt_app.processEvents()
+        assert section.width() >= 600, f"splitter did not widen the pane: {section.width()}"
         assert section.title() == "Shared Render Settings"
     finally:
-        window.close()
+        splitter.close()
 
 
 def test_paths_collapse_and_splitter_survive_persist_round_trip(

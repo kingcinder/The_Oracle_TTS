@@ -5,9 +5,10 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QWidget
 
-from the_oracle.device_support import CUDADeviceInfo
+from the_oracle.device_support import CUDADeviceInfo, DeviceModeOption
 from the_oracle.inference_wizard import InferenceSetupWizard, STAGES, hardware_summary
 
 
@@ -102,6 +103,33 @@ def test_discovery_wizard_offers_cpu_and_disables_unsuitable_cuda(qt_app):
         assert not wizard.selection_box.isHidden()
     finally:
         wizard.close()
+        main_window.deleteLater()
+
+
+def test_vulkan_backend_tooltip_uses_combo_item_data(qt_app, monkeypatch):
+    from the_oracle import inference_wizard
+
+    monkeypatch.setattr(
+        inference_wizard,
+        "available_device_modes",
+        lambda: [DeviceModeOption("vulkan", "Vulkan", True, "runtime available")],
+    )
+    main_window = QWidget()
+    main_window.pytorch_device_combo = QComboBox(main_window)
+    try:
+        wizard = InferenceSetupWizard(main_window, devices=[], mode="discovery")
+        try:
+            index = wizard.backend_picker.findData("vulkan")
+            assert index >= 0
+            assert "audio.cpp Vulkan path" in wizard.backend_picker.itemData(
+                index, Qt.ItemDataRole.ToolTipRole
+            )
+            assert "runtime available" in wizard.backend_picker.itemData(
+                index, Qt.ItemDataRole.ToolTipRole
+            )
+        finally:
+            wizard.close()
+    finally:
         main_window.deleteLater()
 
 

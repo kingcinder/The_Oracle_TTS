@@ -161,13 +161,13 @@ class InferenceSetupWizard(QDialog):
         self.backend_picker.addItem("Vulkan (audio.cpp; setup if needed)", "vulkan")
         vulkan_mode = next((item for item in available_device_modes() if item.key == "vulkan"), None)
         if vulkan_mode is not None:
-            item = self.backend_picker.model().item(self.backend_picker.count() - 1)
-            if item is not None:
-                item.setToolTip(
-                    "This is The Oracle's audio.cpp Vulkan path. "
-                    + vulkan_mode.reason
-                    + " The main window will offer automatic setup if its binary or model is missing."
-                )
+            self.backend_picker.setItemData(
+                self.backend_picker.count() - 1,
+                "This is The Oracle's audio.cpp Vulkan path. "
+                + vulkan_mode.reason
+                + " The main window will offer automatic setup if its binary or model is missing.",
+                Qt.ItemDataRole.ToolTipRole,
+            )
         self.device_picker = QComboBox()
         self.device_picker.addItem("CPU / system DRAM", "cpu")
         current_device = getattr(getattr(main_window, "pytorch_device_combo", None), "currentData", lambda: "cpu")()

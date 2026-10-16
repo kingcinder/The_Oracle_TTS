@@ -151,6 +151,28 @@ def test_destroyed_window_detaches_the_filter(qt_app):
         _release_singleton(qt_app)
 
 
+def test_sweep_ignores_child_shiboken_marks_invalid(qt_app, monkeypatch):
+    window = QWidget()
+    child = QPushButton("stale", window)
+    child.setToolTip("description")
+    helper = CtrlHoverHelp(qt_app)
+    helper._window = window
+    actual_is_valid = gui_tooltips._shiboken_is_valid
+    monkeypatch.setattr(
+        gui_tooltips,
+        "_shiboken_is_valid",
+        lambda widget: widget is not child and actual_is_valid(widget),
+    )
+    try:
+        helper._sweep(window)
+        assert child not in helper._swept
+        assert child.toolTip() == "description"
+    finally:
+        helper.release()
+        window.close()
+        window.deleteLater()
+
+
 def test_second_window_gets_its_own_window_parented_filter(qt_app):
     """The certifier's exact shape: window A torn down, window B built."""
     first, second = QWidget(), QWidget()

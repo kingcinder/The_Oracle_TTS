@@ -157,9 +157,14 @@ class CtrlHoverHelp(QObject):
         cannot raise one; they still resolve through the parent walk in
         ``_description_for``.
         """
-        if not isinstance(root, QWidget):
+        if not isinstance(root, QWidget) or not _shiboken_is_valid(root):
             return
         for widget in (root, *root.findChildren(QWidget)):
+            # A destroyed signal normally prunes the registry immediately,
+            # but Windows can dispatch this timer while Qt is tearing down a
+            # child and before Python receives that signal.
+            if not _shiboken_is_valid(widget):
+                continue
             if widget is self._window:
                 continue
             if widget in self._swept:
