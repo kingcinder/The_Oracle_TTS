@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from PySide6.QtTest import QTest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -154,6 +155,7 @@ def test_section_title_elides_before_header_chrome_at_floor_width(
         assert section.title().endswith("...")
         # Widening restores the full text.
         window._sections_splitter.setSizes([460, 360, 360])
+        QTest.qWait(50)
         qt_app.processEvents()
         assert section.title() == "Shared Render Settings"
     finally:
