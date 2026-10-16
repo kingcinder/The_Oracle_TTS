@@ -88,20 +88,20 @@ Audit limits: pip-audit cannot match the local Oracle package, CPU-only
 PyTorch wheels, or Git-sourced Perth against PyPI advisories. They remain
 explicitly unaudited rather than being counted as clean.
 
-## 4. Secrets sweep — 71 vetted findings, no unreviewed tree findings
+## 4. Secrets sweep — 102 vetted findings, no unreviewed tree findings
 
 Commands:
 ```
 .venv/bin/python -m detect_secrets scan --exclude-files '\.venv/|/build/|audio\.cpp/|Output/|Seashells/|release_artifacts/|\.git/|\.secrets\.baseline'
 # Compare each (path, hashed_secret) with .secrets.baseline; fail on any new pair.
 ```
-The 2026-10-13 re-scan found 71 entries. Twelve were absent from the old
-baseline: four public Git commit SHAs in the suite-count record and eight
-public RFC 8032 test-vector values in test-only fixtures and regression tests.
-They are recorded with `is_secret: false`. The findings are public test
-vectors, test-only registry material, pinned public Hugging Face commit SHAs,
-and public Git commit SHAs. **No API key, token, production private key,
-password, or personal credential was found in the tracked tree.** The host's
+The 2026-10-16 re-scan found 102 entries. Thirty-one findings were absent from
+the prior baseline: 30 public Git commit IDs in the suite-count history and one
+pinned public Perth source revision. All are recorded with `is_secret: false`.
+The findings are public test vectors, test-only registry material, pinned
+public source commit IDs, and public Git commit IDs. **No API key, token,
+production private key, password, or personal credential was found in the
+tracked tree.** The host's
 gitleaks binary was used for the history scan below; detect-secrets remains the
 repeatable tree-scan fallback.
 
