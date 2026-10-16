@@ -26,7 +26,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QTimer as _SectionTimer, Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QGroupBox, QSlider, QToolButton, QWidget
 
@@ -69,7 +69,7 @@ class QHSectionGroup(QGroupBox):
         self._splitter = None
         self._splitter_index = -1
         self._collapsed = False
-        self._title_update = QTimer(self)
+        self._title_update = _SectionTimer(self)
         self._title_update.setSingleShot(True)
         self._title_update.timeout.connect(self._elide_title)
         # Lazy content: no factory registered means the caller populated the
