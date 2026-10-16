@@ -768,6 +768,39 @@ def test_synthesize_tasks_batched_groups_and_isolates_failures(tmp_path: Path, m
     assert len(stem_names) == 3
 
 
+def test_batched_fallback_cache_key_includes_render_seed(tmp_path: Path) -> None:
+    """Direct/legacy tasks without a precomputed hash must not cross seeds."""
+    task = SynthesisTask(
+        utterance_index=1,
+        source_index=1,
+        speaker="A",
+        text="Seeded cache key probe.",
+        reference_audio_hash="refhash",
+        reference_path=tmp_path / "reference.wav",
+        voice_settings=VoiceSettings(),
+        model_variant="standard",
+        device_mode="cpu",
+        export_stems=False,
+        inference_backend="vulkan",
+        seed=29,
+    )
+    engine = _BatchStubEngine(fail_on=None)
+    cache = ProjectCache(tmp_path / "project")
+
+    result = synthesize_tasks_batched([task], engine, {}, cache)[0]
+
+    expected = build_chunk_hash(
+        speaker=task.speaker,
+        repaired_text=task.text,
+        engine_key="vulkan:chatterbox:standard",
+        engine_params=task.voice_settings.to_dict(),
+        engine_version=engine.engine_version,
+        reference_audio_hash=task.reference_audio_hash,
+        seed=task.seed,
+    )
+    assert result.chunk_hash == expected
+
+
 def test_synthesize_tasks_batched_propagates_rdna1_failure(tmp_path: Path, monkeypatch) -> None:
     """The RDNA1 device-lost limitation (and missing binary/model) is
     deterministic: every remaining batch fails the same way, so

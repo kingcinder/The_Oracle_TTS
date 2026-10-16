@@ -826,6 +826,7 @@ def synthesize_tasks_batched(
             engine_params=task.voice_settings.to_dict(),
             engine_version=engine.engine_version,
             reference_audio_hash=task.reference_audio_hash,
+            seed=task.seed,
         )
         stem_path = project_cache.stem_path(chunk_hash)
         if not task.text.strip():
