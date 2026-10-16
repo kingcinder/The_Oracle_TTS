@@ -331,10 +331,13 @@ def _destroy_window(app: QApplication, window: MainWindow) -> None:
 
 
 def _find_header(section) -> str | None:
-    """QHSectionGroup is a QGroupBox: the title is its own, possibly elided."""
+    """Resolve the full title, including a readable right-elided prefix."""
     title = section.title()
     for full in TITLES.values():
-        if title in full or full in title:
+        if title and (title in full or full in title):
+            return full
+        visible_prefix = title.removesuffix("\u2026").rstrip()
+        if len(visible_prefix) >= 5 and full.startswith(visible_prefix):
             return full
     return None
 

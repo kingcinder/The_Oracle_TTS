@@ -53,6 +53,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from shiboken6 import isValid as _shiboken_is_valid
 from PySide6.QtCore import QChildEvent, QElapsedTimer, QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QApplication, QFormLayout, QMenu, QMenuBar, QToolTip, QWidget
@@ -276,6 +277,11 @@ class CtrlHoverHelp(QObject):
             # one synchronous call. None of them match a branch below, and
             # real input cannot arrive until the call returns to the event
             # loop — skip the per-event Python round-trip entirely.
+            return False
+        # During native Qt teardown, Windows/PySide can dispatch a Python
+        # wrapper whose QEvent was already deleted. Calling event.type() on
+        # that stale wrapper can access-violate before Python can catch it.
+        if not _shiboken_is_valid(event):
             return False
         etype = event.type()
         if etype in (QEvent.Type.WindowDeactivate, QEvent.Type.ApplicationDeactivate):

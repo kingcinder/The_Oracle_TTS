@@ -183,6 +183,20 @@ def test_tooltip_owner_appearing_later_is_swept(qt_app):
         window.deleteLater()
 
 
+def test_event_filter_ignores_a_deleted_qevent_wrapper(qt_app):
+    """Qt teardown must not dereference an event already invalidated in C++."""
+    import shiboken6
+
+    helper = CtrlHoverHelp(qt_app)
+    event = QEvent(QEvent.Type.User)
+    shiboken6.delete(event)
+    try:
+        assert not shiboken6.isValid(event)
+        assert helper.eventFilter(qt_app, event) is False
+    finally:
+        helper.release()
+
+
 def test_real_main_window_churn_leaves_no_filters_behind(qt_app, app_install_spy, monkeypatch, tmp_path):
     """Fifty real build/destroy cycles with Ctrl-hover: no filter survives.
 

@@ -76,6 +76,32 @@ MEASURED_FIELDS = (
 #: local artifact: the working tree has a venv, a native build, and reference
 #: clips that a clean clone does not. Anything not listed fails the run.
 EXPECTED_DELTAS: dict[str, str] = {
+    # These fields describe local consent, generated preview caches, and Git
+    # ancestry. A fresh git archive intentionally has none of that host state.
+    "doctor.crash_reports.consent":
+        "crash-report consent is local ignored state and is absent from an archive",
+    "doctor.crash_reports.detail":
+        "the working tree has local crash-report consent; an archive does not",
+    "doctor.crash_reports.newest":
+        "local sanitized crash reports are ignored host state absent from an archive",
+    "doctor.crash_reports.newest_exception":
+        "local sanitized crash reports are ignored host state absent from an archive",
+    "doctor.crash_reports.record_count":
+        "local sanitized crash reports are ignored host state absent from an archive",
+    "doctor.crash_reports.total_bytes":
+        "local sanitized crash reports are ignored host state absent from an archive",
+    "doctor.preview_writers.dirs_scanned":
+        "local preview cache directories are generated and are absent from an archive",
+    "doctor.preview_writers.scanned":
+        "local preview cache files are generated and are absent from an archive",
+    "doctor.resolved_records.detail":
+        "resolved-record counts require Git ancestry unavailable in a git archive",
+    "doctor.resolved_records.reason":
+        "a git archive has no .git directory for ancestry verification",
+    "doctor.resolved_records.scanned":
+        "resolved-record counts require Git ancestry unavailable in a git archive",
+    "doctor.resolved_records.skipped":
+        "a git archive has no .git directory for ancestry verification",
     # A clean checkout has no venv until bootstrap creates one.
     "doctor.entrypoint.venv_entrypoint_exists":
         "a clean checkout has no .venv; `manage_install.py bootstrap` creates it",

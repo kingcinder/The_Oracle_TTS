@@ -375,6 +375,7 @@ jobs:
             git \
             glslc \
             libegl1 \
+            libpulse0 \
             libvulkan-dev \
             mesa-vulkan-drivers \
             ninja-build \

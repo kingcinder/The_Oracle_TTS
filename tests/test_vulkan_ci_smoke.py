@@ -290,7 +290,7 @@ def test_the_job_installs_every_package_the_build_and_the_probe_need() -> None:
     packages = _apt_packages(install["run"])
     # glslc is required by audio.cpp's ggml-vulkan CMakeLists; without the Mesa
     # driver a GPU-less runner has no ICD at all and the smoke would skip.
-    for package in ("cmake", "g++", "git", "glslc", "libvulkan-dev", "mesa-vulkan-drivers", "ninja-build", "vulkan-tools"):
+    for package in ("cmake", "g++", "git", "glslc", "libpulse0", "libvulkan-dev", "mesa-vulkan-drivers", "ninja-build", "vulkan-tools"):
         assert package in packages, package
 
 

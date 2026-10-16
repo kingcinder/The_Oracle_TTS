@@ -176,10 +176,23 @@ def run_streaming(
     captured: list[str] = []
     assert process.stdout is not None
     for line in process.stdout:
-        sys.stdout.write(line)
+        sys.stdout.write(console_safe_text(line, getattr(sys.stdout, "encoding", None)))
         sys.stdout.flush()
         captured.append(line.rstrip("\n"))
     return process.wait(), "\n".join(captured[-tail_lines:])
+
+
+def console_safe_text(text: str, encoding: str | None) -> str:
+    """Keep streamed subprocess output printable on legacy Windows consoles."""
+    if not encoding:
+        return text
+    try:
+        text.encode(encoding)
+    except UnicodeEncodeError:
+        return text.encode(encoding, errors="backslashreplace").decode(encoding)
+    except LookupError:
+        return text
+    return text
 
 
 def launch_timing_events(log_path: Path) -> list[str]:

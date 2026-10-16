@@ -233,6 +233,13 @@ def test_kill_command_takes_down_the_process_tree(smoke) -> None:
     assert smoke.kill_tree_command(4242) == ["taskkill", "/T", "/F", "/PID", "4242"]
 
 
+def test_console_output_escapes_characters_the_windows_code_page_cannot_encode(smoke) -> None:
+    assert smoke.console_safe_text("bad decoder output: �", "cp1252") == (
+        r"bad decoder output: \ufffd"
+    )
+    assert smoke.console_safe_text("ordinary output", "cp1252") == "ordinary output"
+
+
 @pytest.mark.skipif(os.name == "nt", reason="asserts the refusal on non-Windows hosts")
 def test_refuses_to_run_off_windows(smoke, tmp_path: Path) -> None:
     assert smoke.main(["--profile", str(tmp_path)]) == 2

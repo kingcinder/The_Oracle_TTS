@@ -82,6 +82,27 @@ def test_every_pinned_group_is_checked_including_dev() -> None:
     assert "dev" in project.get("optional-dependencies", {})
 
 
+def test_runtime_doctor_does_not_require_development_tools(monkeypatch) -> None:
+    """A production install omits the dev extra; only CI should require it."""
+    doctor = _load_doctor()
+    real_version = doctor.importlib.metadata.version
+    dev_names = {"pytest", "pytest-xdist", "pip-audit", "detect-secrets", "pip-licenses"}
+
+    def runtime_only_version(name: str) -> str:
+        if name in dev_names:
+            raise doctor.importlib.metadata.PackageNotFoundError(name)
+        return real_version(name)
+
+    monkeypatch.setattr(doctor.importlib.metadata, "version", runtime_only_version)
+
+    status = doctor._dependency_pin_status(REPO_ROOT, include_dev=False)
+
+    assert status["ok"] is True, status["error"]
+    assert not any(item["group"] == "optional:dev" for item in status["missing"])
+    ci_status = doctor._dependency_pin_status(REPO_ROOT, include_dev=True)
+    assert {item["requirement"].split("==")[0] for item in ci_status["missing"]} == dev_names
+
+
 def test_multi_occurrence_drift_names_every_pin_in_the_error() -> None:
     """The 71d8840 completeness precedent, applied to the doctor's per-record
     reporting: TWO drifted pins AND a missing package in one report must ALL be
@@ -142,7 +163,7 @@ def test_range_pins_are_satisfied_not_just_exact_pins() -> None:
 def test_check_is_wired_into_the_report_and_gate() -> None:
     """The status function is registered as a required check in run()."""
     source = DOCTOR_PATH.read_text(encoding="utf-8")
-    assert '"dependency_pins": _dependency_pin_status(repo_root)' in source
+    assert '"dependency_pins": _dependency_pin_status(repo_root, include_dev=ci_mode)' in source
     assert 'report["dependency_pins"]["ok"]' in source
     # The human report and next-steps both name it.
     assert 'Dependency pins:' in source

@@ -97,6 +97,15 @@ def test_a_closed_gate_is_reported_and_names_the_module(fresh_report) -> None:
     assert len(certifier.failures) == 1, certifier.failures
 
 
+def test_header_check_accepts_a_readable_elided_title(fresh_report) -> None:
+    """The narrow Windows-only pane elides Extra Voices but keeps its name."""
+    class ElidedSection:
+        def title(self) -> str:
+            return "Extra V\u2026"
+
+    assert fresh_report._find_header(ElidedSection()) == "Extra Voices"
+
+
 def test_a_blind_trace_names_every_module_it_saw_no_call_from(fresh_report) -> None:
     """Vacuity: a trace that observed nothing must fail per module rather
     than pass green over an empty measurement."""

@@ -231,7 +231,7 @@ def _qt_package_suggestions(missing_libraries: list[str]) -> list[str]:
     return sorted(set(suggestions))
 
 
-def _dependency_pin_status(repo_root: Path) -> dict[str, Any]:
+def _dependency_pin_status(repo_root: Path, *, include_dev: bool = True) -> dict[str, Any]:
     """Verify the running venv matches the pyproject dependency pins.
 
     Full-suite green claims are only valid against the declared dependency
@@ -266,6 +266,8 @@ def _dependency_pin_status(repo_root: Path) -> dict[str, Any]:
     project = data.get("project", {})
     requirement_groups: list[tuple[str, list[str]]] = [("dependencies", project.get("dependencies") or [])]
     for group_name, group in (project.get("optional-dependencies") or {}).items():
+        if group_name == "dev" and not include_dev:
+            continue
         requirement_groups.append((f"optional:{group_name}", group or []))
 
     mismatches: list[dict[str, str]] = []
@@ -1561,7 +1563,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "deterministic_smoke": _deterministic_smoke_status(repo_root),
         "real_engine_smoke": _real_engine_smoke_status(repo_root),
         "vulkan_backend": _vulkan_backend_status(repo_root),
-        "dependency_pins": _dependency_pin_status(repo_root),
+        "dependency_pins": _dependency_pin_status(repo_root, include_dev=ci_mode),
         "input_subtitles": _input_subtitles_status(repo_root),
         "preview_writers": _preview_writers_status(repo_root),
         "release_metadata": _release_metadata_status(repo_root),
