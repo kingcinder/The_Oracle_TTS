@@ -60,14 +60,13 @@ on a networked machine (deleting the `.oracle_offline` marker in the
 install root re-enables network fetches), or re-install without
 `--offline-bundle`.
 
-## First render is slow / grammar falls back to local fixes
+## Grammar corrections look lighter than before
 
-The first grammar pass may need the LanguageTool server (hundreds of MB).
-The render never stalls on it: it falls back to local fixes and warms the
-download in the background for the next run. Offline installs skip that
-download entirely (the local fallback still applies). Check
-`ORACLE_LANGUAGE_TOOL_TIMEOUT` if you want to bound the load attempt
-differently (seconds; default 25).
+As of 1.4.1 the grammar pass is entirely local: the GPL LanguageTool client
+was removed, so there is no Java server, no hundreds-of-MB download, and no
+warm-up wait. The deterministic local fixes (spacing, punctuation, repeated
+words, and the correction-mode rules) are the supported path. Unexpected
+behaviour there is worth a bug report: `the-oracle bug-report new --area ingest`.
 
 ## Input file flagged as misformatted, or a fix regretted
 
@@ -124,6 +123,11 @@ channel you choose (The Oracle never uploads anything): the report is
 plain JSON, safe to read before sending. Delete everything with
 `the-oracle privacy-opt-out --purge`.
 
+To fold a crash into a support case, reference it from the report
+(`the-oracle bug-report new ... --crash`) and package with
+`--include-crash-reports`. The record itself is only included when local
+crash-reporting consent is on.
+
 ## License activation problems
 
 Activation is offline: the token is verified against the public keys embedded
@@ -135,19 +139,31 @@ know reports `unknown_key` — update the suite or contact support; do not edit
 
 ## Need to send support a diagnostic
 
+For a written report with everything attached:
+
 ```bash
-the-oracle support-bundle
+the-oracle bug-report new --title "..." --summary "..." --no-doctor
+the-oracle bug-report show <report-id>
+the-oracle bug-report package <report-id>
 ```
 
-This creates a redacted zip under `Output/` and never uploads it. It includes
-the version/platform, license state (not the token), redacted settings, the
-newest logs, and a doctor report. Crash reports are included only with
-`--include-crash-reports` and when local crash-reporting consent is on. Read
-the zip before sending it.
+For diagnostics only:
+
+```bash
+the-oracle support-bundle
+the-oracle bug-report diagnose          # the same snapshot, printed
+```
+
+Both write a redacted zip (or text) locally and never upload anything. The
+package includes the version/platform, license state (not the token),
+redacted settings, the newest logs, `diagnostics.json`, and a doctor report.
+Crash records are included only with `--include-crash-reports` and when local
+crash-reporting consent is on. `the-oracle bug-report issue <report-id>`
+prints prefilled GitHub and email links; read the zip before sending it.
 
 ## Still stuck
 
-`python scripts/doctor.py --json > report.json` attached to a bug report is
-the most useful single artifact, and `the-oracle support-bundle` packages it
-with the redacted environment. `docs/SOFT_LAUNCH.md` records the alpha's
-known limitations and support path.
+`python scripts/doctor.py --json > report.json` is the most useful single
+artifact, and `the-oracle bug-report package <id>` bundles it with the report
+and redacted environment. `docs/SUPPORT.md` covers the full workflow,
+`docs/SOFT_LAUNCH.md` records the alpha's known limitations and support path.

@@ -220,6 +220,12 @@ def _support_bundle_available() -> bool:
     return importlib.util.find_spec("the_oracle.support_bundle") is not None
 
 
+def _bug_report_available() -> bool:
+    """The composed support layer (report, store, package, links), not just
+    the raw bundle it builds on."""
+    return importlib.util.find_spec("the_oracle.support") is not None
+
+
 def _artifact_finding(root: Path, version: str) -> Finding:
     """Both published artifacts, not just whichever name a glob happens to hit.
 
@@ -402,6 +408,26 @@ def audit(root: Path = REPO_ROOT, *, today: date | None = None) -> list[Finding]
                 BLOCKER,
                 "the_oracle.support_bundle is not importable.",
                 "Install or implement the support-bundle capability.",
+            )
+        )
+
+    if _bug_report_available():
+        findings.append(
+            Finding(
+                "bug_report",
+                True,
+                INFO,
+                "The local bug-report workflow is installed (compose, package, prefilled links).",
+            )
+        )
+    else:
+        findings.append(
+            Finding(
+                "bug_report",
+                True,
+                WARNING,
+                "the_oracle.support is not importable; early users have only the raw support bundle.",
+                "Install the bug-report workflow or document the bundle-only support path.",
             )
         )
 

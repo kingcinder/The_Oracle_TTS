@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,7 @@ from typing import Any
 
 from the_oracle import __version__
 
-BUNDLE_VERSION = 1
+BUNDLE_VERSION = 2
 MAX_LOG_FILES = 3
 MAX_LOG_BYTES = 256 * 1024
 MAX_CRASH_RECORDS = 20
@@ -234,6 +235,47 @@ def _crash_entries(root: Path, include: bool) -> tuple[dict[str, bytes], list[st
     return entries, []
 
 
+def run_doctor_report(
+    root: str | Path,
+    *,
+    timeout: int = DOCTOR_TIMEOUT_SECONDS,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Run the install's doctor in its non-interactive CI mode.
+
+    Returns ``(report, problem)``: exactly one of the two is set. The report
+    is the doctor's parsed ``--json`` document; ``problem`` is a human-readable
+    reason it could not be collected (missing script, failure exit, timeout).
+    Read-only: the doctor never writes to the install.
+    """
+    root = Path(root)
+    script = root / "scripts" / "doctor.py"
+    if not script.is_file():
+        return None, "scripts/doctor.py is not present in this install"
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(script), "--json", "--skip-model-init", "--ci"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, f"doctor could not run: {error}"
+    if completed.returncode == 0:
+        try:
+            report = json.loads(completed.stdout)
+        except ValueError:
+            report = None
+        if isinstance(report, dict):
+            return report, None
+    detail = (
+        f"doctor exited {completed.returncode}\n"
+        f"stdout:\n{completed.stdout[-4000:]}\n"
+        f"stderr:\n{completed.stderr[-4000:]}\n"
+    )
+    return None, detail
+
+
 def _doctor_entry(
     root: Path,
     doctor_report: dict[str, Any] | None,
@@ -241,36 +283,12 @@ def _doctor_entry(
 ) -> tuple[dict[str, bytes], list[str]]:
     if doctor_report is not None:
         return {"doctor.json": json.dumps(redact_json(doctor_report), indent=2).encode("utf-8")}, []
-    script = root / "scripts" / "doctor.py"
     if not run_doctor:
         return {}, ["doctor report excluded (--no-doctor)"]
-    if not script.is_file():
-        return {}, ["scripts/doctor.py is not present in this install"]
-    try:
-        completed = subprocess.run(
-            [sys.executable, str(script), "--json", "--skip-model-init", "--ci"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=DOCTOR_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return {
-            "doctor_error.txt": redact_text(f"doctor could not run: {error}").encode("utf-8")
-        }, []
-    if completed.returncode == 0:
-        try:
-            report = json.loads(completed.stdout)
-        except ValueError:
-            report = None
-        if isinstance(report, dict):
-            return {"doctor.json": json.dumps(redact_json(report), indent=2).encode("utf-8")}, []
-    detail = (
-        f"doctor exited {completed.returncode}\n"
-        f"stdout:\n{completed.stdout[-4000:]}\n"
-        f"stderr:\n{completed.stderr[-4000:]}\n"
-    )
-    return {"doctor_error.txt": redact_text(detail).encode("utf-8")}, []
+    report, problem = run_doctor_report(root)
+    if report is not None:
+        return {"doctor.json": json.dumps(redact_json(report), indent=2).encode("utf-8")}, []
+    return {"doctor_error.txt": redact_text(problem or "doctor failed").encode("utf-8")}, []
 
 
 def _readme_text() -> str:
@@ -294,6 +312,33 @@ def _readme_text() -> str:
     )
 
 
+def _validated_extra_entries(extra_entries: Mapping[str, bytes] | None) -> dict[str, bytes]:
+    """Extra files a caller attaches to the bundle (a bug report, for one).
+
+    Names are archive paths: relative, forward-slash, no ``..`` segment, and
+    never a name the bundle already owns (manifest.json, README.txt, and the
+    collectors' outputs), so a caller cannot quietly rewrite the manifest of
+    the archive it is describing. Bytes only — a str would be ambiguous about
+    encoding at the archive boundary.
+    """
+    if not extra_entries:
+        return {}
+    reserved = {"manifest.json", "README.txt"}
+    validated: dict[str, bytes] = {}
+    for name, payload in extra_entries.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("support bundle attachment names must be non-empty strings")
+        if not isinstance(payload, bytes):
+            raise TypeError(f"support bundle attachment {name!r} must be bytes")
+        parts = name.split("/")
+        if "\\" in name or name.startswith("/") or ".." in parts or any(not part for part in parts):
+            raise ValueError(f"support bundle attachment name is not a safe relative path: {name!r}")
+        if name in reserved:
+            raise ValueError(f"support bundle attachment name is reserved: {name!r}")
+        validated[name] = payload
+    return validated
+
+
 def build_support_bundle(
     root: str | Path,
     out_path: str | Path | None = None,
@@ -301,6 +346,7 @@ def build_support_bundle(
     include_crash_reports: bool = False,
     doctor_report: dict[str, Any] | None = None,
     run_doctor: bool = True,
+    extra_entries: Mapping[str, bytes] | None = None,
     now: datetime | None = None,
 ) -> SupportBundleResult:
     """Build one redacted support zip and return its manifest."""
@@ -346,6 +392,16 @@ def build_support_bundle(
     included.extend(sorted(doctor_entries))
     skipped.extend(doctor_notes)
 
+    attachments = _validated_extra_entries(extra_entries)
+    collisions = sorted(set(attachments) & set(entries))
+    if collisions:
+        raise ValueError(
+            "support bundle attachment name collides with a collected entry: "
+            + ", ".join(collisions)
+        )
+    entries.update(attachments)
+    included.extend(sorted(attachments))
+
     manifest: dict[str, Any] = {
         "bundle_version": BUNDLE_VERSION,
         "created_utc": moment.astimezone(timezone.utc).isoformat(),
@@ -353,6 +409,7 @@ def build_support_bundle(
         "platform": platform.platform(),
         "python": sys.version.split()[0],
         "included": sorted(included),
+        "attachments": sorted(attachments),
         "skipped": sorted(skipped),
         "redaction": (
             "License tokens, API-key shapes, email addresses, and home-directory "

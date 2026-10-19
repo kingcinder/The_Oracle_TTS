@@ -4,7 +4,8 @@
 
 Changes between releases: [CHANGELOG.md](CHANGELOG.md). Upgrading an
 existing install: [docs/UPGRADING.md](docs/UPGRADING.md). Problems:
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Data and privacy:
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), and the reporting
+workflow in [docs/SUPPORT.md](docs/SUPPORT.md). Data and privacy:
 [PRIVACY.md](PRIVACY.md) — what is collected (nothing automatically), what
 stays on your disk, and what sharing a crash report means.
 
@@ -21,12 +22,20 @@ and the owner go-live checklist. Commercial distribution is gated by
 `python scripts/soft_launch.py --check`; the EULA is the remaining blocker,
 and the strong-copyleft dependency review is cleared.
 
-For support, create a redacted local bundle and attach it to your support
-email — nothing is uploaded automatically:
+For support, compose a bug report with a redacted diagnostics snapshot, then
+package it and attach it to the issue or email you send — nothing is uploaded
+automatically:
 
 ```bash
-the-oracle support-bundle
+the-oracle bug-report new --title "..." --summary "..." --step "..."
+the-oracle bug-report package <report-id>
+the-oracle bug-report issue <report-id>      # prints prefilled links
 ```
+
+`the-oracle support-bundle` still creates a diagnostics-only zip. The full
+workflow — what is collected, how to review it, and how to share it — is in
+[docs/SUPPORT.md](docs/SUPPORT.md). The desktop GUI exposes the same flow as
+**Help → Report a Problem…**.
 
 ## Features
 
@@ -38,6 +47,7 @@ the-oracle support-bundle
 - The workspace remembers itself: theme, input file, every option and slider position, splitter layout, and window size are restored at launch
 - Ctrl+hover help: hold the left **Control** key and hover any control for a short description of what it does; every slider also carries an exact-mechanics tooltip (engine knob, range, and formula-level effect)
 - CLI render flow with saved project manifests
+- Built-in support layer: `bug-report diagnose|new|list|show|package|issue|delete`, a GUI Report a Problem dialog, prefilled issue/email links, and a consent-gated support package — all local, nothing uploaded
 - Deterministic smoke render path for repo-local verification without live model generation
 - Managed bootstrap, install, doctor, run, and uninstall entrypoints for Linux and Windows, plus a one-stop manager (`./oracle` / `oracle.ps1`) with install, start, update, and uninstall actions
 - Opt-in CUDA inference through the existing PyTorch/Chatterbox path, with automatic NVIDIA hardware/VRAM suitability detection, CPU fallback, and selectable CUDA device index

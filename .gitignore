@@ -89,6 +89,8 @@ release_artifacts/**/*.json
 # diagnostics; never tracked, never shipped.
 crash_reports/
 crash_reports.certifier-park-*/
+# support_reports/ - local bug-report drafts (may contain the user's contact)
+support_reports/
 crash_consent.json
 
 # User working files, keep-dispositioned in STATE.md (## Deferred):

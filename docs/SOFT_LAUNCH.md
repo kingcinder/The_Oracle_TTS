@@ -77,7 +77,21 @@ signing seed never leaves the owner's secret manager. See
 
 ## Support
 
-Create a redacted support bundle and attach it to your support email:
+Compose a bug report, package it with the redacted diagnostics, and attach the
+zip to the issue or email you send:
+
+```bash
+the-oracle bug-report new --title "..." --summary "..." --step "..."
+the-oracle bug-report show <report-id>       # read exactly what will be shared
+the-oracle bug-report package <report-id>    # Output/oracle-report-<id>.zip
+the-oracle bug-report issue <report-id>      # prefilled issue + email links
+```
+
+In the GUI this is **Help → Report a Problem…**. Drafts stay in
+`support_reports/` (newest 25); nothing is uploaded, and deleting one is
+explicit. The full workflow is in [SUPPORT.md](SUPPORT.md).
+
+For a bundle without a written report, `the-oracle support-bundle` still works:
 
 ```bash
 the-oracle support-bundle
@@ -91,8 +105,9 @@ with `--include-crash-reports` **and** when local crash-reporting consent is
 on.
 
 The bundle never includes dialogue files, manuscripts, rendered audio, voice
-recordings, reference clips, license tokens, or home-directory paths. Read the
-zip before sending it; redaction is best-effort.
+recordings, reference clips, license tokens, or home-directory paths. The
+report package adds `report.md`, `report.json`, and `diagnostics.json` to the
+same bundle. Read the zip before sending it; redaction is best-effort.
 
 For a render problem, include the project's `render_plan.json` and the exact
 input text only if you are comfortable sharing them. They are never collected

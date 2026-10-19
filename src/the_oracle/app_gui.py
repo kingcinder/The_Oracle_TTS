@@ -1589,6 +1589,36 @@ class MainWindow(QMainWindow):
                 f"Local crash reporting is enabled ({count} report(s) on disk)."
             )
 
+    def _copy_to_clipboard(self, text: str) -> None:
+        QApplication.clipboard().setText(text)
+
+    def _open_url(self, url: str) -> None:
+        """Hand a prefilled link to the OS. User-initiated only: the support
+        layer builds links but never opens anything by itself."""
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _open_problem_report(self) -> None:
+        """Compose and share a bug report (Help → Report a Problem…). All
+        validation, redaction, packaging, and consent gating live in the
+        support package; this method only supplies the Qt seams."""
+        from the_oracle.gui_crash import run_problem_report_dialog
+
+        outcome = run_problem_report_dialog(
+            self,
+            self._consent_root(),
+            dialog_cls=QDialog,
+            message_box_cls=QMessageBox,
+            open_path_fn=self._open_path_with_viewer,
+            open_url_fn=self._open_url,
+            copy_text_fn=self._copy_to_clipboard,
+        )
+        if outcome == "saved":
+            self.error_panel.append("Bug report saved locally — nothing was sent.")
+        elif outcome == "packaged":
+            self.error_panel.append(
+                "Support package created under Output/ — nothing was uploaded."
+            )
+
     def _open_license_activation(self) -> None:
         from the_oracle.gui_license import run_activation_dialog
 

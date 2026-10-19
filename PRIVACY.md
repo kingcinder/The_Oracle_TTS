@@ -30,6 +30,22 @@ consent-gated at fire time (`tests/test_crash_consent.py`,
 `tests/test_crash_handlers.py`); the doctor's `crash_reports` check is
 read-only (`tests/test_doctor_crash.py`).
 
+## Bug reports are composed, packaged, and sent by you
+
+`the-oracle bug-report` (and **Help → Report a Problem…**) collects a
+read-only diagnostics snapshot, stores the draft in this install's
+`support_reports/` folder, and builds a zip only when you ask for one. The
+CLI prints prefilled issue and email links; the GUI copies or opens them when
+you press the button. There is no transport code in the support layer.
+
+*Mechanism:* the support package is source-pinned to stdlib plus the suite's
+own modules (`tests/test_offline_guarantee.py`); the diagnostics snapshot is
+pinned against home-directory, token, and environment-value leakage
+(`tests/test_support_diagnostics.py`); drafts are capped at 25 and deleting
+one needs an explicit `--yes` (`tests/test_support_store.py`,
+`tests/test_cli_bug_report.py`). The full workflow and the exact
+included/excluded list are in `docs/SUPPORT.md`.
+
 ## Your manuscripts and audio are yours
 
 Project files, input text, reference clips, and recordings are never
@@ -79,4 +95,6 @@ time; it is recreated on demand and git-ignored.
 
 Every crash report names the exception and where it happened, in plain
 language. Share a report only through a channel you choose (for example,
-email to the vendor); The Oracle itself will never send one.
+email to the vendor); The Oracle itself will never send one. For a written
+bug report, `docs/SUPPORT.md` documents exactly what the package contains and
+what it deliberately omits.

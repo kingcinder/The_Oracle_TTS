@@ -183,8 +183,17 @@ def build_menu(main_window, *, themes: Mapping[str, ThemeTokens]) -> None:
     main_window.recording_studio_action.triggered.connect(main_window.open_recording_studio)
     main_window.menuBar().addAction(main_window.recording_studio_action)
 
-    # Help menu: privacy/crash reports, license activation, About (U3).
+    # Help menu: problem reports, privacy/crash reports, license activation,
+    # About (U3 + the support layer).
     help_menu = main_window.menuBar().addMenu("Help")
+    main_window.report_problem_action = QAction("Report a Problem…", main_window)
+    main_window.report_problem_action.setToolTip(
+        "Compose a bug report with a redacted diagnostics snapshot, save it "
+        "locally, package it with the support bundle, and copy a prefilled "
+        "issue link. Nothing is uploaded; you choose what to share."
+    )
+    main_window.report_problem_action.triggered.connect(main_window._open_problem_report)
+    help_menu.addAction(main_window.report_problem_action)
     main_window.privacy_action = QAction("Privacy && Crash Reports…", main_window)
     main_window.privacy_action.setToolTip(
         "Review crash reports from last session, change crash-report consent, "

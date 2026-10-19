@@ -170,9 +170,28 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
 ## [Unreleased]
 
+### Added
+
+- **A support layer on top of the doctor and crash unit.**
+  `the-oracle bug-report` composes a local bug report with a redacted
+  diagnostics snapshot (`new`), reviews drafts (`list`, `show`), builds a
+  single shareable zip containing the report, the diagnostics, and the
+  existing support bundle (`package`), prints prefilled GitHub/email links
+  (`issue`), and deletes drafts explicitly (`delete`). The GUI exposes the
+  same flow under **Help → Report a Problem…**. Drafts live in
+  `support_reports/` (newest 25, git-ignored); nothing is uploaded and there
+  is no transport code. Crash records are referenced freely but packaged
+  only with `--include-crash-reports` **and** local consent. See
+  `docs/SUPPORT.md`.
+
 ### Changed
 
-- (nothing yet)
+- `support_bundle` is now version 2: callers may attach extra archive
+  entries, which are validated as safe relative paths and listed in the
+  manifest's `attachments`.
+- The doctor's diagnostics are reusable as structured data: the support
+  layer runs the doctor once and shares the parsed report with the bundle
+  instead of invoking it twice.
 
 ## [1.3.2] — 2026-10-05
 

@@ -112,6 +112,110 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the bundle manifest as JSON instead of a human-readable summary.",
     )
 
+    bug_report = subparsers.add_parser(
+        "bug-report",
+        help="Compose, preview, package, and share a bug report. Drafts stay local; nothing is uploaded.",
+    )
+    bug_report_sub = bug_report.add_subparsers(dest="bug_report_command", required=True)
+    bug_report_new = bug_report_sub.add_parser(
+        "new",
+        help="Create a local draft with a redacted diagnostics snapshot.",
+    )
+    bug_report_new.add_argument("--title", required=True, help="One-line summary (8-160 characters).")
+    bug_report_new.add_argument("--summary", default="", help="What happened, in a sentence or two.")
+    bug_report_new.add_argument(
+        "--step",
+        dest="steps",
+        action="append",
+        default=[],
+        metavar="TEXT",
+        help="One reproduction step; repeat the flag for each step.",
+    )
+    bug_report_new.add_argument("--expected", default="", help="What you expected to happen.")
+    bug_report_new.add_argument("--actual", default="", help="What actually happened.")
+    bug_report_new.add_argument(
+        "--area",
+        default="other",
+        choices=("render", "gui", "ingest", "voice", "audio", "license", "install", "performance", "other"),
+        help="Which part of the app the problem is in.",
+    )
+    bug_report_new.add_argument(
+        "--severity",
+        default="normal",
+        choices=("low", "normal", "high", "blocking"),
+        help="How much the problem blocks you.",
+    )
+    bug_report_new.add_argument("--contact", default="", help="How support should reply (optional).")
+    bug_report_new.add_argument(
+        "--crash",
+        nargs="?",
+        const="newest",
+        default=None,
+        metavar="RECORD",
+        help="Name a local crash record to reference, or omit the value for the newest one.",
+    )
+    bug_report_new.add_argument(
+        "--no-diagnostics",
+        action="store_true",
+        help="Do not attach the diagnostics snapshot (not recommended).",
+    )
+    bug_report_new.add_argument(
+        "--no-doctor",
+        action="store_true",
+        help="Skip the doctor subprocess; the rest of the diagnostics are still collected.",
+    )
+    bug_report_new.add_argument("--json", action="store_true", help="Emit the draft as JSON.")
+
+    bug_report_list = bug_report_sub.add_parser("list", help="List local drafts, newest first.")
+    bug_report_list.add_argument("--json", action="store_true", help="Emit the drafts as JSON.")
+
+    bug_report_show = bug_report_sub.add_parser(
+        "show", help="Print a draft as Markdown (or JSON), ready to review before sharing."
+    )
+    bug_report_show.add_argument("report_id", help="The report id printed by `bug-report new`.")
+    bug_report_show.add_argument("--json", action="store_true", help="Emit the stored draft as JSON.")
+    bug_report_show.add_argument(
+        "--no-diagnostics",
+        action="store_true",
+        help="Leave the diagnostics section out of the Markdown.",
+    )
+
+    bug_report_package = bug_report_sub.add_parser(
+        "package",
+        help="Build one support zip containing the report, diagnostics, and redacted support bundle.",
+    )
+    bug_report_package.add_argument("report_id", help="The report id to package.")
+    bug_report_package.add_argument("--out", default=None, help="Where to write the zip.")
+    bug_report_package.add_argument(
+        "--include-crash-reports",
+        action="store_true",
+        help="Include local crash records, but only when crash-reporting consent is on.",
+    )
+    bug_report_package.add_argument(
+        "--no-doctor", action="store_true", help="Skip the doctor subprocess in the package."
+    )
+    bug_report_package.add_argument("--json", action="store_true", help="Emit the result as JSON.")
+
+    bug_report_issue = bug_report_sub.add_parser(
+        "issue", help="Print a prefilled GitHub issue link and support email link for a draft."
+    )
+    bug_report_issue.add_argument("report_id", help="The report id to build links for.")
+    bug_report_issue.add_argument("--json", action="store_true", help="Emit both links as JSON.")
+
+    bug_report_delete = bug_report_sub.add_parser("delete", help="Delete one local draft.")
+    bug_report_delete.add_argument("report_id", help="The report id to delete.")
+    bug_report_delete.add_argument(
+        "--yes", action="store_true", help="Confirm deletion (required; the CLI never prompts)."
+    )
+
+    bug_report_diagnose = bug_report_sub.add_parser(
+        "diagnose", help="Print the diagnostics snapshot a report would attach."
+    )
+    bug_report_diagnose.add_argument(
+        "--no-doctor", action="store_true", help="Skip the doctor subprocess."
+    )
+    bug_report_diagnose.add_argument("--json", action="store_true", help="Emit the full snapshot as JSON.")
+
     setup_vulkan = subparsers.add_parser(
         "setup-vulkan",
         help="One-shot automatic setup for the Vulkan (GPU) backend: build audiocpp_cli and download the Chatterbox model if missing.",
@@ -1412,6 +1516,256 @@ def handle_support_bundle(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_crash_record(root: Path, requested: str | None) -> str | None:
+    """Resolve --crash to one local record name. A report references a record;
+    it never reads or copies the crash data itself (the package's consent
+    gate does that)."""
+    from the_oracle import crash
+
+    if not requested:
+        return None
+    records = crash.list_records(root)
+    if not records:
+        raise ValueError("no local crash records exist; run `the-oracle privacy-status`")
+    if requested == "newest":
+        return records[0].name
+    name = Path(requested).name
+    if any(record.name == name for record in records):
+        return name
+    raise ValueError(f"no crash record named {name!r}")
+
+
+def _handle_bug_report_new(args: argparse.Namespace) -> int:
+    from the_oracle.offline import repo_root
+    from the_oracle.support import issue_url, mailto_url, new_report, save_report, share_note
+
+    root = repo_root()
+    try:
+        crash_record = _resolve_crash_record(root, args.crash)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    try:
+        report = new_report(
+            root,
+            title=args.title,
+            summary=args.summary,
+            steps=args.steps,
+            expected=args.expected,
+            actual=args.actual,
+            area=args.area,
+            severity=args.severity,
+            contact=args.contact,
+            crash_record=crash_record,
+            include_diagnostics=not args.no_diagnostics,
+            run_doctor=not args.no_doctor,
+        )
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    path = save_report(root, report)
+    issue = issue_url(report)
+    mail = mailto_url(report)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "report": report.to_dict(),
+                    "path": str(path),
+                    "issue_url": issue,
+                    "mailto_url": mail,
+                },
+                indent=2,
+            )
+        )
+        return 0
+    print(f"Bug report {report.report_id} saved to {path}")
+    print(share_note(report))
+    print("Nothing was uploaded.")
+    return 0
+
+
+def _handle_bug_report_list(args: argparse.Namespace) -> int:
+    from the_oracle.offline import repo_root
+    from the_oracle.support import list_reports
+
+    reports = list_reports(repo_root())
+    if args.json:
+        print(
+            json.dumps(
+                [
+                    {
+                        "report_id": report.report_id,
+                        "created_utc": report.created_utc,
+                        "updated_utc": report.updated_utc,
+                        "title": report.title,
+                        "area": report.area,
+                        "severity": report.severity,
+                        "bundle_path": report.bundle_path,
+                    }
+                    for report in reports
+                ],
+                indent=2,
+            )
+        )
+        return 0
+    if not reports:
+        print("No bug reports yet.")
+        print('Create one with: the-oracle bug-report new --title "..." --summary "..."')
+        return 0
+    for report in reports:
+        print(
+            f"{report.report_id}  {report.created_utc[:10]}  "
+            f"{report.severity:<8}  {report.area:<11}  {report.title}"
+        )
+    print(f"\n{len(reports)} report(s). Show one with: the-oracle bug-report show <id>")
+    return 0
+
+
+def _handle_bug_report_show(args: argparse.Namespace) -> int:
+    from the_oracle.offline import repo_root
+    from the_oracle.support import load_report, report_json, report_markdown
+
+    try:
+        report = load_report(repo_root(), args.report_id)
+    except (FileNotFoundError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(report_json(report))
+    else:
+        print(report_markdown(report, include_diagnostics=not args.no_diagnostics))
+    return 0
+
+
+def _handle_bug_report_package(args: argparse.Namespace) -> int:
+    from the_oracle.offline import repo_root
+    from the_oracle.support import build_report_package, load_report
+
+    root = repo_root()
+    try:
+        report = load_report(root, args.report_id)
+        result = build_report_package(
+            root,
+            report,
+            args.out,
+            include_crash_reports=args.include_crash_reports,
+            run_doctor=not args.no_doctor,
+        )
+    except (FileNotFoundError, ValueError, OSError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "report_id": result.report.report_id,
+                    "path": str(result.path),
+                    "manifest": result.bundle.manifest,
+                    "issue_url": result.issue_url,
+                    "mailto_url": result.mailto_url,
+                    "crash_reports_included": result.crash_reports_included,
+                },
+                indent=2,
+            )
+        )
+        return 0
+    print(f"Support package written to {result.path}")
+    print(f"Included {len(result.bundle.included)} file(s).")
+    if result.crash_reports_included:
+        print("Crash records were included (local consent was on).")
+    else:
+        print("No crash records included (consent off or not requested).")
+    if result.bundle.skipped:
+        print("Skipped: " + "; ".join(result.bundle.skipped), file=sys.stderr)
+    print("Review the archive before sharing it; nothing was uploaded.")
+    print("Bug report link: run `the-oracle bug-report issue " + report.report_id + "`")
+    return 0
+
+
+def _handle_bug_report_issue(args: argparse.Namespace) -> int:
+    from the_oracle.offline import repo_root
+    from the_oracle.support import issue_url, load_report, mailto_url
+
+    try:
+        report = load_report(repo_root(), args.report_id)
+    except (FileNotFoundError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    issue = issue_url(report)
+    mail = mailto_url(report)
+    if args.json:
+        print(json.dumps({"issue_url": issue, "mailto_url": mail}, indent=2))
+        return 0
+    print("Prefilled issue (open it yourself; nothing was opened):")
+    print(issue)
+    print()
+    print("Prefilled support email:")
+    print(mail)
+    print()
+    print("Attach the package from `the-oracle bug-report package " + report.report_id + "`.")
+    return 0
+
+
+def _handle_bug_report_delete(args: argparse.Namespace) -> int:
+    from the_oracle.offline import repo_root
+    from the_oracle.support import delete_report
+
+    if not args.yes:
+        print(
+            "error: deleting a report needs --yes (the CLI never prompts). "
+            f"Re-run: the-oracle bug-report delete {args.report_id} --yes",
+            file=sys.stderr,
+        )
+        return 2
+    if delete_report(repo_root(), args.report_id):
+        print(f"Deleted bug report {args.report_id}.")
+        return 0
+    print(f"error: no bug report with id {args.report_id!r}", file=sys.stderr)
+    return 1
+
+
+def _handle_bug_report_diagnose(args: argparse.Namespace) -> int:
+    from the_oracle.offline import repo_root
+    from the_oracle.support import collect_diagnostics, compact_diagnostics
+
+    diagnostics = collect_diagnostics(repo_root(), run_doctor=not args.no_doctor)
+    if args.json:
+        print(json.dumps(diagnostics, indent=2))
+        return 0
+    compact = compact_diagnostics(diagnostics)
+    system = compact.get("system", {})
+    print(f"The Oracle {compact.get('app_version')} diagnostics (redacted)")
+    print(f"  system:   {system.get('system')} {system.get('release')} ({system.get('machine')})")
+    print(f"  python:   {system.get('python')} ({system.get('python_bits')}-bit)")
+    print(f"  cpu:      {system.get('cpu_count')} core(s), {system.get('processor') or 'unknown'}")
+    print(f"  qt:       {compact.get('qt', {}).get('pyside6_version') or 'not installed'}")
+    print(f"  engine:   chatterbox={compact.get('engines', {}).get('chatterbox_available')}")
+    print(f"  ffmpeg:   {compact.get('ffmpeg', {}).get('present')}")
+    print(f"  crash:    consent={compact.get('crash', {}).get('capture_consent')} "
+          f"records={compact.get('crash', {}).get('record_count')}")
+    doctor = compact.get("doctor", {})
+    print(f"  doctor:   {doctor.get('ok') if doctor.get('ran') else doctor.get('detail')}")
+    print()
+    print("No paths, usernames, tokens, or environment values are included.")
+    return 0
+
+
+def handle_bug_report(args: argparse.Namespace) -> int:
+    """Dispatch the nested bug-report commands (argparse leaves the choice on
+    ``args.bug_report_command``; the flat dispatch style stays in main())."""
+    handlers = {
+        "new": _handle_bug_report_new,
+        "list": _handle_bug_report_list,
+        "show": _handle_bug_report_show,
+        "package": _handle_bug_report_package,
+        "issue": _handle_bug_report_issue,
+        "delete": _handle_bug_report_delete,
+        "diagnose": _handle_bug_report_diagnose,
+    }
+    return handlers[args.bug_report_command](args)
+
+
 def handle_license_status() -> int:
     """Print the install's license status as JSON. Offline by construction:
     verification is a pure function of the stored token and embedded keys."""
@@ -1569,6 +1923,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_render_report(args)
     if args.command == "support-bundle":
         return handle_support_bundle(args)
+    if args.command == "bug-report":
+        return handle_bug_report(args)
     if args.command == "setup-vulkan":
         return handle_setup_vulkan()
     if args.command == "license-status":

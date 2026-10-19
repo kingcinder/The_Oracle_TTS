@@ -67,7 +67,7 @@ MANIFEST = REPO_ROOT / "scripts" / "patch_surface_manifest.json"
 _OWNER = "the_oracle.gui_menu"
 _OWNER_NAME = "build_menu"
 
-#: Every attribute the moved body must SET on ``main_window``: the 24 public
+#: Every attribute the moved body must SET on ``main_window``: the 25 public
 #: action attributes, the two menus the rest of the window reads
 #: (``inference_wizard_menu``, ``templates_menu``), and ``_theme_actions``.
 #: A body that stopped setting any of these would strand a read elsewhere in
@@ -85,6 +85,7 @@ _MOVED_BODY_ASSIGNMENTS = (
     "remember_backend_action",
     "download_vulkan_model_action",
     "recording_studio_action",
+    "report_problem_action",
     "privacy_action",
     "activate_license_action",
     "about_action",
@@ -466,6 +467,7 @@ class _StubWindow(QMainWindow):
             "_on_remember_backend_toggled",
             "download_vulkan_model",
             "open_recording_studio",
+            "_open_problem_report",
             "_open_crash_privacy_dialog",
             "_open_license_activation",
             "_open_about_panel",
