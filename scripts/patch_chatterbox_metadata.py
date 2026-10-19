@@ -36,6 +36,16 @@ def _replace_metadata(path: Path) -> None:
         elif new_line not in text:
             raise ValueError(f"missing expected dependency {old!r} in {metadata_path}")
 
+    # pykakasi is GPL-3.0-or-later and is only used by Chatterbox's lazy
+    # Japanese token-conversion path, which already logs and skips when the
+    # import is absent. Removing the requirement keeps the alpha's dependency
+    # closure free of strong copyleft without touching English synthesis.
+    text = "".join(
+        line
+        for line in text.splitlines(keepends=True)
+        if not line.startswith("Requires-Dist: pykakasi")
+    )
+
     _atomic_write(metadata_path, text.encode("utf-8"))
     _update_record(path, metadata_path)
 

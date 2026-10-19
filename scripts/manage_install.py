@@ -54,7 +54,6 @@ CHATTERBOX_ENGINE_PACKAGES = (
     "safetensors==0.8.0",
     "PyYAML>=6.0",
     "spacy-pkuseg",
-    "pykakasi==2.3.0",
     "pyloudnorm",
     "omegaconf",
 )
@@ -487,7 +486,6 @@ def run_gui() -> int:
         has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
         if not has_display:
             return fail(f"No GUI display detected. Set DISPLAY or WAYLAND_DISPLAY, then rerun {REPO_ROOT / 'run_oracle_tts.sh'}.")
-        env.setdefault("LTP_JAR_DIR_PATH", str(Path.home() / ".cache" / "language_tool_python" / "LanguageTool-6.8-SNAPSHOT"))
         if not env.get("QT_QPA_PLATFORM") and os.environ.get("DISPLAY"):
             env["QT_QPA_PLATFORM"] = "xcb"
     completed = subprocess.run([str(entrypoint), "gui"], cwd=REPO_ROOT, env=env, check=False)

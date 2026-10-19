@@ -1,4 +1,4 @@
-"""FLAC export with PySoundFile primary writing and ffmpeg fallback metadata tagging."""
+"""FLAC export with SoundFile primary writing and ffmpeg fallback tagging."""
 
 from __future__ import annotations
 
@@ -10,20 +10,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-# mutagen used to be first imported inside _tag_with_mutagen — i.e. inside
-# whatever thread ran the export. A module whose first import happens on a
-# worker thread races the GUI's main thread through shiboken6's signature
-# import hook and the pair segfaults natively (reproduced and
-# faulthandler-verified, U4.2). It is imported here, at module level, so the
-# first import always lands wherever this module itself is first imported
-# (the main thread for GUI renders).
-import mutagen.flac
-import mutagen.oggvorbis
-
-# The class binding lives at module level too: the suite-wide sweep
-# (tests/test_worker_import_sweep.py) requires worker-reachable modules to
-# carry no function-level imports at all — structural, not incidental.
-FLAC = mutagen.flac.FLAC
+from the_oracle.audio.flac_tags import write_vorbis_comments
 
 LOGGER = logging.getLogger(__name__)
 
@@ -43,15 +30,16 @@ def next_available_output_path(path: str | Path) -> Path:
         index += 1
 
 
-def _tag_with_mutagen(path: Path, metadata: dict[str, str]) -> None:
-    # FLAC is bound at module level above; the preload comment there records
-    # why the import must never move inside a function (shiboken import-hook
-    # race on worker threads, U4.2).
-    tags = FLAC(str(path))
-    for key, value in metadata.items():
-        if value:
-            tags[key] = [str(value)]
-    tags.save()
+def _tag_flac(path: Path, metadata: dict[str, str]) -> None:
+    """Write Vorbis comments through the stdlib tagger in ``flac_tags``.
+
+    The import lives at module level, not inside this function: the
+    suite-wide worker sweep (``tests/test_worker_import_sweep.py``) requires
+    worker-reachable modules to carry no function-level imports, and a
+    first-import on a QThread races the GUI main thread through shiboken's
+    signature hook (U4.2).
+    """
+    write_vorbis_comments(path, metadata)
 
 
 def _ffmpeg_write(path: Path, audio: np.ndarray, sample_rate: int, metadata: dict[str, str]) -> None:
@@ -85,7 +73,7 @@ def write_flac(path: str | Path, audio: np.ndarray, sample_rate: int, metadata: 
     # Tagging is best-effort metadata only: a tagging failure must warn, not
     # fail an export whose audio file was written successfully.
     try:
-        _tag_with_mutagen(destination, metadata)
+        _tag_flac(destination, metadata)
     except Exception as exc:
         LOGGER.warning("FLAC tagging failed for %s (%s); audio export kept.", destination, exc)
     return destination

@@ -36,10 +36,8 @@ from PySide6.QtWidgets import QDialog, QLabel, QProgressBar, QVBoxLayout, QWidge
 # happens inside a worker thread races the GUI's main thread through
 # shiboken6's signature import hook (inspect.getsource runs during import)
 # and the pair segfaults natively — reproduced and faulthandler-verified for
-# mutagen (U4.2, see .serpent-circle/04-debug/root-causes.md). Keep this list
-# in lockstep with tests/test_gui_render_import_safety.py.
-import mutagen.flac  # noqa: F401 - preloaded for _tag_with_mutagen
-import mutagen.oggvorbis  # noqa: F401
+# a third-party tagger (U4.2, see .serpent-circle/04-debug/root-causes.md).
+# Keep this list in lockstep with tests/test_gui_render_import_safety.py.
 import tempfile  # noqa: F401 - used inside the subprocess helpers
 
 from the_oracle.audio.export_srt import write_srt

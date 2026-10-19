@@ -3,6 +3,28 @@
 Notable user-facing changes to The Oracle. The version number itself lives in
 one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
+## [1.4.1] — 2026-10-19
+
+### Changed
+
+- **The runtime no longer carries a strong-copyleft dependency.** `mutagen`
+  (FLAC tagging) is replaced by a small stdlib Vorbis-comment writer;
+  `language-tool-python` (the optional GPL grammar client) is removed, leaving
+  the deterministic local grammar fixes as the supported path; and `pykakasi`
+  (GPL, pulled by `chatterbox-tts` for Japanese token conversion) is removed
+  from the installer and from Chatterbox's patched requirements. English and
+  non-Japanese multilingual rendering are unchanged; Japanese text conversion
+  is skipped with Chatterbox's existing warning.
+- The commercial gate now has one owner-action blocker left: the EULA draft.
+  The `license_policy` strong-copyleft blockers are gone; the LGPL obligation
+  for PySide6/Qt remains a warning that must accompany distribution.
+
+### Fixed
+
+- FLAC export writes standard Vorbis comments (`TITLE`, `ARTIST`, `COMMENT`,
+  and the render-plan fields) without a GPL tagger, preserves unrelated
+  comments on a re-tag, and leaves a readable FLAC stream behind.
+
 ## [1.4.0] — 2026-10-19
 
 ### Added

@@ -40,7 +40,7 @@ def _sample_project(tmp_path: Path):
     return pipeline, plan, settings, speakers
 
 
-@pytest.mark.slow  # prepare_plan runs the full repair pipeline (LanguageTool download)
+@pytest.mark.slow  # prepare_plan runs the full repair pipeline
 def test_project_manifest_round_trip_preserves_key_fields(tmp_path: Path) -> None:
     _pipeline, plan, settings, speakers = _sample_project(tmp_path)
     manifest_path = tmp_path / "project.json"
@@ -63,7 +63,7 @@ def test_project_manifest_round_trip_preserves_key_fields(tmp_path: Path) -> Non
     assert loaded.speaker_settings["A"].voice_settings["pause_ms"] == speakers["A"].voice_settings.pause_ms
 
 
-@pytest.mark.slow  # prepare_plan runs the full repair pipeline (LanguageTool download)
+@pytest.mark.slow  # prepare_plan runs the full repair pipeline
 def test_modified_utterance_state_survives_round_trip(tmp_path: Path) -> None:
     _pipeline, plan, settings, speakers = _sample_project(tmp_path)
     plan.utterances[0].speaker = "B"
@@ -177,7 +177,7 @@ def test_loading_incomplete_manifest_fails_clearly(tmp_path: Path) -> None:
         raise AssertionError("Expected ProjectManifestError for incomplete manifest")
 
 
-@pytest.mark.slow  # prepare_plan runs the full repair pipeline (LanguageTool download)
+@pytest.mark.slow  # prepare_plan runs the full repair pipeline
 def test_loaded_project_renders_with_deterministic_engine(tmp_path: Path) -> None:
     pipeline, plan, settings, speakers = _sample_project(tmp_path)
     manifest_path = tmp_path / "project.json"

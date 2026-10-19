@@ -2,7 +2,7 @@
 grammar review fixes.
 
 Pure-logic tests only: heavy optional dependencies (transformers, torch,
-language_tool_python, soundfile, huggingface_hub) are never required. The
+soundfile, huggingface_hub) are never required. The
 real-engine smoke validation test stubs the two missing audio/model modules
 just long enough to import the module under test, then cleans up so no
 other test file observes the stubs.

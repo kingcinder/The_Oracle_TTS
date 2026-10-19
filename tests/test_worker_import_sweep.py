@@ -3,9 +3,9 @@
 A module whose FIRST import happens inside a QThread races the GUI's main
 thread through shiboken6's signature import hook (``inspect.getsource`` runs
 during import) and the pair segfaults natively — reproduced and
-faulthandler-verified for mutagen (``tests/test_gui_render_import_safety.py``
-holds the narrative and the original pins; see also
-``.serpent-circle/04-debug/root-causes.md``).
+faulthandler-verified for a lazy tagger import
+(``tests/test_gui_render_import_safety.py`` holds the narrative and the
+original pins; see also ``.serpent-circle/04-debug/root-causes.md``).
 
 This file makes the invariant SUITE-WIDE and reusable: the guard lives in
 ``tests/helpers.py`` (``worker_module_import_violations``) so any future
@@ -13,9 +13,9 @@ worker file or worker-reachable module is checked automatically, and the
 one-hop target list is explicit so a new worker call-graph edge must be
 added here deliberately.
 
-**Mutation contract:** deleting the mutagen preload in
-``src/the_oracle/audio/export_flac.py`` and reverting its lazy-import hoist
-must fail ``test_no_worker_thread_first_imports_suite_wide``.
+**Mutation contract:** moving the FLAC tagger import in
+``src/the_oracle/audio/export_flac.py`` back inside a function must fail
+``test_no_worker_thread_first_imports_suite_wide``.
 """
 
 from __future__ import annotations

@@ -55,15 +55,15 @@ def test_missing_package_is_reported(monkeypatch) -> None:
     real_version = doctor.importlib.metadata.version
 
     def fake_version(name: str) -> str:
-        if name == "mutagen":
+        if name == "markdown-it-py":
             raise doctor.importlib.metadata.PackageNotFoundError(name)
         return real_version(name)
 
     monkeypatch.setattr(doctor.importlib.metadata, "version", fake_version)
     status = doctor._dependency_pin_status(REPO_ROOT)
     assert status["ok"] is False
-    assert any(entry["requirement"].startswith("mutagen") for entry in status["missing"])
-    assert "mutagen" in status["error"]
+    assert any(entry["requirement"].startswith("markdown-it-py") for entry in status["missing"])
+    assert "markdown-it-py" in status["error"]
 
 
 def test_every_pinned_group_is_checked_including_dev() -> None:
@@ -117,8 +117,8 @@ def test_multi_occurrence_drift_names_every_pin_in_the_error() -> None:
     def fake_version(name: str) -> str:
         if name == "soundfile":
             return "9.9.9"  # drifts the soundfile pin
-        if name == "mutagen":
-            return "0.0.1"  # drifts the mutagen pin too
+        if name == "markdown-it-py":
+            return "0.0.1"  # drifts the markdown-it-py pin too
         if name == "numpy":
             raise doctor.importlib.metadata.PackageNotFoundError(name)  # missing pin
         return real_version(name)
@@ -132,13 +132,13 @@ def test_multi_occurrence_drift_names_every_pin_in_the_error() -> None:
     assert status["ok"] is False
     assert status["missing"], "vacuity: the probe must hit the real pin set"
     error = status["error"]
-    for token in ("soundfile", "mutagen", "numpy"):
+    for token in ("soundfile", "markdown-it-py", "numpy"):
         assert token in error, (
             f"the composed error must name EVERY drifted/missing pin, not just the "
             f"first: {token!r} is absent from {error!r}"
         )
     # And the structured lists agree with the prose — per-occurrence, not deduped.
-    assert {entry["requirement"].split("==")[0] for entry in status["mismatches"]} >= {"soundfile", "mutagen"}
+    assert {entry["requirement"].split("==")[0] for entry in status["mismatches"]} >= {"soundfile", "markdown-it-py"}
     assert [entry["requirement"] for entry in status["missing"]] == ["numpy>=1.26"]
 
 

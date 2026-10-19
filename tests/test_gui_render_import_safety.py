@@ -2,9 +2,9 @@
 
 A module whose FIRST import happens inside a QThread races the GUI's main
 thread through shiboken6's signature import hook (``inspect.getsource`` runs
-during import), and the pair segfaults natively. This is the 2026-09-28
-repro: ``mutagen.flac`` first imported in the render worker's thread while
-the main thread ran Qt — caught by the U1 faulthandler net
+during import), and the pair segfaults natively. The original 2026-09-28
+repro was a third-party tagger first imported in the render worker's thread
+while the main thread ran Qt — caught by the U1 faulthandler net
 (``crash_reports/native-crash.txt``), same class as the 2026-09-01 crash
 recorded in .serpent-circle/04-debug/root-causes.md.
 
@@ -25,8 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: first import of any of these must happen on the main thread, before
 #: gui_render is even usable — never inside a QThread.
 WORKER_REACHABLE_LAZY_IMPORTS = (
-    "mutagen",
-    "mutagen.flac",
     "tempfile",
     "the_oracle.audio.export_srt",
     "the_oracle.subtitle_targets",
@@ -82,11 +80,10 @@ def test_background_thread_performs_no_first_imports() -> None:
 
     def worker_body() -> None:
         # The exact call-graph shape RenderWorker.run() exercises after the
-        # fix: srt export path, subtitle target naming, flac tagging.
+        # fix: srt export path, subtitle target naming, flac export.
         from the_oracle.audio.export_srt import write_srt  # noqa: F401
+        from the_oracle.audio.export_flac import write_flac  # noqa: F401
         from the_oracle.subtitle_targets import subtitle_sidecar_target  # noqa: F401
-
-        from mutagen.flac import FLAC  # noqa: F401
 
         done.set()
 

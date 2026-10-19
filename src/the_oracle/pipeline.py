@@ -1016,9 +1016,9 @@ class OraclePipeline:
         """Create an analysis/render pipeline.
 
         The desktop GUI opts out of the optional native stacks during analysis:
-        loading transformer/PyTorch and LanguageTool from the Qt process can
-        crash some Ubuntu/Mesa/PySide6 combinations, while the deterministic
-        local fallbacks provide the same safe review flow. The CLI keeps the
+        loading transformer/PyTorch from the Qt process can crash some
+        Ubuntu/Mesa/PySide6 combinations, while the deterministic local
+        fallbacks provide the same safe review flow. The CLI keeps the
         historical feature-rich defaults.
         """
         self.ingestor = TextIngestor()

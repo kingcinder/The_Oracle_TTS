@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-pytestmark = pytest.mark.slow  # runs the full repair pipeline (LanguageTool download)
+pytestmark = pytest.mark.slow  # runs the full repair pipeline
 
 from the_oracle.models.project import VoiceSettings
 from the_oracle.models.settings import RenderSettings, SpeakerSettings; from the_oracle.pipeline import OraclePipeline

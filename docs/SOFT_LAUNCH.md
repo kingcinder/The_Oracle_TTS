@@ -1,4 +1,4 @@
-# The Oracle 1.4.0 — Commercial Alpha Soft Launch
+# The Oracle 1.4.1 — Commercial Alpha Soft Launch
 
 Status: **paid alpha release candidate**. Linux is supported; Windows is
 **experimental**. The commercial gate (`python scripts/soft_launch.py --check`)
@@ -10,9 +10,9 @@ runs.
 
 A narrow, early-access release for users who want local, offline dialogue
 rendering and are willing to report problems. It is not a general-availability
-release: the Windows GUI crash certification item is still open, the
-dependency-license review is in progress, and the EULA is awaiting the owner's
-governing-law decision and counsel review.
+release: the Windows GUI crash certification item is still open and the EULA
+is awaiting the owner's governing-law decision and counsel review. The three
+strong-copyleft runtime dependencies from the 1.4.0 candidate are gone.
 
 Community remains everything that shipped before 1.4.0. A missing or expired
 license never locks a workflow; it reports the community edition and keeps
@@ -126,11 +126,12 @@ changed.
 - **First run downloads models.** The first render may need a multi-GB model
   download; the doctor announces it before it starts. Offline installs use the
   bundle instead.
-- **Dependency-license review is in progress.** `mutagen` (GPL-2.0-or-later),
-  `language-tool-python` (GPL-3.0), and `pykakasi` (GPL-3.0-or-later, pulled by
-  `chatterbox-tts`) are recorded as blockers in
-  [`scripts/license_review.json`](../scripts/license_review.json). Do not
-  distribute a paid build until each has a recorded decision.
+- **Strong-copyleft dependencies are removed.** FLAC tagging is native,
+  grammar repair uses the local fixes only, and Japanese token conversion is
+  skipped by `chatterbox-tts` when `pykakasi` is absent. English and
+  non-Japanese multilingual rendering are unchanged. There is no
+  strong-copyleft review item left in
+  [`scripts/license_review.json`](../scripts/license_review.json).
 - **The EULA is a draft.** `EULA-DRAFT.md` still needs a governing-law/venue
   section and counsel review. The gate refuses distribution until it is
   renamed to `EULA.md` and finalized.
@@ -148,7 +149,6 @@ Run the gate, then clear each blocker:
 | Blocker | Owner action |
 |---|---|
 | `eula` | Complete the governing-law/venue section, rename `EULA-DRAFT.md` to `EULA.md`, remove the DRAFT marker, and have counsel review it. |
-| `license_policy` (strong copyleft) | For each of `mutagen`, `language-tool-python`, and `pykakasi`: replace it, separate it from the proprietary distribution, or record an `allow` decision in `scripts/license_review.json` after legal review. |
 | `third_party_notices` | Regenerate with `python scripts/generate_third_party_notices.py --check` and commit the diff. |
 | `voice_assets` | Keep `Seashells/ASSETS.md` truthful; every shipped `.wav` needs a source and license. |
 | `version` | Keep `__version__`, the README banner, and `CHANGELOG.md` in agreement (`scripts/release.py --check`). |

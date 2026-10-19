@@ -16,7 +16,8 @@ def test_chatterbox_metadata_matches_the_audited_oracle_stack(tmp_path: Path) ->
     metadata.write_text(
         "Metadata-Version: 2.1\nName: chatterbox-tts\nVersion: 0.1.7\n"
         "Requires-Dist: transformers==5.2.0\nRequires-Dist: diffusers==0.29.0\n"
-        "Requires-Dist: safetensors==0.5.3\nRequires-Dist: gradio==6.8.0\n",
+        "Requires-Dist: safetensors==0.5.3\nRequires-Dist: gradio==6.8.0\n"
+        "Requires-Dist: pykakasi==2.3.0\n",
         encoding="utf-8",
     )
     (dist_info / "RECORD").write_text(
@@ -33,6 +34,7 @@ def test_chatterbox_metadata_matches_the_audited_oracle_stack(tmp_path: Path) ->
     assert b"Requires-Dist: diffusers==0.38.0" in content
     assert b"Requires-Dist: safetensors==0.8.0" in content
     assert b"Requires-Dist: gradio==6.16.0" in content
+    assert b"pykakasi" not in content
     rows = list(csv.reader(io.StringIO((dist_info / "RECORD").read_text(encoding="utf-8"))))
     expected = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).decode("ascii").rstrip("=")
     assert rows[0][1] == f"sha256={expected}"

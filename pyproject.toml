@@ -14,7 +14,6 @@ authors = [
 ]
 dependencies = [
   "markdown-it-py==3.0.0",
-  "mutagen==1.47.0",
   "numpy>=1.26",
   "Pillow>=12.3.0",
   "urllib3>=2.8.0",
@@ -30,7 +29,6 @@ dependencies = [
 [project.optional-dependencies]
 ml = [
   "deepmultilingualpunctuation==1.0.1",
-  "language-tool-python==2.9.4",
   "transformers==5.20.0",
 ]
 chatterbox = [

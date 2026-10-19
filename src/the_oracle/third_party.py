@@ -410,14 +410,6 @@ _EXTERNAL_COMPONENTS: tuple[Component, ...] = (
         source="https://ffmpeg.org/",
         notice="Not bundled. The host supplies ffmpeg; its own build determines the exact license.",
     ),
-    Component(
-        name="LanguageTool",
-        version="downloaded at first use",
-        license="LGPL-2.1",
-        kind="external",
-        source="https://languagetool.org/",
-        notice="The LanguageTool server is downloaded separately, not bundled in the wheel.",
-    ),
 )
 
 #: PySide6 and shiboken6 ship as native binaries; they are in the Python
@@ -558,9 +550,9 @@ def render_notices(inventory: Inventory) -> str:
         "  combined distribution without a recorded legal decision. The commercial",
         "  gate reports them as blockers until `scripts/license_review.json` records",
         "  the decision.",
-        "- **External tools** (ffmpeg, LanguageTool, audio.cpp/ggml) are not part of",
-        "  the Python wheel. The host supplies ffmpeg; the optional Vulkan backend",
-        "  builds audio.cpp/ggml locally; LanguageTool is downloaded separately.",
+        "- **External tools** (ffmpeg, audio.cpp/ggml) are not part of the Python",
+        "  wheel. The host supplies ffmpeg; the optional Vulkan backend builds",
+        "  audio.cpp/ggml locally.",
         "",
         "## Bundled assets, models, and external components",
         "",

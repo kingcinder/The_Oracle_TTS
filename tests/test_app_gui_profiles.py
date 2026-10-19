@@ -292,9 +292,9 @@ def test_gui_pipeline_uses_native_safe_analysis_dependencies(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """GUI analysis must not load transformer/LanguageTool native stacks.
+    """GUI analysis must not load the transformer native stack.
 
-    Those stacks are safe for the synchronous CLI path but can segfault when
+    The stack is safe for the synchronous CLI path but can segfault when
     loaded from the Qt process on this Ubuntu desktop; the GUI uses the local
     deterministic fallbacks instead.
     """

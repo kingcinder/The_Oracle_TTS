@@ -8,6 +8,11 @@ Everything below was run in this session; the commands are given so they can be
 re-run. Where a finding is documented rather than fixed, the reason is stated —
 nothing here is silently accepted.
 
+> **Superseded on 2026-10-19 by 1.4.1:** the three strong-copyleft runtime
+> dependencies recorded below were removed (native FLAC tags, local-only
+> grammar repair, and no `pykakasi`). The commercial gate's only remaining
+> owner-action blocker is the EULA.
+
 ## 1. Published test-vector key in the production registry — FIXED
 
 `src/the_oracle/licensing/keys.py` shipped exactly one entry, `k1`, whose public

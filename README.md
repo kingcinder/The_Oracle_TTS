@@ -1,6 +1,6 @@
 # The Oracle
 
-**Release V1.4.0 (commercial alpha)** — Production offline licensing, generated third-party notices, redacted support bundles, and a commercial soft-launch gate.
+**Release V1.4.1 (commercial alpha)** — Production offline licensing, generated third-party notices, redacted support bundles, and a commercial soft-launch gate.
 
 Changes between releases: [CHANGELOG.md](CHANGELOG.md). Upgrading an
 existing install: [docs/UPGRADING.md](docs/UPGRADING.md). Problems:
@@ -12,14 +12,14 @@ The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` 
 
 Chatterbox outputs include built-in Perth watermarking by design. This project does not remove or hide that.
 
-## Alpha Soft Launch (1.4.0)
+## Alpha Soft Launch (1.4.1)
 
-The 1.4.0 branch is a narrow, paid alpha: Linux is supported and Windows is
+The 1.4.1 release is a narrow, paid alpha: Linux is supported and Windows is
 **experimental**. Read [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md) for the
 install path, the purchase and offline activation flow, the platform scope,
 and the owner go-live checklist. Commercial distribution is gated by
-`python scripts/soft_launch.py --check`; the EULA and the dependency-license
-review are tracked as explicit blockers there, not hidden in prose.
+`python scripts/soft_launch.py --check`; the EULA is the remaining blocker,
+and the strong-copyleft dependency review is cleared.
 
 For support, create a redacted local bundle and attach it to your support
 email — nothing is uploaded automatically:
@@ -73,7 +73,7 @@ settings untouched. The underlying per-action scripts
 ## Platform Support
 
 - Supported Python: `3.11` or `3.12`
-- Supported operating systems: Linux and Windows (Windows is **experimental** in the 1.4.0 alpha; see [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md))
+- Supported operating systems: Linux and Windows (Windows is **experimental** in the 1.4.1 alpha; see [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md))
 - Default execution path: CPU (PyTorch Chatterbox in-process); CUDA is available when a CUDA-enabled PyTorch wheel and a suitable NVIDIA GPU are detected
 - Vulkan is available as an opt-in inference backend via audio.cpp (`--inference-backend vulkan`); see "Vulkan Backend (audio.cpp)" below
 
@@ -281,17 +281,11 @@ GUI launch through the managed launcher:
 the-oracle gui
 ```
 
-Text repair runs a local LanguageTool grammar pass when available. First use
-downloads the LanguageTool server (hundreds of MB). A render never waits on
-that download: if a complete LanguageTool snapshot is already on disk it is
-reused directly (this also covers the upstream quirk where the library's
-pinned snapshot label goes stale vs. what the server actually serves);
-otherwise the render falls back to the built-in local fixes immediately and
-hands the download to a detached background helper, so a later run picks up
-the real tool once the cache is populated (a lock file keeps rapid renders
-from starting duplicate downloads). If the tool is cached but slow to start,
-the load is bounded to 25 seconds — set `ORACLE_LANGUAGE_TOOL_TIMEOUT=<seconds>`
-to tune that bound.
+Text repair uses the built-in, deterministic local grammar and punctuation
+fixes. The optional LanguageTool client was removed in 1.4.1 because its
+Python wrapper is GPL-3.0; there is no grammar download, background helper,
+network call, or thread to wait on. The community edition keeps the same
+local repair workflow.
 
 ### First-run inference setup and tutorial
 

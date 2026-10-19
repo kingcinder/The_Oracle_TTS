@@ -73,7 +73,7 @@ def test_apply_directives_merges_overrides() -> None:
     assert merged.temperature == 0.8  # untouched
 
 
-@pytest.mark.slow  # full repair pipeline downloads LanguageTool (hundreds of MB)
+@pytest.mark.slow  # full repair pipeline
 def test_prepare_plan_strips_and_applies_directives(tmp_path: Path) -> None:
     dialogue = tmp_path / "dialogue.txt"
     dialogue.write_text("Speaker A: (tone: sad) [pause=900] We made it.\n", encoding="utf-8")

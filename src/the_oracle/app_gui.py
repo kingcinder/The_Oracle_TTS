@@ -2901,10 +2901,10 @@ class MainWindow(QMainWindow):
             self.pipeline = self._prewarmed_pipeline
             return self.pipeline
         # Keep GUI analysis on the deterministic local fallbacks. The optional
-        # transformer/PyTorch and LanguageTool stacks can load native code or
-        # spawn helper threads inside the Qt process; on Ubuntu 24.04 that
-        # combination has been observed to segfault when Analyze is clicked.
-        # The CLI still uses OraclePipeline's feature-rich defaults.
+        # transformer/PyTorch stack can load native code or spawn helper
+        # threads inside the Qt process; on Ubuntu 24.04 that combination has
+        # been observed to segfault when Analyze is clicked. The CLI still uses
+        # OraclePipeline's feature-rich defaults.
         self.pipeline = OraclePipeline(
             use_transformers=False,
             use_language_tool=False,

@@ -209,10 +209,9 @@ def run_deterministic_smoke_render(output_root: str | Path, source_format: str =
         patch("the_oracle.pipeline.ChatterboxEngine", _DeterministicChatterboxEngine),
         patch("the_oracle.pipeline.GoEmotionsClassifier", _SmokeEmotionClassifier),
     ):
-        # Smoke verification must be deterministic and offline. Constructing
-        # the feature-rich default pipeline can trigger LanguageTool's first-use
-        # 259 MB download, which is surprising for a local verification command
-        # and can leave a background downloader running after the smoke exits.
+        # Smoke verification must be deterministic and offline. The
+        # feature-rich default pipeline can pull optional native stacks; the
+        # smoke command deliberately exercises only the local fallbacks.
         pipeline = OraclePipeline(
             use_transformers=False,
             use_language_tool=False,

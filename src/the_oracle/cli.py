@@ -966,9 +966,8 @@ def handle_render(args: argparse.Namespace) -> int:
         speakers = saved.speaker_settings
     else:
         # Validate inputs before constructing the pipeline: OraclePipeline()
-        # eagerly spawns the LanguageTool download (hundreds of MB) and waits
-        # on it, so a missing-flag mistake should fail fast instead of after an
-        # expensive load.
+        # loads the optional repair stack, so a missing-flag mistake should
+        # fail fast instead of after an expensive load.
         if args.fix_input and args.fix_input_interactive:
             # An explicit error instead of silently favoring one flag: the
             # combination is almost always a script mistake, and a surprise

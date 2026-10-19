@@ -412,10 +412,10 @@ class TestEmptyResamplers:
 class TestFlacExport:
     def test_tagging_failure_warns_but_keeps_export(self, tmp_path: Path, caplog):
         def _boom(path, metadata):
-            raise RuntimeError("mutagen exploded")
+            raise RuntimeError("tagger exploded")
 
         monkeypatched = pytest.MonkeyPatch()
-        monkeypatched.setattr(flac_mod, "_tag_with_mutagen", _boom)
+        monkeypatched.setattr(flac_mod, "_tag_flac", _boom)
         try:
             with caplog.at_level(logging.WARNING, logger=flac_mod.LOGGER.name):
                 dest = flac_mod.write_flac(tmp_path / "out.flac", _sine(0.2), SAMPLE_RATE,

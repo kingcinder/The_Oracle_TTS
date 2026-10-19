@@ -1,174 +1,20 @@
-"""Grammar correction with a local LanguageTool-first strategy and a safe fallback."""
+"""Grammar correction with the local fallback.
+
+The optional ``language_tool_python`` client was removed in 1.4.1: its Python
+wrapper is GPL-3.0, which is not safe for the proprietary alpha. The local
+fixes below are the supported behavior; they are deterministic, offline, and
+were already the designed degraded path when LanguageTool was unavailable.
+
+``GrammarCorrector(use_language_tool=...)`` and the ``_try_load_language_tool``
+method remain as no-op compatibility points. Existing callers and patch sites
+keep working, and a test double can still inject a ``_tool`` object with a
+``correct()`` method. No network, download, subprocess, or thread machinery
+lives here anymore.
+"""
 
 from __future__ import annotations
 
-import logging
-import os
 import re
-import subprocess
-import sys
-import threading
-import time
-import weakref
-from pathlib import Path
-
-from the_oracle.offline import is_offline_install
-
-logger = logging.getLogger(__name__)
-
-# First use of language_tool_python downloads the LanguageTool server
-# (hundreds of MB). On a slow link that would otherwise block every render for
-# 30+ minutes; bound the attempt so the local fallback takes over instead.
-# Override for CI with ORACLE_LANGUAGE_TOOL_TIMEOUT (seconds).
-try:
-    LANGUAGE_TOOL_LOAD_TIMEOUT_SECONDS = float(os.environ.get("ORACLE_LANGUAGE_TOOL_TIMEOUT", "25"))
-except ValueError:
-    LANGUAGE_TOOL_LOAD_TIMEOUT_SECONDS = 25.0
-
-# Set once a load attempt is abandoned this process (either the download is
-# missing entirely or a load timed out): another attempt would only race the
-# abandoned background download, so fall back for the remainder of the
-# process. A fresh process picks the tool up once the download completes and
-# populates the cache.
-_LANGUAGE_TOOL_ABANDONED = threading.Event()
-
-# Per-base-class cache of the self-join-defused subclass built by
-# _guarded_language_tool(). Weakly keyed so test doubles are never
-# kept alive or polluted by an entry.
-_GUARDED_LANGUAGE_TOOL_CACHE: "weakref.WeakKeyDictionary[type, type]" = weakref.WeakKeyDictionary()
-
-
-def _language_tool_download_ready() -> bool:
-    """True when the exact LanguageTool version this library build needs is
-    already on disk, so a first use won't trigger the hundreds-of-MB download.
-
-    Checks the same extract path the library's own download_lt() looks for, so
-    a stale or mismatched cache directory (e.g. a leftover snapshot from a
-    different library version) is correctly treated as "not ready". Any
-    uncertainty returns True: the bounded load attempt below is the safety
-    net and must never be skipped because of our own probe.
-    """
-    try:
-        from language_tool_python import download_lt as lt_download
-    except Exception:
-        return True
-    try:
-        # An explicitly configured jar directory means no download is needed.
-        if os.environ.get(lt_download.LTP_JAR_DIR_PATH_ENV_VAR):
-            return True
-        download_folder = lt_download.get_language_tool_download_path()
-        version = lt_download.LTP_DOWNLOAD_VERSION
-        if version == "latest":
-            dirname = f"LanguageTool-{lt_download.LT_SNAPSHOT_CURRENT_VERSION}"
-        else:
-            filename = lt_download.FILENAME_RELEASE.format(version=version)
-            dirname = os.path.splitext(filename)[0]
-        extract_path = os.path.join(download_folder, dirname)
-        return extract_path in lt_download.find_existing_language_tool_downloads(
-            download_folder
-        )
-    except Exception:
-        # Unusual cache layout or library version: assume cached and let the
-        # bounded load attempt decide.
-        return True
-
-
-# A stale lock (from a helper that was SIGKILLed) older than this is reaped
-# so future renders can retry the download instead of skipping forever.
-_WARM_LOCK_STALE_SECONDS = 12 * 60 * 60
-
-
-def _usable_snapshot_dir() -> str | None:
-    """Find a complete, already-downloaded LanguageTool snapshot directory.
-
-    language_tool_python pins an expected snapshot version (e.g.
-    6.7-SNAPSHOT) that can go stale relative to what the server actually
-    serves, so the zip it downloads extracts as a different version and its
-    own "is it cached?" check never matches -- every load would re-download
-    hundreds of MB. When that happens, point the library at the on-disk
-    snapshot via LTP_JAR_DIR_PATH instead of re-downloading.
-
-    Returns None when nothing usable exists (caller should warm/download).
-    """
-    try:
-        from language_tool_python import download_lt as lt_download
-    except Exception:
-        return None
-    try:
-        folder = lt_download.get_language_tool_download_path()
-        for path in lt_download.find_existing_language_tool_downloads(folder):
-            root = Path(path)
-            if root.name.endswith("-SNAPSHOT") and (root / "languagetool-server.jar").is_file():
-                return str(root)
-    except Exception:
-        return None
-    return None
-
-
-def _warm_language_tool_download() -> None:
-    """Kick off the first-use download in a detached helper process so the cache
-    warms for a later run without blocking this render or printing over its
-    progress bars. The helper survives this process, and a lock file in the
-    cache dir keeps rapid renders from starting duplicate downloads."""
-    if is_offline_install():
-        # An offline install must never touch the network, and this helper's
-        # only job is a download that cannot succeed there. The render's own
-        # load path still falls back to local fixes when the server is absent,
-        # and a usable on-disk snapshot is still reused via LTP_JAR_DIR_PATH.
-        logger.info("Offline install: skipping the LanguageTool warm download (no network fetches)")
-        return
-    if not sys.executable:
-        return
-    try:
-        from language_tool_python import download_lt as lt_download
-    except Exception:
-        return
-    try:
-        download_folder = lt_download.get_language_tool_download_path()
-    except Exception:
-        return
-    os.makedirs(download_folder, exist_ok=True)
-    lock_path = os.path.join(download_folder, ".oracle_lt_warm.lock")
-
-    # Reap a stale lock from a helper that was killed before it could clean up.
-    try:
-        if time.time() - os.stat(lock_path).st_mtime > _WARM_LOCK_STALE_SECONDS:
-            os.remove(lock_path)
-    except FileNotFoundError:
-        pass
-
-    try:
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        return  # a warm download is already running
-    os.close(lock_fd)
-
-    child = (
-        "import os\n"
-        "from language_tool_python import download_lt\n"
-        f"lock = {lock_path!r}\n"
-        "try:\n"
-        "    download_lt.download_lt()\n"
-        "finally:\n"
-        "    try:\n"
-        "        os.remove(lock)\n"
-        "    except OSError:\n"
-        "        pass\n"
-    )
-    kwargs: dict[str, object] = {
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-    }
-    if os.name == "posix":
-        kwargs["start_new_session"] = True
-    try:
-        subprocess.Popen([sys.executable, "-c", child], **kwargs)
-    except Exception:
-        # Spawning failed; don't leave the lock behind to block later runs.
-        try:
-            os.remove(lock_path)
-        except OSError:
-            pass
 
 
 COMMON_FIXES = {
@@ -218,113 +64,22 @@ def _capitalize_first(text: str) -> str:
     return text
 
 
-def _guarded_language_tool(base: type) -> type:
-    """Return *base* wrapped so its destructor cannot join its own thread.
-
-    Why this exists: language_tool_python's stdout consumer thread targets a
-    lambda closing over the LanguageTool object, so when that thread
-    finishes, threading's run() epilogue (``del self._target``) can drop the
-    LAST reference to the tool and run ``LanguageTool.__del__`` on the
-    consumer thread itself. The destructor chains into ``close() ->
-    _terminate_server() -> _consumer_thread.join(timeout=5)`` — a thread
-    joining itself — raising ``RuntimeError: cannot join current thread``
-    nondeterministically at teardown. The exact stack was captured verbatim
-    with an instrumented ``threading.Thread.join`` during a full GUI-suite
-    run (see JUNO_FIXES.log 2026-09-20): the raise fired at threading.py's
-    ``del self._target`` via language_tool_python/server.py ``__del__`` ->
-    ``_terminate_server``.
-
-    The join is pointless in that context — the only thread that could
-    observe the stop event is already exiting — so the wrapped destructor
-    clears the consumer-thread handle first (skipping ONLY the self-join;
-    the stop event and the server kill below it run as before) and then
-    delegates to the library's destructor. An explicit close() from any
-    other thread is untouched.
-
-    *base* is resolved from the live ``language_tool_python.LanguageTool``
-    symbol at each use, so monkeypatched test classes are honored too. A
-    non-class *base* (test doubles are often plain callables) is returned
-    unchanged — a callable with no destructor has nothing to defuse.
-    """
-    if not isinstance(base, type):
-        return base
-    cached = _GUARDED_LANGUAGE_TOOL_CACHE.get(base)
-    if cached is not None:
-        return cached
-
-    class _GuardedLanguageTool(base):
-        def __del__(self) -> None:
-            consumer = getattr(self, "_consumer_thread", None)
-            if consumer is not None and consumer is threading.current_thread():
-                # Running on the consumer thread itself: the join below
-                # would raise "cannot join current thread". Drop the
-                # handle so _terminate_server skips only the join.
-                self._consumer_thread = None
-            super().__del__()
-
-    _GUARDED_LANGUAGE_TOOL_CACHE[base] = _GuardedLanguageTool
-    return _GuardedLanguageTool
-
-
 class GrammarCorrector:
     def __init__(self, *, use_language_tool: bool = True) -> None:
         self._tool = self._try_load_language_tool() if use_language_tool else None
 
     def _try_load_language_tool(self):
-        if _LANGUAGE_TOOL_ABANDONED.is_set():
-            return None
-        try:
-            import language_tool_python
-        except Exception:
-            return None
-
-        # The first-use download hasn't completed yet: don't stall the render
-        # waiting for hundreds of MB on a slow link. Fall back to the local
-        # fixes now and warm the cache in the background for a later run.
-        if not _language_tool_download_ready():
-            # The library's pinned snapshot version can be stale vs. what the
-            # server actually serves (see _usable_snapshot_dir), which would
-            # make it re-download on every render. If a complete snapshot is
-            # already on disk, reuse it via LTP_JAR_DIR_PATH instead.
-            snapshot_dir = _usable_snapshot_dir()
-            if snapshot_dir is not None:
-                os.environ.setdefault("LTP_JAR_DIR_PATH", snapshot_dir)
-            else:
-                _warm_language_tool_download()
-                _LANGUAGE_TOOL_ABANDONED.set()
-                return None
-
-        result: dict[str, object] = {}
-
-        def _load() -> None:
-            try:
-                result["tool"] = _guarded_language_tool(
-                    language_tool_python.LanguageTool
-                )("en-US")
-            except Exception:
-                pass
-
-        loader = threading.Thread(target=_load, name="language-tool-load", daemon=True)
-        loader.start()
-        loader.join(timeout=LANGUAGE_TOOL_LOAD_TIMEOUT_SECONDS)
-        if loader.is_alive():
-            # The first-use download is still running; don't hold up the
-            # render. The abandoned background download may still finish and
-            # cache the tool, so a later run (fresh process) gets the real
-            # LanguageTool instead of the local fallback.
-            _LANGUAGE_TOOL_ABANDONED.set()
-            return None
-        return result.get("tool")
+        """Compatibility hook: the external client is no longer installed."""
+        return None
 
     def correct(self, text: str, aggressive: bool = False, *, preserve_newlines: bool = False) -> str:
-        """Correct grammar, falling back to local fixes without LanguageTool.
+        """Correct grammar with the local fixes.
 
         ``preserve_newlines`` keeps paragraph structure: newlines (and blank
         lines between paragraphs) survive instead of being collapsed to
         spaces. Defaults to False, preserving the historical single-line
-        output for existing callers. Note: when the LanguageTool path
-        succeeds its own output is returned as-is, which may normalise
-        whitespace; the flag governs the local fallback path.
+        output for existing callers. An injected ``_tool`` is still honored
+        for test doubles and downstream integrations.
         """
         if not text.strip():
             return text

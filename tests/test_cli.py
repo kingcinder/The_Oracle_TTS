@@ -161,8 +161,8 @@ def test_audio_cpp_flags_wire_into_render_settings(tmp_path: Path, monkeypatch) 
 def test_render_fails_fast_without_input_or_outdir(monkeypatch) -> None:
     """Validation must run before OraclePipeline() is constructed.
 
-    The real pipeline eagerly spawns the LanguageTool download (hundreds of MB)
-    and waits on it, so a missing-flag mistake must fail before that load.
+    The real pipeline loads the optional repair stack, so a missing-flag
+    mistake must fail before that load.
     """
     constructed: list[bool] = []
 

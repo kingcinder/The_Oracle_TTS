@@ -1,18 +1,5 @@
 {
   "policy": "Strong-copyleft or unknown licenses block commercial distribution until the owner records a decision. Weak-copyleft components are allowed only with their notice and replacement/source obligations documented.",
   "allow": [],
-  "review": {
-    "mutagen": {
-      "license": "GPL-2.0-or-later",
-      "reason": "FLAC/OGG tagging in the export path. A proprietary combined distribution is not safe under this license. Decide: replace with a permissive/native tagger, drop tagging, or obtain terms."
-    },
-    "language-tool-python": {
-      "license": "GPL-3.0",
-      "reason": "Grammar-repair wrapper installed by the ml extra. The LanguageTool server itself is LGPL, but this Python client declares GPL-3.0. Decide: replace with a permissive client that speaks the server protocol, or drop the wrapper."
-    },
-    "pykakasi": {
-      "license": "GPL-3.0-or-later",
-      "reason": "Transitive dependency of chatterbox-tts (Japanese text handling). Decide: scope the alpha to non-Japanese use and exclude the dependency, or obtain terms."
-    }
-  }
+  "review": {}
 }

@@ -226,7 +226,7 @@ def snapshot_differences(before: dict[str, str], after: dict[str, str]) -> tuple
 # A module whose FIRST import happens inside a QThread races the GUI's main
 # thread through shiboken6's signature import hook (inspect.getsource runs
 # during import) and the pair segfaults natively — reproduced and
-# faulthandler-verified for mutagen (see
+# faulthandler-verified for a lazy tagger import (see
 # tests/test_gui_render_import_safety.py and
 # .serpent-circle/04-debug/root-causes.md). The reusable guard below pins the
 # invariant for every QThread subclass and every module a worker's call graph
