@@ -220,6 +220,39 @@ def _support_bundle_available() -> bool:
     return importlib.util.find_spec("the_oracle.support_bundle") is not None
 
 
+def _artifact_finding(root: Path, version: str) -> Finding:
+    """Both published artifacts, not just whichever name a glob happens to hit.
+
+    The sdist is ``the_oracle-<version>.tar.gz`` and the wheel carries a
+    ``-<tag>.whl`` suffix, so a single ``the_oracle-<version>-*`` glob silently
+    counted only the wheel. A release record with half the artifacts is a
+    warning here (the build folder is gitignored, so a fresh clone cannot have
+    either), but the report must name the half that is missing.
+    """
+    outdir = root / "release_artifacts"
+    sdist = outdir / f"the_oracle-{version}.tar.gz"
+    wheels = sorted(outdir.glob(f"the_oracle-{version}-*.whl"))
+    if sdist.is_file() and wheels:
+        return Finding(
+            "artifacts",
+            True,
+            INFO,
+            f"sdist and wheel exist for {version} ({sdist.name}, {wheels[0].name}).",
+        )
+    missing = []
+    if not sdist.is_file():
+        missing.append(sdist.name)
+    if not wheels:
+        missing.append(f"the_oracle-{version}-*.whl")
+    return Finding(
+        "artifacts",
+        True,
+        WARNING,
+        f"release_artifacts is missing {', '.join(missing)} for {version}.",
+        "Run scripts/release.py on a clean tree before publishing.",
+    )
+
+
 def audit(root: Path = REPO_ROOT, *, today: date | None = None) -> list[Finding]:
     """Every commercial readiness check, in report order."""
     root = Path(root).resolve()
@@ -333,19 +366,7 @@ def audit(root: Path = REPO_ROOT, *, today: date | None = None) -> list[Finding]
             )
         )
 
-    artifacts = sorted((root / "release_artifacts").glob(f"the_oracle-{version}-*"))
-    if artifacts:
-        findings.append(Finding("artifacts", True, INFO, f"{len(artifacts)} artifact(s) exist for {version}."))
-    else:
-        findings.append(
-            Finding(
-                "artifacts",
-                True,
-                WARNING,
-                f"No release_artifacts/the_oracle-{version}-* files are present yet.",
-                "Run scripts/release.py on a clean tree before publishing.",
-            )
-        )
+    findings.append(_artifact_finding(root, version))
 
     runbook = root / "docs" / "SOFT_LAUNCH.md"
     if not runbook.is_file():

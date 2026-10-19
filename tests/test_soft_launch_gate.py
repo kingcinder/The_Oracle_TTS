@@ -118,6 +118,23 @@ def test_weak_copyleft_is_a_warning_not_a_blocker(tmp_path: Path) -> None:
     assert any(finding.severity == gate.WARNING for finding in findings)
 
 
+def test_artifact_check_requires_both_the_sdist_and_the_wheel(tmp_path: Path) -> None:
+    outdir = tmp_path / "release_artifacts"
+    outdir.mkdir()
+    wheel = outdir / "the_oracle-9.9.9-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+    finding = gate._artifact_finding(tmp_path, "9.9.9")
+    assert finding.ok
+    assert finding.severity == gate.WARNING
+    assert "the_oracle-9.9.9.tar.gz" in finding.detail
+
+    (outdir / "the_oracle-9.9.9.tar.gz").write_bytes(b"sdist")
+    finding = gate._artifact_finding(tmp_path, "9.9.9")
+    assert finding.ok
+    assert finding.severity == gate.INFO
+    assert "sdist and wheel" in finding.detail
+
+
 def test_report_names_the_owner_action() -> None:
     finding = gate.Finding("eula", False, gate.BLOCKER, "EULA is a draft", "Finish the EULA.")
     text = gate.report_text([finding])
