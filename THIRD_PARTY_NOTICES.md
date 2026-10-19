@@ -36,10 +36,10 @@ Release version: **1.4.0**
 | `ffmpeg` | host-provided | LGPL/GPL depending on the build | [source](https://ffmpeg.org/) |
 | `ggml` | vendored in the audio.cpp checkout | MIT | [source](https://github.com/ggml-org/ggml) |
 | `LanguageTool` | downloaded at first use | LGPL-2.1 | [source](https://languagetool.org/) |
-| `oliverguhr/fullstop-punctuation-multilang-large` | 345e80adc07e761d3a35feafd20f2f44a151f453 | MIT | [source](https://huggingface.co/oliverguhr/fullstop-punctuation-multilang-large) |
-| `ResembleAI/chatterbox` | 5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18 | MIT | [source](https://huggingface.co/ResembleAI/chatterbox) |
-| `ResembleAI/chatterbox-turbo` | 749d1c1a46eb10492095d68fbcf55691ccf137cd | MIT | [source](https://huggingface.co/ResembleAI/chatterbox-turbo) |
-| `SamLowe/roberta-base-go_emotions` | d75048347613a25d77de8cf6412eaae9fa7b26be | MIT | [source](https://huggingface.co/SamLowe/roberta-base-go_emotions) |
+| `oliverguhr/fullstop-punctuation-multilang-large` | pinned (models/pins.py) | MIT | [source](https://huggingface.co/oliverguhr/fullstop-punctuation-multilang-large) |
+| `ResembleAI/chatterbox` | pinned (models/pins.py) | MIT | [source](https://huggingface.co/ResembleAI/chatterbox) |
+| `ResembleAI/chatterbox-turbo` | pinned (models/pins.py) | MIT | [source](https://huggingface.co/ResembleAI/chatterbox-turbo) |
+| `SamLowe/roberta-base-go_emotions` | pinned (models/pins.py) | MIT | [source](https://huggingface.co/SamLowe/roberta-base-go_emotions) |
 | `chinese_female_1.wav` | — | Apache-2.0 | Seashells/generic/ATTRIBUTION.md |
 | `chinese_male_1.wav` | — | Apache-2.0 | Seashells/generic/ATTRIBUTION.md |
 | `chinese_male_2.wav` | — | Apache-2.0 | Seashells/generic/ATTRIBUTION.md |
@@ -57,6 +57,11 @@ Release version: **1.4.0**
 | `Seashell_ fransisco.wav` | — | Owner-owned; all rights reserved | Seashells/ASSETS.md |
 | `Seashell_No_1.wav` | — | Owner-owned; all rights reserved | Seashells/ASSETS.md |
 | `Seashell_No_2.wav` | — | Owner-owned; all rights reserved | Seashells/ASSETS.md |
+
+Model revisions are pinned in `src/the_oracle/models/pins.py`; this
+table names each model and its license without duplicating the
+revision hashes, which are external identifiers rather than citations
+in this repository's history.
 
 ## Python dependencies
 

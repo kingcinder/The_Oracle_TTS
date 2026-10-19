@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -80,6 +81,14 @@ def test_committed_notices_are_current(inventory: third_party.Inventory) -> None
 
 def test_render_is_deterministic(inventory: third_party.Inventory) -> None:
     assert third_party.render_notices(inventory) == third_party.render_notices(inventory)
+
+
+def test_notices_do_not_cite_external_commit_hashes() -> None:
+    """The record-integrity net reads hash-shaped tokens in root prose as
+    citations of *this* repository. Model revisions are external identifiers,
+    so the notices must point at the pin table instead of spelling them."""
+    text = (REPO_ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    assert re.findall(r"\b[0-9a-f]{40}\b", text) == []
 
 
 def test_committed_notices_have_no_placeholders() -> None:

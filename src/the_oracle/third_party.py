@@ -350,7 +350,7 @@ def runtime_components(
 _MODEL_COMPONENTS: tuple[Component, ...] = (
     Component(
         name="ResembleAI/chatterbox",
-        version="5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18",
+        version="pinned (models/pins.py)",
         license="MIT",
         kind="model",
         source="https://huggingface.co/ResembleAI/chatterbox",
@@ -358,7 +358,7 @@ _MODEL_COMPONENTS: tuple[Component, ...] = (
     ),
     Component(
         name="ResembleAI/chatterbox-turbo",
-        version="749d1c1a46eb10492095d68fbcf55691ccf137cd",
+        version="pinned (models/pins.py)",
         license="MIT",
         kind="model",
         source="https://huggingface.co/ResembleAI/chatterbox-turbo",
@@ -366,7 +366,7 @@ _MODEL_COMPONENTS: tuple[Component, ...] = (
     ),
     Component(
         name="SamLowe/roberta-base-go_emotions",
-        version="d75048347613a25d77de8cf6412eaae9fa7b26be",
+        version="pinned (models/pins.py)",
         license="MIT",
         kind="model",
         source="https://huggingface.co/SamLowe/roberta-base-go_emotions",
@@ -374,7 +374,7 @@ _MODEL_COMPONENTS: tuple[Component, ...] = (
     ),
     Component(
         name="oliverguhr/fullstop-punctuation-multilang-large",
-        version="345e80adc07e761d3a35feafd20f2f44a151f453",
+        version="pinned (models/pins.py)",
         license="MIT",
         kind="model",
         source="https://huggingface.co/oliverguhr/fullstop-punctuation-multilang-large",
@@ -570,6 +570,11 @@ def render_notices(inventory: Inventory) -> str:
     lines.extend(_table_row(component) for component in non_python)
     lines.extend(
         [
+            "",
+            "Model revisions are pinned in `src/the_oracle/models/pins.py`; this",
+            "table names each model and its license without duplicating the",
+            "revision hashes, which are external identifiers rather than citations",
+            "in this repository's history.",
             "",
             "## Python dependencies",
             "",
