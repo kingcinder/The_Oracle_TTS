@@ -87,6 +87,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also delete every stored crash report (irreversible).",
     )
 
+    support_bundle = subparsers.add_parser(
+        "support-bundle",
+        help="Create a redacted diagnostic bundle for support. Nothing is uploaded; review the zip before sharing it.",
+    )
+    support_bundle.add_argument(
+        "--out",
+        default=None,
+        help="Where to write the zip (default: Output/oracle-support-<version>-<UTC stamp>.zip).",
+    )
+    support_bundle.add_argument(
+        "--include-crash-reports",
+        action="store_true",
+        help="Include local crash reports, but only when crash-reporting consent is on.",
+    )
+    support_bundle.add_argument(
+        "--no-doctor",
+        action="store_true",
+        help="Skip running the doctor; the bundle is still created.",
+    )
+    support_bundle.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the bundle manifest as JSON instead of a human-readable summary.",
+    )
+
     setup_vulkan = subparsers.add_parser(
         "setup-vulkan",
         help="One-shot automatic setup for the Vulkan (GPU) backend: build audiocpp_cli and download the Chatterbox model if missing.",
@@ -1366,6 +1391,28 @@ def handle_privacy_opt_out(args: argparse.Namespace) -> int:
     return 0
 
 
+def handle_support_bundle(args: argparse.Namespace) -> int:
+    """Create a redacted support zip. The bundle is local-only; the command
+    never uploads it and tells the user to review it before sharing."""
+    from the_oracle.offline import repo_root
+    from the_oracle.support_bundle import build_support_bundle
+
+    result = build_support_bundle(
+        repo_root(),
+        args.out,
+        include_crash_reports=args.include_crash_reports,
+        run_doctor=not args.no_doctor,
+    )
+    if args.json:
+        print(json.dumps(result.manifest, indent=2))
+        return 0
+    print(f"Support bundle written to {result.path}")
+    print("Review the archive before sharing it; nothing was uploaded.")
+    if result.skipped:
+        print("Skipped: " + "; ".join(result.skipped), file=sys.stderr)
+    return 0
+
+
 def handle_license_status() -> int:
     """Print the install's license status as JSON. Offline by construction:
     verification is a pure function of the stored token and embedded keys."""
@@ -1521,6 +1568,8 @@ def main(argv: list[str] | None = None) -> int:
         return handle_sweep_cache(args)
     if args.command == "render-report":
         return handle_render_report(args)
+    if args.command == "support-bundle":
+        return handle_support_bundle(args)
     if args.command == "setup-vulkan":
         return handle_setup_vulkan()
     if args.command == "license-status":

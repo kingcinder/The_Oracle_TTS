@@ -1,7 +1,10 @@
 # Redistributable voice assets
 
 This inventory covers every voice reference retained in the distributed tree.
-Personal recordings and unidentified local takes are excluded from tracking.
+The root-level Seashells entries below are the Owner's own recordings,
+distributed with The Oracle under the proprietary license; they contain no
+third-party material. The `Seashells/generic/` entries are third-party
+reference clips redistributed under their respective licenses.
 
 | File | Source | License | Distribution note |
 |---|---|---|---|
@@ -14,3 +17,11 @@ Personal recordings and unidentified local takes are excluded from tracking.
 | `Seashells/generic/english_reader_2.wav` | LibriSpeech `test-clean/1995/1836/1995-1836-0004` | CC BY 4.0 | Attribution in `generic/ATTRIBUTION.md` |
 | `Seashells/generic/english_reader_3.wav` | LibriSpeech `test-clean/2094/142345/2094-142345-0008` | CC BY 4.0 | Attribution in `generic/ATTRIBUTION.md` |
 | `Seashells/generic/english_reader_4.wav` | LibriSpeech `test-clean/4970/29093/4970-29093-0006` | CC BY 4.0 | Attribution in `generic/ATTRIBUTION.md` |
+| `Seashells/Cody's Seashell.wav` | Owner recording; supplied by the copyright holder | Owner-owned; all rights reserved | Original recording by the Owner. No third-party rights. Confirmed 2026-10-19. |
+| `Seashells/Cody's Seashell1.wav` | Owner recording; supplied by the copyright holder | Owner-owned; all rights reserved | Original recording by the Owner. No third-party rights. Confirmed 2026-10-19. |
+| `Seashells/Fransisco_MONSTER.wav` | Owner recording; supplied by the copyright holder | Owner-owned; all rights reserved | Original recording by the Owner. No third-party rights. Confirmed 2026-10-19. |
+| `Seashells/Seashell_ fransisco.wav` | Owner recording; supplied by the copyright holder | Owner-owned; all rights reserved | Original recording by the Owner. No third-party rights. Confirmed 2026-10-19. |
+| `Seashells/Seashell_No_1.wav` | Owner recording; supplied by the copyright holder | Owner-owned; all rights reserved | Original recording by the Owner. No third-party rights. Confirmed 2026-10-19. |
+| `Seashells/Seashell_No_2.wav` | Owner recording; supplied by the copyright holder | Owner-owned; all rights reserved | Original recording by the Owner. No third-party rights. Confirmed 2026-10-19. |
+| `Seashells/seashell fransisco.wav` | Owner recording; supplied by the copyright holder | Owner-owned; all rights reserved | Original recording by the Owner. No third-party rights. Confirmed 2026-10-19. |
+| `Seashells/seashell fransisco_TTS_clean_v5_aggressive_targeted_cleanup.wav` | Owner recording; supplied by the copyright holder | Owner-owned; all rights reserved | Original recording by the Owner. No third-party rights. Confirmed 2026-10-19. |

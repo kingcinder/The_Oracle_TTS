@@ -18,7 +18,7 @@ The Licensee must not sell, resell, rent, lease, lend, sublicense, publish, shar
 
 The Licensee is responsible for all text, recordings, voices, models, prompts, and other material supplied to the Software ("Licensee Content") and represents that it has all rights, permissions, and consents required to use them. The Owner represents that the voice recordings shipped with the Software are the Owner's own recordings.
 
-As between the Owner and Licensee, the Licensee owns the audio and other output generated from the Licensee's inputs ("Output"), subject to third-party rights in the inputs, models, and other components. The Owner makes no claim to the Licensee's Output.
+As between the Owner and Licensee, the Licensee owns the audio and other output generated from the Licensee's inputs ("Output"), subject to third-party rights in the inputs, models, and other components. The Owner makes no claim to the Licensee's Output. `Seashells/ASSETS.md` is the authoritative inventory of voice recordings shipped with the Software; it records which clips are the Owner's own recordings and which are third-party material.
 
 ## 4. No warranty
 

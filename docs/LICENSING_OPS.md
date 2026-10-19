@@ -45,9 +45,12 @@ python scripts/license_sign.py keygen
 commissioning key `k1` *was* the RFC 8032 §7.1 TEST 1 public key, whose
 seed is printed in the spec and was hard-coded in this repository's own
 tests — any reader could mint a licence every shipped install accepted.
-It is gone. `KEYS` is deliberately **empty until you register a
-production key**, which fails closed (every token reports `unknown_key`,
-the install runs as community), and two nets keep a forgeable key out:
+It is gone. The production key **`k2` was registered on 2026-10-19**; its
+signing seed was generated on the owner's machine and lives only in the
+owner's secret manager (the provisioning run wrote it to
+`~/.config/the-oracle/license-signing-seed`, mode `0600`; move it to your
+secret manager and delete the local copy). Only the public verify key is
+in `keys.py`. Two nets keep a forgeable key out:
 
 - `tests/test_licensing_registry_hygiene.py` fails if any registered key
   is a published RFC 8032 vector key, or if one of the vectors' hex
@@ -56,10 +59,17 @@ the install runs as community), and two nets keep a forgeable key out:
 - `scripts/release.py` **refuses to build release artifacts** when the
   registry is empty or holds a published vector key.
 
-So a release built from this tree today is blocked on purpose: register
-the production verify key first. See §5 for the gated feature.
+The registry now carries `k2`, so the licensing branch of the release
+gate is open. The commercial gate still refuses distribution until the
+legal and dependency-license owner actions in `docs/SOFT_LAUNCH.md` are
+recorded. See §5 for the gated feature.
 
 ## 2. Minting a license
+
+The soft launch sells directly: the customer emails **codysa90@gmail.com**
+with the subject **"Oracle alpha license"**, and the owner mints a `k2` token
+with the procedure below. Deliver only the `token` string; never include the
+signing seed or the minting environment in the reply.
 
 ```bash
 ORACLE_LICENSE_SIGNING_KEY=<seed_hex> python scripts/license_sign.py mint \

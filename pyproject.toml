@@ -54,6 +54,15 @@ the-oracle = "the_oracle.cli:main"
 [tool.setuptools]
 package-dir = { "" = "src" }
 include-package-data = true
+# Carry the license and the generated third-party notices into the wheel's
+# .dist-info/licenses/ directory, so an installed copy keeps its notices.
+license-files = [
+  "LICENSE",
+  "PRIVACY.md",
+  "EULA-DRAFT.md",
+  "THIRD_PARTY_NOTICES.md",
+  "THIRD_PARTY_LICENSES/*",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "the_oracle.__version__" }

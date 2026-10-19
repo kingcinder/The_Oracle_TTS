@@ -530,6 +530,8 @@ def sync_banners(repo_root: Path, version: str) -> list[str]:
     for filename, prefix in BANNER_SITES:
         path = repo_root / filename
         if not path.is_file():
+            if filename in OPTIONAL_BANNER_SITES:
+                continue
             raise ReleaseError(f"{filename}: missing; cannot sync its release banner")
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
         hits = [index for index, line in enumerate(lines) if line.startswith(prefix)]

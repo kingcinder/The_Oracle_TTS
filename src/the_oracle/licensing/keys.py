@@ -5,27 +5,23 @@ verify keys; signatures can only be minted with the private seed, which never
 ships (the vendor mints with scripts/license_sign.py). Extracting these keys
 buys an attacker nothing — that is the whole reason the scheme is asymmetric.
 
-Production key custody — OWNER TASK, release blocker until done
----------------------------------------------------------------
+Production key custody
+----------------------
 The registry must hold no key whose signing seed is public. The former ``k1``
 entry was the RFC 8032 §7.1 TEST 1 public key: its seed is published in the
 spec's test vectors and was hard-coded throughout this repository's tests, so
 anyone who read the source could mint a token that this build would call a
-genuine licence. It has been removed, and the registry is deliberately EMPTY
-until the owner registers the production key:
+genuine licence. It has been removed.
 
-1. On your own machine, with this checkout's interpreter::
+The production key **``k2`` was registered on 2026-10-19**. Its signing seed
+was generated on the owner's machine and lives only in the owner's secret
+manager (the provisioning run wrote it to
+``~/.config/the-oracle/license-signing-seed``; move it into the secret manager
+and delete the local copy). This project never writes the seed to disk, never
+logs it, and never passes it to a test; losing it means rotating keys, not
+losing the product.
 
-       .venv/bin/python scripts/license_sign.py keygen
-
-2. Store ``signing_seed_hex`` from that output in your secret manager. This
-   project never writes it to disk, never logs it, and never passes it to a
-   test; losing it means rotating keys, not losing the product.
-3. Register ONLY ``verify_key_hex`` here::
-
-       VerifyKey(key_id="k2", public_key=bytes.fromhex("<verify_key_hex>"))
-
-An empty registry fails closed — every token reports ``unknown_key``, so an
+An empty registry still fails closed — every token reports ``unknown_key``, so an
 unactivated install runs as the community edition and no forged token is ever
 accepted. Two nets keep the compromised key from coming back: the production
 registry is scanned for RFC 8032 test-vector keys
@@ -51,11 +47,19 @@ class VerifyKey:
     public_key: bytes
 
 
-#: Ordered registry, oldest first. EMPTY until the owner registers the
-#: production verify key (see the module docstring). Tests do not read this
-#: table: they inject a test-only registry via the ``test_license_registry``
-#: fixture, so a test can never make the shipped install trust a test key.
-KEYS: tuple[VerifyKey, ...] = ()
+#: Ordered registry, oldest first. ``k2`` is the production verify key
+#: registered on 2026-10-19; its signing seed lives only in the owner's
+#: secret manager (never in this repo). Tests do not read this table: they
+#: inject a test-only registry via the ``test_license_registry`` fixture, so a
+#: test can never make the shipped install trust a test key.
+KEYS: tuple[VerifyKey, ...] = (
+    VerifyKey(
+        key_id="k2",
+        public_key=bytes.fromhex(
+            "cfb15a8029ad74a99ae3f52eaddd92a011f38786ba6de19f38de0b88eede0a88"
+        ),
+    ),
+)
 
 
 def key_for(key_id: str) -> VerifyKey | None:

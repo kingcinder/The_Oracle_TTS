@@ -105,8 +105,9 @@ def test_release_refuses_to_ship_without_a_production_verify_key() -> None:
     release_source = release_path.read_text(encoding="utf-8")
     assert "licensing_key_problems" in release_source
     assert "licensing" in release_source and "keys.py" in release_source
-    # And behaviourally: the real gate blocks THIS tree today, because its
-    # registry is deliberately empty until the owner registers a production key.
+    # And behaviourally: the real gate passes a configured registry and blocks
+    # an empty or forgeable one. The production k2 key was registered on
+    # 2026-10-19, so this tree exercises the passing branch.
     spec = importlib.util.spec_from_file_location("oracle_release_hygiene", release_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

@@ -3,54 +3,29 @@
 Notable user-facing changes to The Oracle. The version number itself lives in
 one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
-## [1.3.2] — 2026-10-05
+## [1.4.0] — 2026-10-19
 
 ### Added
 
-- **The trust features got GUI surfaces.** Crash-report consent and review,
-  and license activation, are now in-app dialogs alongside the existing CLI
-  flags (`the-oracle privacy-opt-in`, `the-oracle activate`).
-- The doctor's cache audit gained the disk side: every project `previews/`
-  directory is scanned for files outside the gated preview owner's naming
-  scheme — runtime evidence of a writer that bypassed
-  `OraclePipeline.render_preview`.
-- Release tooling: a crash-hunt reproduction harness (exit-code
-  classification, per-backend render loops, offscreen GUI launch loop) whose
-  `--acceptance` gate requires zero non-zero exits, zero crash records, and —
-  reading the kernel log — zero native crashes inside the run window.
-
-### Changed
-
-- **The self-healing guarantee now covers the worker-pool path and the Live
-  sidebar.** A multi-task seeded render that heals one hiccup reproduces
-  byte-identically when the spawn pool runs the synthesis (the configured seed
-  crosses the pool boundary through its initializer; retry notes ride home
-  from whichever worker drained them), and the persistent Live column counts
-  self-heals for the session — during the render and after it ends.
-- **Renders start faster.** The 19 MB SymSpell frequency dictionary is
-  deserialized once per process instead of once per corrector instance
-  (~21% off the profiled synthesis total, ~11% off wall clock on the
-  representative smoke render).
-
-### Fixed
-
-- Subtitle files that mix encodings (one UTF-8 cue exported into a
-  mostly-CP1252 file — the classic two-editors concatenation) now recover
-  **each cue on its own encoding** instead of turning the UTF-8 cue into
-  deterministic mojibake. Clean whole-file UTF-8 and CP1252 files decode
-  byte-identically to before; undecodable cues degrade to visible replacement
-  marks instead of blocking the conversion.
-- **The months-old render-click segfault is root-caused and fixed.** The
-  render worker's lazy imports (SRT export, FLAC tagging) first-imported
-  `mutagen` inside the QThread, racing the GUI main thread through
-  shiboken6's signature import hook; everything the worker call graph needs
-  now preloads on the main thread before any worker starts. Relatedly, a
-  missing cache stem is now a cache miss, not corruption — the Vulkan path
-  no longer logs false "System error" warnings and deletes nothing.
-
-## [Unreleased]
-
-### Added
+- **Commercial alpha launch surface.** A production verify key (`k2`) is
+  registered (the signing seed lives only in the owner's secret manager), and
+  `the-oracle support-bundle` creates a redacted, local-only diagnostic zip
+  for early-user support. The bundle never includes manuscripts, audio,
+  recordings, license tokens, or home-directory paths.
+- **Third-party notices are generated, not hand-maintained.**
+  `scripts/generate_third_party_notices.py` resolves the runtime dependency
+  closure plus the bundled models, voices, Qt binaries, and optional external
+  tools into `THIRD_PARTY_NOTICES.md`; `--check` fails on drift. The standard
+  license texts ship in `THIRD_PARTY_LICENSES/` and the sdist/wheel carry the
+  notices.
+- **A commercial go/no-go gate.** `python scripts/soft_launch.py --check`
+  composes the version/changelog checks with the production key, EULA,
+  third-party notices, dependency-license decisions, voice-asset provenance,
+  checksums, platform scope, and support bundle. It exits nonzero and names
+  the owner action for every blocker.
+- **The root-level Seashells recordings are documented as Owner-owned** with
+  no third-party rights; `Seashells/ASSETS.md` is now the authoritative
+  inventory and the hygiene tests require every shipped clip to be listed.
 
 - **Crash capture is now armed on every launch path, not on a consent
   transition.** With crash consent on, native-crash capture arms at the console
@@ -109,6 +84,12 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
 ### Changed
 
+- **The alpha's legal and license posture is explicit.** `EULA-DRAFT.md`
+  remains a draft for counsel review, and the three strong-copyleft runtime
+  dependencies (`mutagen`, `language-tool-python`, `pykakasi`) are recorded
+  as distribution blockers in `scripts/license_review.json` until the owner
+  records a decision. `docs/SOFT_LAUNCH.md` documents the Linux-supported /
+  Windows-experimental scope and the go-live checklist.
 - **The fast test loop can no longer report green without rendering a theme.**
   The GUI certification gates leave the slow marker, so `-m "not slow"` runs
   them, and CI runs one named step per aspect per operating system — a failed
@@ -136,14 +117,14 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   carried exactly one entry, `k1`, whose public key is RFC 8032 §7.1 TEST 1's
   published vector — its seed is printed in the RFC and was hard-coded
   throughout this repository's tests, so anyone who read the spec could mint a
-  token every install accepted as a genuine licence. The entry is gone, and the
-  registry is deliberately **empty until the owner registers the production
-  key**: an empty registry fails closed (every token reports `unknown_key` and
-  the install runs as community), and `scripts/release.py` refuses to build
-  artifacts around an empty *or* forgeable registry, reading the tree being
-  packaged rather than the running installation. The licensing suite now runs
-  against an injected test-only key, so no test can pass by trusting a
-  published seed.
+  token every install accepted as a genuine licence. The entry is gone, and an
+  empty registry fails closed (every token reports `unknown_key` and the
+  install runs as community); `scripts/release.py` refuses to build artifacts
+  around an empty *or* forgeable registry, reading the tree being packaged
+  rather than the running installation. The production key `k2` was registered
+  on 2026-10-19 (only its public half is in the repo; the seed lives in the
+  owner's secret manager). The licensing suite now runs against an injected
+  test-only key, so no test can pass by trusting a published seed.
 - **Ed25519 verification accepted a universal forgery.** A public key that
   decodes to the identity point made `(R = [s]B, S = s)` verify for *any*
   message — a signature valid everywhere, from a 32-byte key. Small-order
@@ -164,6 +145,57 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
   became part of the filename `sha256sum -c` tried to open, and a manifest from
   a Windows release run could never be verified by the runbook's own check
   (measured on a real runner: exit 1).
+
+## [Unreleased]
+
+### Changed
+
+- (nothing yet)
+
+## [1.3.2] — 2026-10-05
+
+### Added
+
+- **The trust features got GUI surfaces.** Crash-report consent and review,
+  and license activation, are now in-app dialogs alongside the existing CLI
+  flags (`the-oracle privacy-opt-in`, `the-oracle activate`).
+- The doctor's cache audit gained the disk side: every project `previews/`
+  directory is scanned for files outside the gated preview owner's naming
+  scheme — runtime evidence of a writer that bypassed
+  `OraclePipeline.render_preview`.
+- Release tooling: a crash-hunt reproduction harness (exit-code
+  classification, per-backend render loops, offscreen GUI launch loop) whose
+  `--acceptance` gate requires zero non-zero exits, zero crash records, and —
+  reading the kernel log — zero native crashes inside the run window.
+
+### Changed
+
+- **The self-healing guarantee now covers the worker-pool path and the Live
+  sidebar.** A multi-task seeded render that heals one hiccup reproduces
+  byte-identically when the spawn pool runs the synthesis (the configured seed
+  crosses the pool boundary through its initializer; retry notes ride home
+  from whichever worker drained them), and the persistent Live column counts
+  self-heals for the session — during the render and after it ends.
+- **Renders start faster.** The 19 MB SymSpell frequency dictionary is
+  deserialized once per process instead of once per corrector instance
+  (~21% off the profiled synthesis total, ~11% off wall clock on the
+  representative smoke render).
+
+### Fixed
+
+- Subtitle files that mix encodings (one UTF-8 cue exported into a
+  mostly-CP1252 file — the classic two-editors concatenation) now recover
+  **each cue on its own encoding** instead of turning the UTF-8 cue into
+  deterministic mojibake. Clean whole-file UTF-8 and CP1252 files decode
+  byte-identically to before; undecodable cues degrade to visible replacement
+  marks instead of blocking the conversion.
+- **The months-old render-click segfault is root-caused and fixed.** The
+  render worker's lazy imports (SRT export, FLAC tagging) first-imported
+  `mutagen` inside the QThread, racing the GUI main thread through
+  shiboken6's signature import hook; everything the worker call graph needs
+  now preloads on the main thread before any worker starts. Relatedly, a
+  missing cache stem is now a cache miss, not corruption — the Vulkan path
+  no longer logs false "System error" warnings and deletes nothing.
 
 ## [1.3.1] — 2026-09-28
 

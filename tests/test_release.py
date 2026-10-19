@@ -587,6 +587,14 @@ def test_sync_banners_refuses_missing_banner(tmp_path: Path) -> None:
         release.sync_banners(repo, "9.9.9")
 
 
+def test_sync_banners_skips_a_missing_optional_state_file(tmp_path: Path) -> None:
+    """STATE.md is optional; a repo without it must still sync README."""
+    repo = _write_fake_repo(tmp_path, readme_version="8.8.8")
+    (repo / "STATE.md").unlink()
+    changed = release.sync_banners(repo, "9.9.9")
+    assert changed == ["README.md"]
+
+
 
 
 

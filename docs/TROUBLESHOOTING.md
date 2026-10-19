@@ -124,8 +124,30 @@ channel you choose (The Oracle never uploads anything): the report is
 plain JSON, safe to read before sending. Delete everything with
 `the-oracle privacy-opt-out --purge`.
 
+## License activation problems
+
+Activation is offline: the token is verified against the public keys embedded
+in this install. `the-oracle license-status` prints the typed state
+(`no_token`, `unknown_key`, `bad_signature`, `expired`, `machine_mismatch`,
+`store_error`) and the remedy. A token minted under a key this build does not
+know reports `unknown_key` — update the suite or contact support; do not edit
+`keys.py`. A bad token writes nothing, so the previous state is preserved.
+
+## Need to send support a diagnostic
+
+```bash
+the-oracle support-bundle
+```
+
+This creates a redacted zip under `Output/` and never uploads it. It includes
+the version/platform, license state (not the token), redacted settings, the
+newest logs, and a doctor report. Crash reports are included only with
+`--include-crash-reports` and when local crash-reporting consent is on. Read
+the zip before sending it.
+
 ## Still stuck
 
-`python scripts/doctor.py --json > report.json` attached to a bug report
-is the most useful single artifact; `JUNO_FIXES.log` documents what changed
-and why across the whole campaign.
+`python scripts/doctor.py --json > report.json` attached to a bug report is
+the most useful single artifact, and `the-oracle support-bundle` packages it
+with the redacted environment. `docs/SOFT_LAUNCH.md` records the alpha's
+known limitations and support path.

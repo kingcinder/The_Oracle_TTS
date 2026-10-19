@@ -1,0 +1,13 @@
+include LICENSE
+include PRIVACY.md
+include EULA-DRAFT.md
+include THIRD_PARTY_NOTICES.md
+recursive-include THIRD_PARTY_LICENSES *
+include docs/SOFT_LAUNCH.md
+include docs/SOFT_LAUNCH_PLAN.md
+include docs/UPGRADING.md
+include docs/TROUBLESHOOTING.md
+include docs/LICENSING_OPS.md
+include docs/LICENSING_THREAT_MODEL.md
+include Seashells/ASSETS.md
+include Seashells/generic/ATTRIBUTION.md

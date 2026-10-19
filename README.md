@@ -1,6 +1,6 @@
 # The Oracle
 
-**Release V1.3.2** — Local private crash reporting, offline licensing, and a more visible, resilient render path.
+**Release V1.4.0 (commercial alpha)** — Production offline licensing, generated third-party notices, redacted support bundles, and a commercial soft-launch gate.
 
 Changes between releases: [CHANGELOG.md](CHANGELOG.md). Upgrading an
 existing install: [docs/UPGRADING.md](docs/UPGRADING.md). Problems:
@@ -11,6 +11,22 @@ stays on your disk, and what sharing a crash report means.
 The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The repository now ships with a cross-platform bootstrap/install surface for both Linux and Windows.
 
 Chatterbox outputs include built-in Perth watermarking by design. This project does not remove or hide that.
+
+## Alpha Soft Launch (1.4.0)
+
+The 1.4.0 branch is a narrow, paid alpha: Linux is supported and Windows is
+**experimental**. Read [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md) for the
+install path, the purchase and offline activation flow, the platform scope,
+and the owner go-live checklist. Commercial distribution is gated by
+`python scripts/soft_launch.py --check`; the EULA and the dependency-license
+review are tracked as explicit blockers there, not hidden in prose.
+
+For support, create a redacted local bundle and attach it to your support
+email — nothing is uploaded automatically:
+
+```bash
+the-oracle support-bundle
+```
 
 ## Features
 
@@ -57,7 +73,7 @@ settings untouched. The underlying per-action scripts
 ## Platform Support
 
 - Supported Python: `3.11` or `3.12`
-- Supported operating systems: Linux and Windows
+- Supported operating systems: Linux and Windows (Windows is **experimental** in the 1.4.0 alpha; see [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md))
 - Default execution path: CPU (PyTorch Chatterbox in-process); CUDA is available when a CUDA-enabled PyTorch wheel and a suitable NVIDIA GPU are detected
 - Vulkan is available as an opt-in inference backend via audio.cpp (`--inference-backend vulkan`); see "Vulkan Backend (audio.cpp)" below
 
@@ -678,5 +694,13 @@ name again replaces the entry.
 ## Licensing
 
 This project is publicly visible for inspection and evaluation, but it is not open-source. All rights are reserved.
+
+Alpha licenses are sold directly while the storefront is being set up. Email
+**codysa90@gmail.com** with the subject **"Oracle alpha license"** to request a
+Studio token; activation is offline and takes one paste. The community edition
+keeps every workflow that shipped before 1.4.0. See
+[docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md) for the activation and support
+procedure, and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the
+third-party inventory.
 
 Licensing and support inquiries: codysa90@gmail.com

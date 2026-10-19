@@ -16,10 +16,11 @@ and was hard-coded throughout this repository's tests, so **any reader of the
 spec could mint a token that every shipped install accepted as a genuine
 licence.**
 
-Fix: `k1` removed; the registry is deliberately **empty until the owner
-registers the production key** (see the module docstring for the three-step
-custody procedure). An empty registry fails closed — every token reports
-`unknown_key` and the install runs as `community` — and:
+Fix: `k1` removed; the registry was deliberately **empty until the owner
+registered the production key**, which happened on 2026-10-19 as `k2` (see
+the module docstring and `docs/LICENSING_OPS.md` §1 for the custody record).
+An empty registry fails closed — every token reports `unknown_key` and the
+install runs as `community` — and:
 
 - `tests/test_licensing_registry_hygiene.py` fails if any registered key is a
   known RFC 8032 vector key **or** if the vector's hex appears in `keys.py` at
@@ -33,10 +34,13 @@ custody procedure). An empty registry fails closed — every token reports
   `pytest.mark.usefixtures("test_license_registry")`, so no test depends on the
   shipped table trusting a test key.
 
-Owner action still required: `python scripts/license_sign.py keygen` on your own
-machine, keep `signing_seed_hex` in your secret manager, register only
-`verify_key_hex` as a new `VerifyKey(...)` in `keys.py`. Until then the release
-gate is red by design and no customer can activate.
+Owner action completed 2026-10-19: the production key `k2` was generated on the
+owner's machine, its `signing_seed_hex` was written to
+`~/.config/the-oracle/license-signing-seed` (mode `0600`) for transfer into the
+owner's secret manager, and only `verify_key_hex` was registered as
+`VerifyKey(key_id="k2", ...)` in `keys.py`. The licensing branch of the release
+gate is now open; the commercial gate still reports the EULA and the
+strong-copyleft dependency decisions as blockers (see `docs/SOFT_LAUNCH.md`).
 
 ## 2. Ed25519 verification accepted a universal forgery — FIXED
 
@@ -133,5 +137,6 @@ git log --all --name-only --format='' | rg -c \
     tests/test_gui_license.py tests/test_licensing_offline.py tests/test_licensing_policy_enforcement.py tests/test_licensing_store.py \
     tests/test_release.py -q          # 148 passed
 .venv/bin/python scripts/release.py --check                    # exit 0 (version invariant)
-.venv/bin/python scripts/release.py --skip-tests               # exit 1, BLOCKED: no production verify key
+.venv/bin/python scripts/release.py --skip-tests               # exit 0 after k2 was registered
+.venv/bin/python scripts/soft_launch.py --check                # exit 1 only while the EULA/GPL decisions are open
 ```
