@@ -1,9 +1,14 @@
-"""Crash-consent and post-crash review dialogs (GUI presentation layer).
+"""Crash-consent, post-crash review, and bug-report dialogs.
 
 The GUI half of the crash/privacy unit (CRASH_TELEMETRY_DESIGN §11 steps 3–4):
 the first-run consent dialog, the post-crash next-session review, and the Qt
 message handler the U1.2 core deliberately left unwired (app_gui was the
 concurrent engine thread's in-flight surface; this module is the safe home).
+
+It also hosts the support layer's **Report a Problem** dialog, which is the
+same kind of surface: Qt presentation over a local-only, consent-aware core.
+The dialog never packages or shares anything on its own — it calls
+``the_oracle.support`` for every rule and hands links to injected openers.
 
 Injection discipline (the ``gui_ingest`` pattern): the caller passes the Qt
 classes this module instantiates — ``dialog_cls`` (QDialog subclass factory),
