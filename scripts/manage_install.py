@@ -276,7 +276,11 @@ def seed_offline_models(offline_bundle: Path) -> None:
         shutil.copytree(src, dest, symlinks=True)
         refs_dir = dest / "refs"
         refs_dir.mkdir(exist_ok=True)
-        (refs_dir / "main").write_text(sha + "\n", encoding="utf-8")
+        # No trailing newline: huggingface_hub reads ``refs/main`` verbatim and
+        # uses the whole string as the snapshot directory name, so a stray
+        # ``\n`` makes every hub-level loader (chatterbox's from_pretrained,
+        # transformers, ...) miss the seeded snapshot and fail offline.
+        (refs_dir / "main").write_text(sha, encoding="utf-8")
         seeded.append(repo_id)
     passed(f"Seeded {len(seeded)} pinned models into the local HF cache ({dest_root})")
 

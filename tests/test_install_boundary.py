@@ -223,7 +223,9 @@ def test_offline_install_seeds_the_pinned_models_and_writes_the_marker(
     cache = boundary.home / ".cache" / "huggingface" / "hub"
     for repo_id, sha in MODEL_PINS.items():
         ref = cache / ("models--" + repo_id.replace("/", "--")) / "refs" / "main"
-        assert ref.read_text(encoding="utf-8").strip() == sha, f"{repo_id}: refs/main must pin the revision"
+        # Byte-exact (no trailing newline): huggingface_hub uses the raw contents
+        # as the snapshot directory name, so whitespace makes the seed invisible.
+        assert ref.read_bytes() == sha.encode("ascii"), f"{repo_id}: refs/main must pin the revision"
     marker = boundary.created_file("repo/.oracle_offline").text
     assert json.loads(marker) == {"offline_bundle_manifest": '{"app": "the-oracle"}'}
     # The launcher is what makes the promise true at run time.

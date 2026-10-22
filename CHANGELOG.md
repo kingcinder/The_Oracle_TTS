@@ -21,6 +21,12 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
 ### Fixed
 
+- **Offline installs seed a cache that hub-level loaders can actually read.**
+  `refs/main` was written with a trailing newline, and huggingface_hub uses the
+  file's raw contents as the snapshot directory name, so Chatterbox's own
+  `from_pretrained` (the installer's model check) could not resolve the seeded
+  revision with `HF_HUB_OFFLINE=1` and the install exited 1 on an otherwise
+  healthy air-gapped machine. The seeded ref is now byte-exact.
 - FLAC export writes standard Vorbis comments (`TITLE`, `ARTIST`, `COMMENT`,
   and the render-plan fields) without a GPL tagger, preserves unrelated
   comments on a re-tag, and leaves a readable FLAC stream behind.
