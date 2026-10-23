@@ -14,8 +14,8 @@ authors = [
 ]
 dependencies = [
   "markdown-it-py==3.0.0",
-  "numpy>=1.26",
-  "Pillow>=12.3.0",
+  "numpy>=1.26,<2",
+  "Pillow>=13.0.0",
   "urllib3>=2.8.0",
   "packaging>=24.0",
   "PySide6==6.8.2.1",
@@ -74,6 +74,7 @@ the_oracle = ["text_repair/data/*.txt", "EULA-DRAFT.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--dist=loadgroup"
 pythonpath = ["src"]
 markers = [
   # The GUI certification gates are deliberately NOT marked: they are the suite's

@@ -47,8 +47,6 @@ CHATTERBOX_ENGINE_PACKAGES = (
     "librosa==0.11.0",
     "s3tokenizer",
     "diffusers==0.38.0",
-    "gradio==6.16.0",
-    "starlette==1.3.1",
     "huggingface-hub==1.33.0",
     "conformer==0.3.2",
     "safetensors==0.8.0",
@@ -56,6 +54,8 @@ CHATTERBOX_ENGINE_PACKAGES = (
     "spacy-pkuseg",
     "pyloudnorm",
     "omegaconf",
+    # ml-dtypes 0.6 requires NumPy 2, while Chatterbox 0.1.7 requires NumPy <2.
+    "ml-dtypes<0.6",
 )
 CHATTERBOX_TTS_PACKAGE = "chatterbox-tts==0.1.7"
 #: Marker file written into REPO_ROOT by an offline install (defined by

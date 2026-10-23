@@ -264,9 +264,9 @@ def test_about_panel_names_edition_and_privacy(root: Path, parent, monkeypatch) 
         dialog.programmed = ["OK"]
         return dialog
 
-    # Unlicensed install: not activated, prompts for a product key.
+    # An unactivated install remains usable as Community.
     gui_license.run_about_panel(parent, dialog_cls=factory)
-    assert any("Not activated" in text for text in labels), labels
+    assert any("Community" in text for text in labels), labels
     assert any("PRIVACY.md" in text for text in labels), labels
 
     # Activated install: names the edition and the licensee.

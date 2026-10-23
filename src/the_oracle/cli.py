@@ -1769,12 +1769,13 @@ def handle_bug_report(args: argparse.Namespace) -> int:
 def handle_license_status() -> int:
     """Print the install's license status as JSON. Offline by construction:
     verification is a pure function of the stored token and embedded keys."""
-    from the_oracle.licensing import current_license
+    from the_oracle.licensing import current_edition, current_license
 
     status = current_license()
     payload = {
         "ok": status.ok,
         "state": status.state,
+        "edition": current_edition(status),
         "licensee": status.licensee,
         "lic_id": status.lic_id,
         "key_id": status.key_id,
@@ -1789,8 +1790,7 @@ def handle_license_status() -> int:
 def handle_render_report(args) -> int:
     """Measure a finished render and report its conformance.
 
-    Product-key gating happens once in ``main()`` for every command, so this
-    handler only runs with a valid key.
+    This is a Studio-only report; existing Community workflows remain ungated.
 
     Nothing here writes to the project: the render and its plan are read only.
     """
@@ -1862,13 +1862,6 @@ def handle_setup_vulkan() -> int:
     return 0
 
 
-#: Commands that run with no product key: activation, license inspection, and
-#: the privacy and support commands a user needs to report a problem.
-UNLOCKED_COMMANDS = frozenset(
-    {"license-status", "activate", "machine-id", "privacy-status", "bug-report", "support-bundle"}
-)
-
-
 def main(argv: list[str] | None = None) -> int:
     # Before any model work: an offline install must resolve every model from the
     # seeded cache. Done here (not in the render/gui handlers) so every console
@@ -1889,16 +1882,6 @@ def main(argv: list[str] | None = None) -> int:
     crash_handlers.arm_native_capture()
     parser = build_parser()
     args = parser.parse_args(argv)
-    # Product-key gate: without a valid key, only the commands that activate
-    # and inspect a license run. Everything else prints the purchase message.
-    if args.command not in UNLOCKED_COMMANDS:
-        from the_oracle.licensing import LicenseRequired, current_license, require
-
-        try:
-            require(current_license())
-        except LicenseRequired as exc:
-            print(f"{exc}", file=sys.stderr)
-            return 1
     if args.command == "gui":
         from the_oracle.app_gui import launch_gui
 
@@ -1916,6 +1899,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sweep-cache":
         return handle_sweep_cache(args)
     if args.command == "render-report":
+        from the_oracle.licensing import LicenseRequired, current_license, require
+
+        try:
+            require(current_license(), "studio_features")
+        except LicenseRequired as exc:
+            print(f"{exc}", file=sys.stderr)
+            return 1
         return handle_render_report(args)
     if args.command == "support-bundle":
         return handle_support_bundle(args)

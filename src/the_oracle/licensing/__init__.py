@@ -17,6 +17,7 @@ from pathlib import Path
 
 from the_oracle.licensing.policy import (
     LicenseRequired,
+    current_edition,
     is_licensed,
     require,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "canonical_payload_bytes",
     "clear_token",
     "current_license",
+    "current_edition",
     "is_licensed",
     "load_token",
     "mint",
@@ -64,7 +66,7 @@ def current_license(repo_root: str | Path | None = None) -> LicenseStatus:
         return LicenseStatus(
             ok=False,
             state="no_token",
-            detail="No product key is activated. Enter your key with: the-oracle activate <key>.",
+            detail="Running as Community. Studio activation is optional.",
         )
     if result.state != "loaded" or result.stored is None:
         return LicenseStatus(ok=False, state="store_error", detail=result.detail)

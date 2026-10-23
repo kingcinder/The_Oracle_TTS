@@ -1,18 +1,21 @@
-# The Oracle 1.4.1 — Commercial Alpha Soft Launch
+# The Oracle 1.4.2 — Commercial Release Gate
 
-Status: **paid alpha release candidate**. Linux is supported; Windows is
+Status: **commercial distribution is blocked; 1.4.2 is an engineering
+candidate**. Linux x86_64 is the intended qualification target but has not
+completed current clean-install and real-audio acceptance. Windows is
 **unsupported** for this alpha. The commercial gate (`python scripts/soft_launch.py --check`)
 is the authority on whether a tree may be distributed. A red gate means the
 tree is not approved for commercial distribution, even if the app installs and
 runs.
 
-## What this alpha is
+## Intended alpha scope (not an approved offer)
 
-A narrow, early-access release for users who want local, offline dialogue
-rendering and are willing to report problems. It is not a general-availability
-release: the Windows GUI crash certification item is still open and the EULA
-is awaiting the owner's governing-law decision and counsel review. The three
-strong-copyleft runtime dependencies from the 1.4.0 candidate are gone.
+The product is intended as a narrow, early-access release for users who want
+local dialogue rendering and are willing to report problems. No purchase offer
+or terms are approved. This is not a general-availability release: Windows GUI
+crash certification remains open, and the EULA is awaiting the owner's
+governing-law decision and counsel review. The three strong-copyleft runtime
+dependencies from the 1.4.0 candidate are gone.
 
 Community remains everything that shipped before 1.4.0. A missing or expired
 license never locks a workflow; it reports the community edition and keeps
@@ -20,7 +23,9 @@ working.
 
 ## System requirements
 
-- Linux x86_64 (supported) or Windows x86_64 (beta).
+- Linux x86_64 is the alpha qualification target. Current-candidate clean-install
+  and real-render evidence is still being completed. Windows x86_64 is
+  unsupported for this alpha.
 - Python 3.11 or 3.12.
 - `ffmpeg` on `PATH`.
 - Git, to fetch the release branch and updates.
@@ -137,8 +142,7 @@ changed.
 
 - **Windows is unsupported in this alpha.** The six-theme GUI certification and the Windows
   certifier crash investigation (native exception 0xC0000005) are not closed.
-  Paid seats should expect Linux first; Windows support is best-effort during
-  the alpha.
+  Windows support is outside this alpha's qualified platform scope.
 - **First run downloads models.** The first render may need a multi-GB model
   download; the doctor announces it before it starts. Offline installs use the
   bundle instead.

@@ -3,6 +3,47 @@
 Notable user-facing changes to The Oracle. The version number itself lives in
 one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
+## [1.4.2] — 2026-10-23
+
+### Added
+
+- **A support layer on top of the doctor and crash unit.**
+  `the-oracle bug-report` composes a local bug report with a redacted
+  diagnostics snapshot (`new`), reviews drafts (`list`, `show`), builds a
+  single shareable zip containing the report, the diagnostics, and the
+  existing support bundle (`package`), prints prefilled GitHub/email links
+  (`issue`), and deletes drafts explicitly (`delete`). The GUI exposes the
+  same flow under **Help → Report a Problem…**. Drafts live in
+  `support_reports/` (newest 25, git-ignored); nothing is uploaded and there
+  is no transport code. Crash records are referenced freely but packaged
+  only with `--include-crash-reports` **and** local consent. See
+  `docs/SUPPORT.md`.
+
+### Changed
+
+- `support_bundle` is now version 2: callers may attach extra archive
+  entries, which are validated as safe relative paths and listed in the
+  manifest's `attachments`.
+- The doctor's diagnostics are reusable as structured data: the support
+  layer runs the doctor once and shares the parsed report with the bundle
+  instead of invoking it twice.
+- Managed Chatterbox installs now keep NumPy below 2 and `ml-dtypes` below
+  0.6, matching the dependency constraints of Chatterbox 0.1.7. A clean
+  isolated install and actual CPU render verified the corrected closure.
+- Community CLI workflows remain available without activation; only the
+  existing Studio `render-report` capability checks for its entitlement.
+- Peak normalization retains 2% headroom to avoid hard-clipping high-crest
+  audio, and the real-engine smoke uses bundled spoken references with a
+  12-utterance two-speaker dialogue.
+- The managed install no longer installs Chatterbox's unused Gradio demo
+  stack; Pillow is constrained to the security-fixed 13.0.0 release line.
+
+### Fixed
+
+- Third-party notice and Windows path/log-size regressions, and suite-count
+  baseline coverage, were corrected in the candidate source. CI on the final
+  candidate revision has not yet run.
+
 ## [1.4.1] — 2026-10-19
 
 ### Changed
@@ -176,28 +217,9 @@ one place (`src/the_oracle/__init__.py`); see `scripts/release.py --check`.
 
 ## [Unreleased]
 
-### Added
-
-- **A support layer on top of the doctor and crash unit.**
-  `the-oracle bug-report` composes a local bug report with a redacted
-  diagnostics snapshot (`new`), reviews drafts (`list`, `show`), builds a
-  single shareable zip containing the report, the diagnostics, and the
-  existing support bundle (`package`), prints prefilled GitHub/email links
-  (`issue`), and deletes drafts explicitly (`delete`). The GUI exposes the
-  same flow under **Help → Report a Problem…**. Drafts live in
-  `support_reports/` (newest 25, git-ignored); nothing is uploaded and there
-  is no transport code. Crash records are referenced freely but packaged
-  only with `--include-crash-reports` **and** local consent. See
-  `docs/SUPPORT.md`.
-
 ### Changed
 
-- `support_bundle` is now version 2: callers may attach extra archive
-  entries, which are validated as safe relative paths and listed in the
-  manifest's `attachments`.
-- The doctor's diagnostics are reusable as structured data: the support
-  layer runs the doctor once and shares the parsed report with the bundle
-  instead of invoking it twice.
+- (nothing yet)
 
 ## [1.3.2] — 2026-10-05
 

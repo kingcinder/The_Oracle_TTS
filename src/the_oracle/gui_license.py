@@ -159,7 +159,8 @@ def run_about_panel(parent: QWidget, *, dialog_cls: type) -> None:
             lines.append(f"License expires: {status.exp}")
         lines.append(f"License key: {status.key_id}")
     else:
-        lines.append("Not activated — enter a product key to unlock the program.")
+        lines.append("Community edition — all existing workflows are available.")
+        lines.append("Studio activation is optional.")
         if status.state not in ("no_token", ""):
             lines.append(f"(Stored license state: {status.state})")
     lines.append("")

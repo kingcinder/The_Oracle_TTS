@@ -118,7 +118,7 @@ def _run(project_dir: Path, *extra: str) -> int:
 def test_community_install_refuses_and_writes_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Unlicensed: exit 1, purchase path on stderr, empty stdout, no file."""
+    """Community refuses only the Studio report, without writing anything."""
     project = tmp_path / "project"
     _make_render(project)
     before = {path.name: path.read_bytes() for path in project.iterdir()}
@@ -130,7 +130,7 @@ def test_community_install_refuses_and_writes_nothing(
     captured = capsys.readouterr()
     assert status == 1
     assert captured.out.strip() == "", "a refused report must not print a document"
-    assert "activate" in captured.err  # the offline purchase path
+    assert "Studio license" in captured.err
     assert not (tmp_path / "report.json").exists(), "a refused report must write nothing"
     assert {path.name: path.read_bytes() for path in project.iterdir()} == before, (
         "the project directory must be untouched"
@@ -280,10 +280,8 @@ def test_the_report_is_read_only(tmp_path: Path) -> None:
     assert after == before
 
 
-def test_the_gate_is_one_call_site() -> None:
-    """The product-key gate stays a single call site in the CLI entry point."""
+def test_render_report_uses_the_studio_entitlement_gate() -> None:
+    """Only the new Studio report feature is gated in Community."""
     cli_source = Path(cli.__file__).read_text(encoding="utf-8")
-    assert cli_source.count("require(current_license())") == 1, (
-        "the product-key gate must stay a single call site so it cannot be "
-        "bypassed by a copy that forgets the check"
-    )
+    assert 'require(current_license(), "studio_features")' in cli_source
+    assert "UNLOCKED_COMMANDS" not in cli_source

@@ -77,6 +77,19 @@ def test_voice_asset_problems_accepts_owner_owned_inventory(tmp_path: Path) -> N
     assert gate._voice_asset_problems(tmp_path) == []
 
 
+def test_voice_asset_inventory_accepts_windows_path_separators(tmp_path: Path) -> None:
+    seashells = tmp_path / "Seashells"
+    seashells.mkdir()
+    (seashells / "one.wav").write_bytes(b"RIFF")
+    (seashells / "ASSETS.md").write_text(
+        "# Assets\n\n| File | Source | License | Note |\n|---|---|---|---|\n"
+        "| `Seashells\\one.wav` | Owner recording | Owner-owned; all rights reserved | Original recording. |\n",
+        encoding="utf-8",
+    )
+
+    assert gate._voice_asset_problems(tmp_path) == []
+
+
 def _fake_inventory(*components: third_party.Component) -> third_party.Inventory:
     return third_party.Inventory(components=components, version="test")
 

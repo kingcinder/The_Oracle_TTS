@@ -33,7 +33,7 @@ def test_chatterbox_metadata_matches_the_audited_oracle_stack(tmp_path: Path) ->
     assert b"Requires-Dist: transformers==5.20.0" in content
     assert b"Requires-Dist: diffusers==0.38.0" in content
     assert b"Requires-Dist: safetensors==0.8.0" in content
-    assert b"Requires-Dist: gradio==6.16.0" in content
+    assert b"gradio" not in content
     assert b"pykakasi" not in content
     rows = list(csv.reader(io.StringIO((dist_info / "RECORD").read_text(encoding="utf-8"))))
     expected = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).decode("ascii").rstrip("=")

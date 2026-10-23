@@ -98,7 +98,7 @@ TORCH_CONSUMER_NAMES = (
 #: installs. manage_install installs chatterbox-tts with --no-deps and then
 #: rewrites its metadata (scripts/patch_chatterbox_metadata.py) to the audited
 #: stack, so following its published pins would drag in transformers==5.2.0,
-#: diffusers==0.29.0, gradio==6.8.0 and the GPL-3.0 pykakasi that the patch
+#: diffusers==0.29.0, unused Gradio, and the GPL-3.0 pykakasi that the patch
 #: deliberately removes.
 CLOSURE_IGNORED_DISTRIBUTIONS = frozenset({"chatterbox-tts"})
 

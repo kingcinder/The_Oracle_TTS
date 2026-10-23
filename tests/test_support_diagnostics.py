@@ -81,8 +81,12 @@ def test_settings_summary_is_a_whitelist(tmp_path: Path) -> None:
 
 
 def test_log_summary_has_names_and_sizes_only(tmp_path: Path) -> None:
-    logs = collect_diagnostics(_root(tmp_path), run_doctor=False)["logs"]
-    assert logs["files"] == [{"name": "oracle.log", "bytes": len("started\nlicense ORACLE1.aaa.bbb\n")}]
+    root = _root(tmp_path)
+    log_path = root / "logs" / "oracle.log"
+    content = b"started\r\nlicense ORACLE1.aaa.bbb\r\n"
+    log_path.write_bytes(content)
+    logs = collect_diagnostics(root, run_doctor=False)["logs"]
+    assert logs["files"] == [{"name": "oracle.log", "bytes": len(content)}]
     assert "content" not in json.dumps(logs)
 
 

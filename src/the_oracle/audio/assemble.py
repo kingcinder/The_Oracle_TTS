@@ -46,7 +46,9 @@ def normalize_loudness(audio: np.ndarray, preset: str = "light") -> np.ndarray:
     if target_rms is None:
         return audio
     rms = float(np.sqrt(np.mean(np.square(audio)))) or 1.0
-    gain = min(1.8, target_rms / rms)
+    peak = float(np.max(np.abs(audio)))
+    peak_safe_gain = 0.98 / peak if peak > 0 else 1.8
+    gain = min(1.8, target_rms / rms, peak_safe_gain)
     return np.clip(audio * gain, -1.0, 1.0)
 
 

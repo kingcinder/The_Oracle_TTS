@@ -1,10 +1,4 @@
-"""Product-key gate: one license unlocks the whole program.
-
-There are no editions. A valid, unexpired, machine-matching product key
-unlocks every command. Without one, the CLI and GUI block each command with
-the purchase-path message, except the commands that exist to activate and
-inspect a license (see ``UNLOCKED_COMMANDS`` in ``the_oracle.cli``).
-"""
+"""Community defaults and feature-level Studio entitlement checks."""
 
 from __future__ import annotations
 
@@ -12,11 +6,7 @@ from the_oracle.licensing.tokens import LicenseStatus
 
 
 class LicenseRequired(Exception):
-    """Raised when the program is used without a valid product key.
-
-    The CLI and GUI catch this and render ``str(exc)``: a clean purchase-path
-    message, never a traceback.
-    """
+    """Raised when a requested feature is outside this install's edition."""
 
 
 def is_licensed(status: LicenseStatus) -> bool:
@@ -24,12 +14,24 @@ def is_licensed(status: LicenseStatus) -> bool:
     return bool(status.ok and status.state == "valid")
 
 
-def require(status: LicenseStatus) -> None:
-    """Raise LicenseRequired unless a valid product key is present."""
-    if is_licensed(status):
+EDITIONS: dict[str, frozenset[str]] = {
+    "community": frozenset({"render", "conversation", "recording_studio", "voice_craft"}),
+    "studio": frozenset({"render", "conversation", "recording_studio", "voice_craft", "studio_features"}),
+    "trial": frozenset({"render", "conversation", "recording_studio", "voice_craft", "studio_features"}),
+}
+
+
+def current_edition(status: LicenseStatus) -> str:
+    """A verified current key enables Studio; every failure degrades to Community."""
+    return "studio" if is_licensed(status) else "community"
+
+
+def require(status: LicenseStatus, entitlement: str) -> None:
+    """Raise only when the requested feature is not included in the edition."""
+    if entitlement in EDITIONS[current_edition(status)]:
         return
     raise LicenseRequired(
-        f"{status.detail or 'The Oracle needs a product key.'} "
-        "Activate with: the-oracle activate <key>. "
-        "Purchase and support: see the license page."
+        f"'{entitlement}' requires a Studio license. "
+        f"{status.detail + ' ' if status.detail else ''}"
+        "Contact support to upgrade — activation is offline and takes one paste."
     )

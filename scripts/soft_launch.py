@@ -79,10 +79,10 @@ def _tracked_voice_assets(root: Path) -> set[str]:
         tracked = subprocess.check_output(
             ["git", "ls-files", "Seashells"], cwd=root, text=True, stderr=subprocess.DEVNULL
         ).splitlines()
-        return {path for path in tracked if path.lower().endswith(".wav")}
+        return {path.replace("\\", "/") for path in tracked if path.lower().endswith(".wav")}
     except (OSError, subprocess.CalledProcessError):
         return {
-            str(path.relative_to(root))
+            path.relative_to(root).as_posix()
             for path in (root / "Seashells").rglob("*.wav")
             if path.is_file()
         }
@@ -92,7 +92,8 @@ def _inventory_paths(root: Path) -> set[str]:
     path = root / "Seashells" / "ASSETS.md"
     if not path.is_file():
         return set()
-    return set(re.findall(r"`(Seashells/[^`]+\.wav)`", path.read_text(encoding="utf-8")))
+    text = path.read_text(encoding="utf-8").replace("\\", "/")
+    return set(re.findall(r"`(Seashells/[^`]+\.wav)`", text))
 
 
 def _voice_asset_problems(root: Path) -> list[str]:
@@ -114,7 +115,7 @@ def _voice_asset_problems(root: Path) -> list[str]:
         problems.append(f"inventory entries with no tracked file: {', '.join(stale)}")
     root_rows = [
         line
-        for line in text.splitlines()
+        for line in text.replace("\\", "/").splitlines()
         if line.startswith("| `Seashells/") and "`Seashells/generic/" not in line
     ]
     for row in root_rows:

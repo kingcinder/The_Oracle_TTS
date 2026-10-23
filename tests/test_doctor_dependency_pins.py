@@ -139,7 +139,7 @@ def test_multi_occurrence_drift_names_every_pin_in_the_error() -> None:
         )
     # And the structured lists agree with the prose — per-occurrence, not deduped.
     assert {entry["requirement"].split("==")[0] for entry in status["mismatches"]} >= {"soundfile", "markdown-it-py"}
-    assert [entry["requirement"] for entry in status["missing"]] == ["numpy>=1.26"]
+    assert [entry["requirement"] for entry in status["missing"]] == ["numpy>=1.26,<2"]
 
 
 def test_missing_pyproject_fails_cleanly(tmp_path: Path) -> None:

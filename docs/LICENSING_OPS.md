@@ -151,10 +151,8 @@ Revoking a leaked or abused license means **rotation plus expiry**:
 
 ## 7. Sales-side decisions still open (owner: you)
 
-- Final edition names (`community` / `studio` / `trial` are code
-  placeholders — renaming is one table in `policy.py` plus docs, LICENSING §9.3).
-- Whether trial tokens are minted per purchase or ship as a generic eval
-  token (affects only `license_sign.py` UX, LICENSING §9.4).
+- Final edition names (`community` / `studio` are code placeholders —
+  renaming is one table in `policy.py` plus docs, LICENSING §9.3).
 
 ## 8. The first gated feature (`render-report`) — and how to move it
 
@@ -175,12 +173,12 @@ is gated, so community keeps every existing workflow, which is what
 
 - Implementation: `src/the_oracle/render_report.py` (measurement) and
   `handle_render_report` in `cli.py` (the gate).
-- The product-key gate is the single `require(current_license())` call in `cli.main()`, which covers every command.
-  pinned by
-  `tests/test_render_report.py::test_the_gate_is_one_call_site` so moving
-  the gate is a one-line change.
+- `cli.main()` checks `require(current_license(), "studio_features")`
+  only before the `render-report` command; normal CLI and GUI workflows run
+  in Community without activation. This boundary is pinned by
+  `tests/test_render_report.py::test_render_report_uses_the_studio_entitlement_gate`.
 - Behaviour under each license state is pinned end to end in that file:
-  community refuses with the offline purchase path and writes nothing;
+  community refuses the Studio report and writes nothing;
   studio produces the report; an **expired** studio token degrades to
   community, refuses, and leaves the render byte-identical.
 - The command never writes to the project it measures (read-only, pinned).
@@ -193,11 +191,5 @@ was chosen as a defensible default, not as final product strategy):
    capability's own entitlement, and add its own entitlement name to
    `policy.EDITIONS["studio"]` (community must keep everything that
    shipped before).
-2. If the licence system should not ship at all, the opposite branch is:
-   delete `gui_license.py`'s activation surface + the Help-menu entries +
-   the `license-status`/`activate`/`machine-id` commands, drop the `studio`
-   and `trial` editions from `policy.EDITIONS`, and remove
-   `licensing_key_problems` from `scripts/release.py`. That is a
-   destructive change to shipped work: confirm with the owner first.
-3. Either way, the honest threat model is in
+2. The honest threat model is in
    `docs/LICENSING_THREAT_MODEL.md`; do not promise more than it says.

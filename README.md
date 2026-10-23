@@ -1,6 +1,16 @@
 # The Oracle
 
-**Release V1.4.1 (commercial alpha)** — Production offline licensing, generated third-party notices, redacted support bundles, and a commercial soft-launch gate.
+**Release V1.4.2 (engineering candidate; not approved for commercial release).**
+
+An isolated Linux managed install, doctor check, and real CPU render succeeded;
+the complete first-user/project/upgrade workflow, human audio review, hosted
+CI, and commercial acceptance remain open. Start with the
+[Quick Start](docs/release/QUICK_START.md), check
+[System Requirements](docs/release/SYSTEM_REQUIREMENTS.md) and
+[Known Issues](docs/release/KNOWN_ISSUES.md), and review
+[Release Readiness](docs/release/FINAL_RELEASE_READINESS.md) before evaluating
+it. Do not treat the existing 1.4.1 packages as builds of this working-tree
+candidate.
 
 Changes between releases: [CHANGELOG.md](CHANGELOG.md). Upgrading an
 existing install: [docs/UPGRADING.md](docs/UPGRADING.md). Problems:
@@ -9,19 +19,19 @@ workflow in [docs/SUPPORT.md](docs/SUPPORT.md). Data and privacy:
 [PRIVACY.md](PRIVACY.md) — what is collected (nothing automatically), what
 stays on your disk, and what sharing a crash report means.
 
-The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The repository now ships with a cross-platform bootstrap/install surface for both Linux and Windows.
+The Oracle is a local PySide6 desktop app and CLI for turning a `.txt` or `.md` two-person dialogue into a single FLAC render with Chatterbox. The repository includes Linux and Windows installer scripts; Windows is not supported for the current alpha.
 
 Chatterbox outputs include built-in Perth watermarking by design. This project does not remove or hide that.
 
-## Alpha Soft Launch (1.4.1)
+## Limited-Release Candidate (1.4.2)
 
-The 1.4.1 release is a narrow, paid alpha: Linux is supported. Windows is
-**unsupported** for this alpha; the native-crash certifier failure (0xC0000005)
-is still open. Read [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md) for the
-install path, the purchase and offline activation flow, the platform scope,
-and the owner go-live checklist. Commercial distribution is gated by
-`python scripts/soft_launch.py --check`; the EULA is the remaining blocker,
-and the strong-copyleft dependency review is cleared.
+Linux x86_64 is the intended qualification target but is not yet qualified for
+customer distribution. Windows is **unsupported**; GUI certification and the
+native-crash investigation remain open. Read [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md)
+for the existing install and offline activation details. The commercial gate
+still blocks on the draft EULA. First-user/project and upgrade qualification,
+candidate CI, artifact provenance, and human audio review remain open. See the
+[final readiness report](docs/release/FINAL_RELEASE_READINESS.md) for status.
 
 For support, compose a bug report with a redacted diagnostics snapshot, then
 package it and attach it to the issue or email you send — nothing is uploaded
@@ -84,11 +94,17 @@ settings untouched. The underlying per-action scripts
 ## Platform Support
 
 - Supported Python: `3.11` or `3.12`
-- Supported operating systems: Linux (supported) and Windows (**beta**; see [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md))
+- Alpha qualification target: Linux x86_64; clean-install and real-render qualification for the current candidate is in progress
+- Windows installer scripts are present, but Windows is **unsupported** for this alpha; see [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md)
 - Default execution path: CPU (PyTorch Chatterbox in-process); CUDA is available when a CUDA-enabled PyTorch wheel and a suitable NVIDIA GPU are detected
 - Vulkan is available as an opt-in inference backend via audio.cpp (`--inference-backend vulkan`); see "Vulkan Backend (audio.cpp)" below
 
 ## Quick Start
+
+See the concise customer guide in
+[docs/release/QUICK_START.md](docs/release/QUICK_START.md) and the explicit
+qualification limits in
+[docs/release/SYSTEM_REQUIREMENTS.md](docs/release/SYSTEM_REQUIREMENTS.md).
 
 ### Linux
 

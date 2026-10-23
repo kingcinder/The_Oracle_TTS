@@ -434,3 +434,23 @@ def pytest_sessionfinish(session, exitstatus) -> None:
     # must not exit 0 having skipped tests, or the demand means nothing.
     if skip_audit.fail_on_skip_enabled() and _SKIPS:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+# Modules that run a certifier or the doctor against the real repo root, or
+# snapshot that tree. Their parking and writes race under xdist, so they share
+# one worker (--dist=loadgroup in pyproject.toml honours this group).
+_REAL_REPO_MODULES = frozenset({
+    "test_certifier_hermeticity.py",
+    "test_certifier_isolation.py",
+    "test_doctor_read_only.py",
+    "test_doctor_report_is_history_independent.py",
+    "test_gui_sections_chrome.py",
+    "test_gui_theme_certification.py",
+    "test_theme_switch_certification.py",
+})
+
+
+def pytest_collection_modifyitems(items) -> None:
+    for item in items:
+        if item.path.name in _REAL_REPO_MODULES:
+            item.add_marker(pytest.mark.xdist_group("real_repo_tree"))

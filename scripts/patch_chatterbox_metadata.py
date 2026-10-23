@@ -1,4 +1,4 @@
-"""Align Chatterbox's installed requirements with the audited Oracle stack."""
+"""Align Chatterbox metadata with the audited Oracle runtime stack."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ _REQUIREMENT_UPDATES = {
     "transformers==5.2.0": "transformers==5.20.0",
     "diffusers==0.29.0": "diffusers==0.38.0",
     "safetensors==0.5.3": "safetensors==0.8.0",
-    "gradio==6.8.0": "gradio==6.16.0",
 }
 
 
@@ -43,7 +42,8 @@ def _replace_metadata(path: Path) -> None:
     text = "".join(
         line
         for line in text.splitlines(keepends=True)
-        if not line.startswith("Requires-Dist: pykakasi")
+        # The shipped Oracle uses its Qt UI; Chatterbox's Gradio demo is unused.
+        if not line.startswith(("Requires-Dist: pykakasi", "Requires-Dist: gradio"))
     )
 
     _atomic_write(metadata_path, text.encode("utf-8"))

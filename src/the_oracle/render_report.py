@@ -2,9 +2,8 @@
 
 This is the first **real** Studio-gated capability, added in 1.4.0 and
 deliberately **additive**: nothing that shipped before is gated, so the
-the product key gates the whole program, and this report is one of the commands
-behind that single gate in ``cli.main()``. It is a new capability, so nothing
-that shipped before depends on it.
+Community edition retains every existing workflow. The report is a new
+capability and requires the Studio entitlement in ``cli.main()``.
 
 The report is derived entirely from artifacts the render already produced: the
 assembled FLAC and its ``render_plan.json``. It measures, it does not re-render,

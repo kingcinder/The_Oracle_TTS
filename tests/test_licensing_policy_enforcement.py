@@ -1,18 +1,4 @@
-"""Direct enforcement pins for the licensing policy surface.
-
-Everything here is the production truth the CLI, GUI, and doctor all read:
-
-- a valid, unexpired, machine-matching product key unlocks the program;
-- without one, require() raises the typed LicenseRequired with the
-  purchase-path message;
-- the render path is never gated (nothing is ever locked away);
-- `the-oracle license-status` reports the install's state as JSON.
-
-The rules are pinned on hand-built statuses (require() in isolation) and again
-on statuses that came out of the real verifier. Verified statuses use the
-**injected** test-only registry (tests/licensing_fixtures.py); the shipped table
-holds no test key.
-"""
+"""Pin the Community default and the one gated Studio entitlement."""
 
 from __future__ import annotations
 
@@ -64,22 +50,23 @@ def _status(
 # --- require(): the single enforcement gate ---------------------------------
 
 
-def test_a_valid_key_is_licensed_and_passes_require() -> None:
+def test_a_valid_key_is_licensed_and_passes_studio_entitlement() -> None:
     status = _status()
     assert is_licensed(status) is True
-    require(status)  # must not raise
+    require(status, "studio_features")
 
 
 @pytest.mark.parametrize(
     ("ok", "state"),
     [(False, "no_token"), (False, "expired"), (False, "bad_signature"), (True, "store_error")],
 )
-def test_require_raises_typed_license_required_without_a_valid_key(ok: bool, state: str) -> None:
+def test_community_keeps_existing_entitlements_but_not_studio_features(ok: bool, state: str) -> None:
     status = _status(ok=ok, state=state)
     assert is_licensed(status) is False
+    require(status, "render")
     with pytest.raises(LicenseRequired) as excinfo:
-        require(status)
-    assert "the-oracle activate" in str(excinfo.value)  # the purchase-path message
+        require(status, "studio_features")
+    assert "Studio" in str(excinfo.value)
 
 
 # --- verified statuses: the real verifier decides ---------------------------
@@ -94,22 +81,18 @@ def test_a_real_minted_key_unlocks_the_program() -> None:
     valid = tokens.verify_token(_minted_token(), now=1700000001.0)
     assert valid.ok is True and valid.state == "valid"
     assert is_licensed(valid) is True
-    require(valid)  # must not raise
+    require(valid, "studio_features")
 
 
-def test_a_real_expired_key_is_blocked_but_loses_nothing_on_disk() -> None:
-    """An expired token blocks the program with the typed error.
-
-    The render path is not behind this gate at all (see
-    tests/test_license_state_render.py), so an expired key never takes an
-    existing render away from the user.
-    """
+def test_a_real_expired_key_degrades_to_community() -> None:
+    """An expired token loses Studio-only entitlements while Community works."""
     exp = 1_700_000_500
     expired = tokens.verify_token(_minted_token(exp=exp), now=float(exp + 60))
     assert expired.ok is False
     assert expired.state == "expired"
+    require(expired, "render")
     with pytest.raises(LicenseRequired):
-        require(expired)
+        require(expired, "studio_features")
 
 
 # --- the CLI surface: license-status -----------------------------------------
@@ -141,7 +124,7 @@ def test_license_status_reports_no_token_when_nothing_is_activated(sandbox_root:
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["state"] == "no_token"
-    assert "edition" not in payload
+    assert payload["edition"] == "community"
 
 
 def test_license_status_reports_the_valid_stored_license(sandbox_root: Path, capsys) -> None:
@@ -163,3 +146,18 @@ def test_license_status_fails_closed_on_a_corrupted_store(sandbox_root: Path, ca
     assert payload["ok"] is False
     assert payload["state"] != "valid"
     assert payload["detail"], "a corrupted store must explain itself"
+
+
+def test_community_can_use_existing_cli_commands_without_activation(monkeypatch) -> None:
+    from the_oracle import licensing
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        licensing,
+        "current_license",
+        lambda: LicenseStatus(ok=False, state="no_token", detail="No key."),
+    )
+    monkeypatch.setattr(cli, "handle_voices", lambda _args: calls.append("voices") or 0)
+
+    assert cli.main(["voices"]) == 0
+    assert calls == ["voices"]

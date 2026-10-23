@@ -1,11 +1,9 @@
 """Regression tests for the text ingest / voice attribution / emotion /
 grammar review fixes.
 
-Pure-logic tests only: heavy optional dependencies (transformers, torch,
-soundfile, huggingface_hub) are never required. The
-real-engine smoke validation test stubs the two missing audio/model modules
-just long enough to import the module under test, then cleans up so no
-other test file observes the stubs.
+No live model or network is used. The real-engine smoke validation tests use
+the declared soundfile runtime dependency to check real FLAC files and stub
+only Hugging Face Hub during module import.
 """
 
 from __future__ import annotations
@@ -38,16 +36,15 @@ from the_oracle.voice_catalog import blend_catalog_path, blend_voice_choices
 
 @contextlib.contextmanager
 def _stubbed_heavy_imports():
-    """Temporarily stub soundfile/huggingface_hub for a heavy module import.
+    """Temporarily stub huggingface_hub for a heavy module import.
 
     Restores sys.modules afterwards, including dropping modules that were
     imported while the stubs were active, so other test files never observe
     the stubbed dependencies.
     """
-    soundfile_stub = MagicMock(name="soundfile")
     hub_stub = MagicMock(name="huggingface_hub")
     hub_stub.snapshot_download = MagicMock(name="snapshot_download")
-    stubs = {"soundfile": soundfile_stub, "huggingface_hub": hub_stub}
+    stubs = {"huggingface_hub": hub_stub}
     previous = {name: sys.modules[name] for name in stubs if name in sys.modules}
     before = set(sys.modules)
     sys.modules.update(stubs)
@@ -257,10 +254,63 @@ def test_smoke_validation_rejects_missing_output_file(tmp_path: Path) -> None:
 def test_smoke_validation_accepts_real_signal(tmp_path: Path) -> None:
     smoke = _import_smoke_module()
     output = tmp_path / "out.flac"
-    output.write_bytes(b"fake-flac-bytes")
-    samples = np.sin(2 * np.pi * 440 * np.arange(24000) / 24000).astype(np.float32)
+    import soundfile as sf
+
+    time_axis = np.arange(48000, dtype=np.float32) / 24000
+    samples = (
+        np.sin(2 * np.pi * 440 * time_axis)
+        * (0.3 + 0.2 * np.sin(2 * np.pi * 3 * time_axis))
+    ).astype(np.float32)
+    sf.write(output, samples, 24000, format="FLAC")
 
     smoke._validate_smoke_output(output, samples)  # must not raise
+
+
+def test_smoke_validation_rejects_a_stationary_tone(tmp_path: Path) -> None:
+    smoke = _import_smoke_module()
+    import soundfile as sf
+
+    output = tmp_path / "tone.flac"
+    samples = np.sin(2 * np.pi * 440 * np.arange(48000) / 24000).astype(np.float32) * 0.2
+    sf.write(output, samples, 24000, format="FLAC")
+
+    with pytest.raises(RuntimeError, match="speech-like variation"):
+        smoke._validate_smoke_output(output, samples)
+
+
+def test_smoke_validation_checks_exported_sample_rate(tmp_path: Path) -> None:
+    smoke = _import_smoke_module()
+    import soundfile as sf
+
+    output = tmp_path / "out.flac"
+    time_axis = np.arange(48000, dtype=np.float32) / 24000
+    samples = (np.sin(2 * np.pi * 440 * time_axis) * (0.3 + 0.2 * np.sin(2 * np.pi * 3 * time_axis))).astype(
+        np.float32
+    )
+    sf.write(output, samples, 24000, format="FLAC")
+
+    with pytest.raises(RuntimeError, match="sample rate"):
+        smoke._validate_smoke_output(output, samples, expected_sample_rate=22050)
+
+
+def test_real_smoke_inputs_use_bundled_speech_references(tmp_path: Path) -> None:
+    smoke = _import_smoke_module()
+    paths = smoke.ensure_real_engine_inputs(tmp_path)
+    repository = Path(__file__).resolve().parents[1]
+
+    assert paths["speaker_a_reference"].read_bytes() == (
+        repository / "Seashells" / "generic" / "english_male_1.wav"
+    ).read_bytes()
+    assert paths["speaker_b_reference"].read_bytes() == (
+        repository / "Seashells" / "generic" / "english_reader_1.wav"
+    ).read_bytes()
+
+
+def test_real_smoke_corpus_exercises_a_two_speaker_dialogue() -> None:
+    smoke = _import_smoke_module()
+
+    assert 10 <= len(smoke.REAL_ENGINE_DIALOGUE) <= 20
+    assert {speaker for speaker, _text in smoke.REAL_ENGINE_DIALOGUE} == {"A", "B"}
 
 
 # ----------------------------------------------------------------------

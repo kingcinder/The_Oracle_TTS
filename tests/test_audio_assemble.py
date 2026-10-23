@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from the_oracle.audio.assemble import AudioSegment, assemble_dialogue
+from the_oracle.audio.assemble import AudioSegment, assemble_dialogue, normalize_loudness
 from the_oracle.audio.blend import blend_references
 from the_oracle.models.project import VoiceSettings
 from the_oracle.models.settings import RenderSettings, SpeakerSettings; from the_oracle.pipeline import OraclePipeline
@@ -70,6 +70,16 @@ def test_assemble_preserves_order_for_distinct_utterances(tmp_path: Path) -> Non
     midpoint = len(audio) // 2
     assert _dominant_frequency(audio[:midpoint], rate) == 300
     assert _dominant_frequency(audio[midpoint:], rate) == 600
+
+
+def test_loudness_normalization_reduces_gain_before_hard_clipping() -> None:
+    audio = np.zeros(24000, dtype=np.float32)
+    audio[::200] = 0.2
+    audio[1000] = 1.0
+
+    normalized = normalize_loudness(audio, preset="light")
+
+    assert float(np.max(np.abs(normalized))) < 0.999
 
 
 def test_blend_references_is_deterministic_and_honors_weight(tmp_path: Path) -> None:
