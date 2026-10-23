@@ -64,6 +64,14 @@
   Warnings are Python multiprocessing `fork()` deprecation notices. The
   candidate version/changelog metadata was then advanced to 1.4.2; the
   release builder must rerun tests against the clean candidate commit.
+- Candidate source committed locally as `06e6881462b87c8e0d8b2ba601c8abe38273e6b3`
+  (`fix(release): prepare 1.4.2 engineering candidate`).
+- `.venv/bin/python scripts/certify_suite_counts.py --record` on that commit
+  used a fresh detached worktree and recorded **2,085 passed, 3 skipped, 0
+  failed, 0 errors**. The one listed skip is the Vulkan device smoke; the
+  suite's skip ledger was incomplete because `tests/test_skip_audit.py`
+  clears it during the run. This count is distinct from the working-tree run,
+  where the local native build made the Vulkan test pass.
 
 - Clean committed-base suite-count certification for `8f08151`: **2077 passed, 3 skipped, 0 failed, 0 errors**. Availability check passed. This measures committed base, not the modified candidate tree.
 - Real standard Chatterbox CPU inference with the 12-utterance two-speaker corpus and bundled speech references completed with default `light` loudness in **213.62 seconds**. Output root: `/tmp/oracle-release-acceptance-default`.
