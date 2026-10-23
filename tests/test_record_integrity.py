@@ -50,6 +50,8 @@ _NON_HASH_TOKENS = frozenset(
         "3724243",  # …same quote
         "20260928",  # the date inside a synthetic crash-record filename (crash-20260928-…json), campaign plan
         "aaaaaaaa",  # the placeholder stem of that same synthetic filename
+        "5bb1f6ee",  # model revision hash (ResembleAI/chatterbox) — not a commit citation
+        "345e80ad",  # model revision hash (oliverguhr/fullstop-punctuation-multilang-large) — not a commit citation
     }
 )
 
