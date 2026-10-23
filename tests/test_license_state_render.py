@@ -28,7 +28,6 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from the_oracle import cli, pipeline, smoke  # noqa: E402
 from the_oracle.licensing import store, tokens  # noqa: E402
-from the_oracle.licensing.policy import edition_entitlements  # noqa: E402
 from tests.licensing_fixtures import TEST_SEED, payload  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("test_license_registry")
@@ -70,13 +69,13 @@ def _render(output_root: Path) -> smoke.SmokeRenderResult:
 
 
 @pytest.mark.parametrize(
-    ("setup_state", "expected_edition"),
-    [(_community, "community"), (_expired_studio, "community"), (_studio, "studio")],
-    ids=["community-no-token", "expired-studio", "valid-studio"],
+    ("setup_state", "expected_state"),
+    [(_community, "no_token"), (_expired_studio, "expired"), (_studio, "valid")],
+    ids=["no-token", "expired-key", "valid-key"],
 )
 def test_a_render_succeeds_under_every_license_state(
     setup_state,
-    expected_edition: str,
+    expected_state: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -87,10 +86,9 @@ def test_a_render_succeeds_under_every_license_state(
     # Assert the state really is the state (vacuity guard): the licence verdict
     # is read through the same call the feature gates use.
     from the_oracle.licensing import current_license
-    from the_oracle.licensing.policy import current_edition
 
-    edition = current_edition(current_license())
-    assert edition == expected_edition, f"expected {expected_edition}, got {edition}"
+    state = current_license().state
+    assert state == expected_state, f"expected {expected_state}, got {state}"
 
     result = _render(tmp_path / "render")
     capsys.readouterr()  # the smoke prints progress; keep the test output clean
@@ -107,9 +105,8 @@ def test_a_valid_studio_license_also_renders(
     """The licensed state is not a special path: it renders identically."""
     _studio(monkeypatch, tmp_path / "install")
     from the_oracle.licensing import current_license
-    from the_oracle.licensing.policy import current_edition
 
-    assert current_edition(current_license()) == "studio"
+    assert current_license().state == "valid"
 
     result = _render(tmp_path / "render")
     capsys.readouterr()
@@ -136,5 +133,5 @@ def test_the_render_path_contains_no_entitlement_gate() -> None:
     assert "policy.require" not in pipeline_source
     assert "current_license" not in pipeline_source
 
-    # And the entitlement table agrees: render is community's, unconditionally.
-    assert "render" in edition_entitlements("community")
+    # Render is not behind the product-key gate at all.
+    assert "policy.require" not in handler

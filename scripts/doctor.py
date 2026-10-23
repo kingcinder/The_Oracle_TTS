@@ -423,7 +423,6 @@ def _licensing_status(repo_root: Path) -> dict[str, Any]:
         return {
             "ok": False,
             "state": "package_missing",
-            "edition": None,
             "licensee": None,
             "key_id": None,
             "exp": None,
@@ -433,9 +432,9 @@ def _licensing_status(repo_root: Path) -> dict[str, Any]:
 
     status = current_license(repo_root)
     return {
-        "ok": status.ok,
+        # Unactivated is a valid install state, not a failure (see docstring).
+        "ok": status.ok or status.state == "no_token",
         "state": status.state,
-        "edition": status.edition,
         "licensee": status.licensee,
         "key_id": status.key_id,
         "exp": status.exp,

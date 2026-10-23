@@ -20,16 +20,16 @@ from the_oracle.licensing import keys
 
 TOKEN_PREFIX = "ORACLE1"
 
-_KNOWN_PAYLOAD_KEYS = frozenset(
-    {"v", "key_id", "lic_id", "edition", "licensee", "machine_hash", "iat", "exp"}
-)
+# v2 is the current format (no edition). v1 is recognised only so a genuine
+# old token can be reported as reissue_required instead of malformed.
+_KNOWN_PAYLOAD_KEYS = frozenset({"v", "key_id", "lic_id", "licensee", "machine_hash", "iat", "exp"})
+_LEGACY_PAYLOAD_KEYS = frozenset(_KNOWN_PAYLOAD_KEYS | {"edition"})
 
 
 @dataclass(frozen=True)
 class TokenPayload:
     key_id: str
     lic_id: str
-    edition: str
     licensee: str
     machine_hash: str
     iat: int
@@ -37,10 +37,9 @@ class TokenPayload:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "v": 1,
+            "v": 2,
             "key_id": self.key_id,
             "lic_id": self.lic_id,
-            "edition": self.edition,
             "licensee": self.licensee,
             "machine_hash": self.machine_hash,
             "iat": self.iat,
@@ -53,8 +52,7 @@ class LicenseStatus:
     """The single typed outcome of verification. ``detail`` is user-renderable."""
 
     ok: bool
-    state: str  # valid | no_token | malformed | unknown_key | bad_signature | expired | machine_mismatch | store_error
-    edition: str | None = None
+    state: str  # valid | no_token | malformed | reissue_required | unknown_key | bad_signature | expired | machine_mismatch | store_error
     licensee: str | None = None
     lic_id: str | None = None
     key_id: str | None = None
@@ -103,7 +101,9 @@ def parse(token: str) -> tuple[dict[str, object], bytes] | None:
         return None
     if not isinstance(payload, dict) or not isinstance(signature, bytes):
         return None
-    if payload.get("v") != 1 or set(payload) != _KNOWN_PAYLOAD_KEYS:
+    if payload.get("v") == 1 and set(payload) == _LEGACY_PAYLOAD_KEYS:
+        return payload, signature
+    if payload.get("v") != 2 or set(payload) != _KNOWN_PAYLOAD_KEYS:
         return None
     return payload, signature
 
@@ -121,6 +121,12 @@ def verify_token(
     if parsed is None:
         return LicenseStatus(ok=False, state="malformed", detail="The activation token is malformed. Re-enter it exactly as issued.")
     payload_dict, signature = parsed
+    if payload_dict.get("v") == 1:
+        return LicenseStatus(
+            ok=False,
+            state="reissue_required",
+            detail="This license was issued in the old format and no longer activates. Contact support for a reissued token.",
+        )
 
     key_id = payload_dict.get("key_id")
     if not isinstance(key_id, str) or keys.key_for(key_id) is None:
@@ -134,7 +140,6 @@ def verify_token(
         payload = TokenPayload(
             key_id=key_id,
             lic_id=str(payload_dict["lic_id"]),
-            edition=str(payload_dict["edition"]),
             licensee=str(payload_dict.get("licensee") or ""),
             machine_hash=str(payload_dict.get("machine_hash") or ""),
             iat=int(payload_dict["iat"]),
@@ -148,7 +153,6 @@ def verify_token(
         return LicenseStatus(
             ok=False,
             state="expired",
-            edition=payload.edition,
             licensee=payload.licensee,
             lic_id=payload.lic_id,
             key_id=key_id,
@@ -161,7 +165,6 @@ def verify_token(
         return LicenseStatus(
             ok=False,
             state="machine_mismatch",
-            edition=payload.edition,
             licensee=payload.licensee,
             lic_id=payload.lic_id,
             key_id=key_id,
@@ -173,7 +176,6 @@ def verify_token(
     return LicenseStatus(
         ok=True,
         state="valid",
-        edition=payload.edition,
         licensee=payload.licensee,
         lic_id=payload.lic_id,
         key_id=key_id,

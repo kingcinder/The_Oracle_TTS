@@ -39,10 +39,9 @@ pytestmark = pytest.mark.usefixtures("test_license_registry")
 SEED = TEST_SEED
 
 PAYLOAD = {
-    "v": 1,
+    "v": 2,
     "key_id": TEST_KEY_ID,
     "lic_id": "88888888-8888-4888-8888-888888888888",
-    "edition": "studio",
     "licensee": "Cody",
     "machine_hash": "",
     "iat": 1700000000,
@@ -72,7 +71,7 @@ def test_good_token_activates_offline(sandbox_root: Path, capsys) -> None:
     from the_oracle import offline
 
     status = current_license(offline.repo_root())
-    assert status.ok and status.state == "valid" and status.edition == "studio"
+    assert status.ok and status.state == "valid"
 
 
 def test_bad_token_writes_nothing(sandbox_root: Path, capsys) -> None:

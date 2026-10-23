@@ -130,7 +130,6 @@ def test_community_install_refuses_and_writes_nothing(
     captured = capsys.readouterr()
     assert status == 1
     assert captured.out.strip() == "", "a refused report must not print a document"
-    assert "Studio feature" in captured.err
     assert "activate" in captured.err  # the offline purchase path
     assert not (tmp_path / "report.json").exists(), "a refused report must write nothing"
     assert {path.name: path.read_bytes() for path in project.iterdir()} == before, (
@@ -178,7 +177,6 @@ def test_studio_install_produces_a_report_matching_the_artifacts(
     assert report["plan"]["utterances"] == 2
     assert report["plan"]["speakers"] == {"A": 1, "B": 1}
     assert report["plan"]["speaker_count"] == 2
-    assert report["edition"] == "studio"
     # The report file is the same document that was printed.
     assert json.loads(out.read_text(encoding="utf-8")) == report
 
@@ -235,7 +233,7 @@ def test_expired_license_degrades_without_destroying_work(
     assert _run(project, "--out", str(out)) == 1
 
     captured = capsys.readouterr()
-    assert "Studio feature" in captured.err
+    assert "expired" in captured.err
     assert not out.exists()
     assert {path.name: path.read_bytes() for path in project.iterdir()} == before
 
@@ -283,13 +281,9 @@ def test_the_report_is_read_only(tmp_path: Path) -> None:
 
 
 def test_the_gate_is_one_call_site() -> None:
-    """Pinned so the owner can move the feature with a one-line change."""
-    import the_oracle.render_report as render_report
-
-    source = Path(render_report.__file__).read_text(encoding="utf-8")
-    assert 'STUDIO_ENTITLEMENT = "studio_features"' in source
+    """The product-key gate stays a single call site in the CLI entry point."""
     cli_source = Path(cli.__file__).read_text(encoding="utf-8")
-    assert cli_source.count("render_report.STUDIO_ENTITLEMENT") == 1, (
-        "the entitlement gate must stay a single call site so it can be moved "
-        "or removed without hunting for copies"
+    assert cli_source.count("require(current_license())") == 1, (
+        "the product-key gate must stay a single call site so it cannot be "
+        "bypassed by a copy that forgets the check"
     )

@@ -34,10 +34,9 @@ pytestmark = pytest.mark.usefixtures("test_license_registry")
 SEED = TEST_SEED
 
 PAYLOAD = {
-    "v": 1,
+    "v": 2,
     "key_id": TEST_KEY_ID,
     "lic_id": "44444444-4444-4444-8444-444444444444",
-    "edition": "studio",
     "licensee": "Cody",
     "machine_hash": "",
     "iat": 1700000000,

@@ -24,6 +24,7 @@ dependencies = [
   "scipy==1.15.2",
   "soundfile==0.13.1",
   "symspellpy==6.9.0",
+  "huggingface-hub==1.33.0",
 ]
 
 [project.optional-dependencies]
@@ -69,7 +70,7 @@ version = { attr = "the_oracle.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-the_oracle = ["text_repair/data/*.txt"]
+the_oracle = ["text_repair/data/*.txt", "EULA-DRAFT.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

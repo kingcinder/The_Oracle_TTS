@@ -175,8 +175,8 @@ is gated, so community keeps every existing workflow, which is what
 
 - Implementation: `src/the_oracle/render_report.py` (measurement) and
   `handle_render_report` in `cli.py` (the gate).
-- The entitlement is one constant, `render_report.STUDIO_ENTITLEMENT`, and
-  exactly one `policy.require(...)` call site — pinned by
+- The product-key gate is the single `require(current_license())` call in `cli.main()`, which covers every command.
+  pinned by
   `tests/test_render_report.py::test_the_gate_is_one_call_site` so moving
   the gate is a one-line change.
 - Behaviour under each license state is pinned end to end in that file:

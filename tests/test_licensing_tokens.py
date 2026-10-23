@@ -40,10 +40,9 @@ PUB = TEST_PUBLIC_KEY
 #: An otherwise-valid payload with a DIFFERENT lic_id — used as the forgery
 #: body under a signature made over the real payload.
 REAL_PAYLOAD = {
-    "v": 1,
+    "v": 2,
     "key_id": TEST_KEY_ID,
     "lic_id": "22222222-2222-4222-8222-222222222222",
-    "edition": "studio",
     "licensee": "Cody",
     "machine_hash": "",
     "iat": 1700000000,
@@ -70,7 +69,7 @@ def test_canonical_bytes_are_key_order_independent() -> None:
 def test_minted_token_verifies() -> None:
     status = tokens.verify_token(_token(REAL_PAYLOAD))
     assert status.ok and status.state == "valid"
-    assert status.edition == "studio"
+    assert status.state == "valid"
     assert status.licensee == "Cody"
     assert status.machine_locked is False
 
@@ -148,7 +147,7 @@ def test_malformed_tokens_rejected_as_malformed() -> None:
         "ORACLE1.!!!.%%%",
         f"ORACLE1.{tokens._b64url_encode(json.dumps([]).encode())}.{tokens._b64url_encode(b'x')}",
         f"ORACLE1.{tokens._b64url_encode(json.dumps({k: v for k, v in REAL_PAYLOAD.items() if k != 'exp'}).encode())}.{tokens._b64url_encode(b'x')}",
-        f"ORACLE1.{tokens._b64url_encode(json.dumps(dict(REAL_PAYLOAD, v=2)).encode())}.{tokens._b64url_encode(b'x')}",
+        f"ORACLE1.{tokens._b64url_encode(json.dumps(dict(REAL_PAYLOAD, v=3)).encode())}.{tokens._b64url_encode(b'x')}",
     ):
         status = tokens.verify_token(bad)
         assert not status.ok

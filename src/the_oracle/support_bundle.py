@@ -155,7 +155,6 @@ def _license_payload(root: Path) -> dict[str, Any]:
     return {
         "ok": status.ok,
         "state": status.state,
-        "edition": status.edition,
         "key_id": status.key_id,
         "exp": status.exp,
         "machine_locked": status.machine_locked,

@@ -1409,7 +1409,7 @@ def handle_activate(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "state": result.state, "detail": result.detail}, indent=2))
         return 1
     licensee = verdict.licensee or "(no licensee recorded)"
-    print(f"Activated: {verdict.edition} edition for {licensee}.")
+    print(f"Activated: product key for {licensee}.")
     print("Offline activation — no server was contacted.")
     return 0
 
@@ -1775,7 +1775,6 @@ def handle_license_status() -> int:
     payload = {
         "ok": status.ok,
         "state": status.state,
-        "edition": status.edition,
         "licensee": status.licensee,
         "lic_id": status.lic_id,
         "key_id": status.key_id,
@@ -1788,40 +1787,20 @@ def handle_license_status() -> int:
 
 
 def handle_render_report(args) -> int:
-    """Studio: measure a finished render and report its conformance.
+    """Measure a finished render and report its conformance.
 
-    The gate is exactly ONE call site — the module constant named on the
-    ``require`` line below. The
-    community edition keeps every workflow that shipped before this flag
-    existed -- the capability itself is new in 1.4.0 -- so the gate takes
-    nothing away; an absent or expired licence degrades to community and this
-    command reports the purchase path instead of running.
+    Product-key gating happens once in ``main()`` for every command, so this
+    handler only runs with a valid key.
 
     Nothing here writes to the project: the render and its plan are read only.
     """
     from the_oracle import render_report
-    from the_oracle.licensing import current_license
-    from the_oracle.licensing.policy import LicenseRequired, current_edition, require
-
-    status = current_license()
-    try:
-        require(status, render_report.STUDIO_ENTITLEMENT)
-    except LicenseRequired as exc:
-        print(f"Render reports are a Studio feature. {exc}", file=sys.stderr)
-        print(
-            "Activation is offline and takes one paste: the-oracle activate <token>"
-            " (see `the-oracle license-status` for the current edition).",
-            file=sys.stderr,
-        )
-        return 1
-
     try:
         report = render_report.build_report(Path(args.project))
     except render_report.ReportError as error:
         print(f"render-report: {error}", file=sys.stderr)
         return 2
 
-    report["edition"] = current_edition(status)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
@@ -1883,6 +1862,13 @@ def handle_setup_vulkan() -> int:
     return 0
 
 
+#: Commands that run with no product key: activation, license inspection, and
+#: the privacy and support commands a user needs to report a problem.
+UNLOCKED_COMMANDS = frozenset(
+    {"license-status", "activate", "machine-id", "privacy-status", "bug-report", "support-bundle"}
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     # Before any model work: an offline install must resolve every model from the
     # seeded cache. Done here (not in the render/gui handlers) so every console
@@ -1903,6 +1889,16 @@ def main(argv: list[str] | None = None) -> int:
     crash_handlers.arm_native_capture()
     parser = build_parser()
     args = parser.parse_args(argv)
+    # Product-key gate: without a valid key, only the commands that activate
+    # and inspect a license run. Everything else prints the purchase message.
+    if args.command not in UNLOCKED_COMMANDS:
+        from the_oracle.licensing import LicenseRequired, current_license, require
+
+        try:
+            require(current_license())
+        except LicenseRequired as exc:
+            print(f"{exc}", file=sys.stderr)
+            return 1
     if args.command == "gui":
         from the_oracle.app_gui import launch_gui
 

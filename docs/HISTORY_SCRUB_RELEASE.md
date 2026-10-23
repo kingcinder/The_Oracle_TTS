@@ -4,6 +4,13 @@ This repository currently contains removed personal recordings in historical
 commits. Do not run these commands against a shared remote without the owner's
 explicit approval.
 
+> **Conflict with the current tree.** `Seashells/ASSETS.md` and `EULA-DRAFT.md`
+> (section 3) record the root-level `Seashells/*.wav` clips and the `fransisco`
+> clips as Owner-owned recordings that ship with the software. The `--path`
+> list below names those same clips as "removed personal recordings". The
+> `filter-repo` command here removes them from every commit, including the
+> working tree the release ships from. Resolve which is true before running it.
+
 ## Verify a scrub in a disposable mirror
 
 ```sh

@@ -1,10 +1,15 @@
 Copyright (c) 2026 The Oracle contributors. All rights reserved.
 
-This source code is made publicly visible for inspection and evaluation only.
+The source code is publicly visible. Use of the software is governed by the
+End User License Agreement in EULA-DRAFT.md, which applies to every copy in any
+form. The agreement grants the Community Edition free of charge for internal use
+without a license key (its section 1). Except as that agreement expressly permits,
+no permission is granted to copy, modify, merge, publish, distribute, sublicense,
+sell, lease, or otherwise commercially exploit this software or any derivative work.
 
-No permission is granted to use, copy, modify, merge, publish, distribute,
-sublicense, sell, lease, or otherwise commercially exploit this software or any
-derivative work without prior written permission from the copyright holder.
+Components listed in THIRD_PARTY_NOTICES.md (including PySide6, Shiboken6, and
+Qt under LGPL-3.0) remain under their own licenses, which are not affected by
+this file.
 
 Commercial licensing and leasing rights may be offered separately under negotiated terms.
 

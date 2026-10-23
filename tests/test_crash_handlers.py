@@ -173,7 +173,7 @@ def test_record_schema_shape(wired: Path) -> None:
     except OSError:
         sys.excepthook(*sys.exc_info())
     record = json.loads(crash.list_records(wired)[0].read_text(encoding="utf-8"))
-    for key in ("record_version", "timestamp", "app_version", "platform", "exception", "traceback", "log_tail", "edition"):
+    for key in ("record_version", "timestamp", "app_version", "platform", "exception", "traceback", "log_tail"):
         assert key in record, key
     assert record["platform"]["os"] == sys.platform
     assert record["exception"]["message"] == "schema"

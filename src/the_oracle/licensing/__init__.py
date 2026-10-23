@@ -16,11 +16,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from the_oracle.licensing.policy import (
-    DEFAULT_EDITION,
-    EDITIONS,
     LicenseRequired,
-    current_edition,
-    edition_entitlements,
+    is_licensed,
     require,
 )
 from the_oracle.licensing.store import clear_token, load_token, save_token, store_path
@@ -34,16 +31,13 @@ from the_oracle.licensing.tokens import (
 )
 
 __all__ = [
-    "DEFAULT_EDITION",
-    "EDITIONS",
     "LicenseRequired",
     "LicenseStatus",
     "TokenPayload",
     "canonical_payload_bytes",
     "clear_token",
-    "current_edition",
     "current_license",
-    "edition_entitlements",
+    "is_licensed",
     "load_token",
     "mint",
     "parse",
@@ -68,10 +62,9 @@ def current_license(repo_root: str | Path | None = None) -> LicenseStatus:
     result = load_token(root)
     if result.state == "no_token":
         return LicenseStatus(
-            ok=True,
+            ok=False,
             state="no_token",
-            edition="community",
-            detail="Not activated — community edition. Everything included ships in community.",
+            detail="No product key is activated. Enter your key with: the-oracle activate <key>.",
         )
     if result.state != "loaded" or result.stored is None:
         return LicenseStatus(ok=False, state="store_error", detail=result.detail)

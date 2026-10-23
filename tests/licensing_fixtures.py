@@ -60,10 +60,9 @@ PRODUCTION_PUBLIC_KEYS: frozenset[bytes] = frozenset(
 def payload(**overrides: object) -> dict[str, object]:
     """A valid studio payload keyed to the test registry, with overrides."""
     base: dict[str, object] = {
-        "v": 1,
+        "v": 2,
         "key_id": TEST_KEY_ID,
         "lic_id": "22222222-2222-4222-8222-222222222222",
-        "edition": "studio",
         "licensee": "Tester",
         "machine_hash": "",
         "iat": 1700000000,

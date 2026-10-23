@@ -28,6 +28,9 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("test_license_registry")
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
@@ -51,6 +54,22 @@ def offline_module():
     from the_oracle import offline
 
     return offline
+
+
+@pytest.fixture()
+def licensed_offline_install(offline_install):
+    """An offline install that also carries a test-minted license.
+
+    The entry points are product-key gated; these tests cover offline wiring,
+    not licensing, so the gate has to pass before the code under test runs.
+    """
+    from the_oracle.licensing import store, tokens
+    from tests.licensing_fixtures import TEST_SEED, payload
+
+    token = tokens.mint(payload(), TEST_SEED)
+    result = store.save_token(offline_install, token, verify_before_save=lambda t: tokens.verify_token(t))
+    assert result.state == "saved", result
+    return offline_install
 
 
 @pytest.fixture()
@@ -174,7 +193,7 @@ def test_apply_corrects_an_already_imported_huggingface_hub(offline_install, off
 # --- one test per model-loading entry point -----------------------------------
 
 
-def test_cli_render_entry_point_enables_offline_mode(offline_install, monkeypatch, tmp_path) -> None:
+def test_cli_render_entry_point_enables_offline_mode(licensed_offline_install, monkeypatch, tmp_path) -> None:
     """`the-oracle render` must have offline mode on by the time it renders."""
     from the_oracle import cli
 
@@ -215,7 +234,7 @@ def test_cli_render_entry_point_enables_offline_mode(offline_install, monkeypatc
     assert sys.modules["huggingface_hub.constants"].HF_HUB_OFFLINE is True
 
 
-def test_cli_gui_entry_point_enables_offline_mode(offline_install, monkeypatch) -> None:
+def test_cli_gui_entry_point_enables_offline_mode(licensed_offline_install, monkeypatch) -> None:
     """`the-oracle gui` (and the desktop entries that exec it) likewise."""
     from the_oracle import app_gui, cli
 
@@ -295,6 +314,11 @@ def test_manage_install_run_path_uses_the_shared_owner(offline_install, monkeypa
 def test_entry_points_leave_offline_mode_off_without_the_marker(
     online_install, monkeypatch, tmp_path, script_module
 ) -> None:
+    from the_oracle.licensing import store, tokens
+    from tests.licensing_fixtures import TEST_SEED, payload
+
+    result = store.save_token(online_install, tokens.mint(payload(), TEST_SEED), verify_before_save=lambda t: tokens.verify_token(t))
+    assert result.state == "saved", result
     """The control: no marker, no forcing."""
     from the_oracle import cli, real_engine_smoke
 

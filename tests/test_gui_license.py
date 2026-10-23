@@ -134,10 +134,9 @@ class _FakeMessageBox(_FakeDialog):
 
 def _good_token(exp: int | None = None) -> str:
     payload = {
-        "v": 1,
+        "v": 2,
         "key_id": TEST_KEY_ID,
         "lic_id": "55555555-5555-4555-5555-555555555555",
-        "edition": "studio",
         "licensee": "Cody",
         "machine_hash": "",
         "iat": 1700000000,
@@ -193,7 +192,7 @@ def test_activation_good_token_stores_and_reports_true(root: Path, parent, monke
     from the_oracle.licensing import tokens as _tokens
 
     verdict = _tokens.verify_token(result.stored.token)
-    assert verdict.ok and verdict.edition == "studio"
+    assert verdict.ok and verdict.state == "valid"
 
 
 def test_activation_bad_token_writes_nothing_and_names_the_state(root: Path, parent, monkeypatch) -> None:
@@ -265,9 +264,9 @@ def test_about_panel_names_edition_and_privacy(root: Path, parent, monkeypatch) 
         dialog.programmed = ["OK"]
         return dialog
 
-    # Unlicensed install: community with everything included.
+    # Unlicensed install: not activated, prompts for a product key.
     gui_license.run_about_panel(parent, dialog_cls=factory)
-    assert any("community" in text for text in labels), labels
+    assert any("Not activated" in text for text in labels), labels
     assert any("PRIVACY.md" in text for text in labels), labels
 
     # Activated install: names the edition and the licensee.
@@ -279,10 +278,10 @@ def test_about_panel_names_edition_and_privacy(root: Path, parent, monkeypatch) 
         from the_oracle.licensing.tokens import LicenseStatus
 
         return LicenseStatus(
-            ok=True, state="valid", edition="studio", licensee="Cody",
+            ok=True, state="valid", licensee="Cody",
             lic_id="x", key_id=TEST_KEY_ID, exp=None, machine_locked=False, detail="",
         )
 
     monkeypatch.setattr(gui_license, "current_license", fake_current_license)
     gui_license.run_about_panel(parent, dialog_cls=factory)
-    assert any("studio" in text and "Cody" in text for text in labels), labels
+    assert any("Licensed" in text and "Cody" in text for text in labels), labels

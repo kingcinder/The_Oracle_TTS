@@ -28,7 +28,6 @@ def build_record(
     log_tail: list[str] | None = None,
     gpu_backend: str | None = None,
     gpu_device: str | None = None,
-    edition: str | None = None,
     qt_version: str | None = None,
     thread_name: str | None = None,
 ) -> dict[str, object]:
@@ -63,6 +62,4 @@ def build_record(
             "name": sanitize_text(gpu_backend or "")[:80],
             "device": sanitize_text(gpu_device or "")[:120],
         }
-    if edition:
-        record["edition"] = sanitize_text(edition)[:40]
     return record

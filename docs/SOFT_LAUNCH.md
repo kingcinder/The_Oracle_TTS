@@ -1,7 +1,7 @@
 # The Oracle 1.4.1 — Commercial Alpha Soft Launch
 
 Status: **paid alpha release candidate**. Linux is supported; Windows is
-**experimental**. The commercial gate (`python scripts/soft_launch.py --check`)
+**unsupported** for this alpha. The commercial gate (`python scripts/soft_launch.py --check`)
 is the authority on whether a tree may be distributed. A red gate means the
 tree is not approved for commercial distribution, even if the app installs and
 runs.
@@ -20,7 +20,7 @@ working.
 
 ## System requirements
 
-- Linux x86_64 (supported) or Windows x86_64 (experimental).
+- Linux x86_64 (supported) or Windows x86_64 (beta).
 - Python 3.11 or 3.12.
 - `ffmpeg` on `PATH`.
 - Git, to fetch the release branch and updates.
@@ -135,9 +135,10 @@ changed.
 
 ## Known limitations
 
-- **Windows is experimental.** The six-theme GUI certification and the Windows
-  certifier crash investigation are not closed. Paid seats should expect Linux
-  first; Windows support is best-effort during the alpha.
+- **Windows is unsupported in this alpha.** The six-theme GUI certification and the Windows
+  certifier crash investigation (native exception 0xC0000005) are not closed.
+  Paid seats should expect Linux first; Windows support is best-effort during
+  the alpha.
 - **First run downloads models.** The first render may need a multi-GB model
   download; the doctor announces it before it starts. Offline installs use the
   bundle instead.

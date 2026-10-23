@@ -4062,6 +4062,15 @@ def launch_gui() -> None:
     crash_handlers.arm_native_capture()
     app = QApplication.instance() or QApplication([])
     launch_marks: list[tuple[str, float]] = [("qt_app_created", perf_counter() - launch_t0)]
+    # First-run license click-through: the window does not open until the
+    # current EULA text is accepted. Declining exits without recording.
+    from the_oracle import eula_acceptance
+    from the_oracle.gui_license import run_eula_acceptance
+
+    eula_root = MainWindow._consent_root()
+    if not eula_acceptance.is_accepted(eula_root):
+        if not run_eula_acceptance(None, eula_root, dialog_cls=QDialog):
+            return
     window = MainWindow()
     launch_marks.append(("mainwindow_built", perf_counter() - launch_t0))
     window.show()

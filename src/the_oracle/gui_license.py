@@ -98,6 +98,43 @@ def run_activation_dialog(parent: QWidget, root: RootPath, *, dialog_cls: type, 
     return outcome["activated"]
 
 
+def run_eula_acceptance(parent: QWidget, root: RootPath, *, dialog_cls: type) -> bool:
+    """First-run EULA click-through. Returns True only on an explicit Accept.
+
+    Declining (or closing the dialog) records nothing; the caller exits the
+    app. Acceptance is recorded against the digest of the exact text shown.
+    """
+    from the_oracle import eula_acceptance
+
+    current = eula_acceptance.eula_text_and_digest(root)
+    if current is None:
+        return False
+    text, _digest = current
+
+    dialog = dialog_cls(parent)
+    dialog.setWindowTitle("The Oracle — License Agreement")
+    dialog.setModal(True)
+    dialog.resize(640, 560)
+    layout = QVBoxLayout(dialog)
+
+    body = QPlainTextEdit()
+    body.setReadOnly(True)
+    body.setPlainText(text)
+    layout.addWidget(body, 1)
+
+    buttons = QDialogButtonBox()
+    accept_button = buttons.addButton("I Accept", QDialogButtonBox.AcceptRole)
+    decline_button = buttons.addButton("Decline", QDialogButtonBox.RejectRole)
+    layout.addWidget(buttons)
+
+    accept_button.clicked.connect(dialog.accept)
+    decline_button.clicked.connect(dialog.reject)
+    if dialog.exec() != 1:
+        return False
+    eula_acceptance.record_acceptance(root)
+    return True
+
+
 def _show(message_box_cls, parent, title: str, text: str) -> None:  # noqa: ANN001
     box = message_box_cls(parent)
     box.setWindowTitle(title)
@@ -114,15 +151,15 @@ def run_about_panel(parent: QWidget, *, dialog_cls: type) -> None:
     status = current_license()
     lines = ["The Oracle — all-in-one TTS rendering."]
     if status.ok and status.state == "valid":
-        edition_line = f"Edition: {status.edition}"
+        licensee_line = "Licensed"
         if status.licensee:
-            edition_line += f" — licensed to {status.licensee}"
-        lines.append(edition_line)
+            licensee_line += f" to {status.licensee}"
+        lines.append(licensee_line)
         if status.exp:
             lines.append(f"License expires: {status.exp}")
         lines.append(f"License key: {status.key_id}")
     else:
-        lines.append("Edition: community — everything included ships in community.")
+        lines.append("Not activated — enter a product key to unlock the program.")
         if status.state not in ("no_token", ""):
             lines.append(f"(Stored license state: {status.state})")
     lines.append("")

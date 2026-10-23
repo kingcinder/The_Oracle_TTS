@@ -2,11 +2,9 @@
 
 This is the first **real** Studio-gated capability, added in 1.4.0 and
 deliberately **additive**: nothing that shipped before is gated, so the
-community edition loses no workflow (docs/LICENSING_DESIGN.md §4 — community is
-everything that shipped, and the first gated feature is a new one). The owner
-can move the gate to a different feature, or drop it, by changing the single
-``policy.require(status, STUDIO_ENTITLEMENT)`` call site — see
-docs/LICENSING_OPS.md.
+the product key gates the whole program, and this report is one of the commands
+behind that single gate in ``cli.main()``. It is a new capability, so nothing
+that shipped before depends on it.
 
 The report is derived entirely from artifacts the render already produced: the
 assembled FLAC and its ``render_plan.json``. It measures, it does not re-render,
@@ -26,9 +24,6 @@ import math
 from pathlib import Path
 
 from the_oracle import __version__
-
-#: The entitlement this capability requires. One name, one call site.
-STUDIO_ENTITLEMENT = "studio_features"
 
 #: Written next to the render by ``--out``-less runs when a path is derived.
 REPORT_SUFFIX = ".report.json"

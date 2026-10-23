@@ -10,9 +10,13 @@ This End User License Agreement ("Agreement") is between the person or organizat
 
 Subject to this Agreement and any applicable order or invoice, the Owner grants the Licensee a limited, personal, non-exclusive, non-transferable, non-sublicensable license to install and use the software and documentation (the "Software") for the Licensee's own internal purposes. The license is limited to the scope and term stated in the applicable order or invoice.
 
+Community Edition. Without any order, invoice, or license key, the Owner grants every person the same license, free of charge, to install and use the Community Edition of the Software for the Licensee's own internal purposes. The Community Edition is the Software with no license activation applied. Features that require an activation are available only to Licensees holding an activation issued by the Owner under an order. The Community Edition is subject to every other section of this Agreement.
+
 ## 2. Restrictions
 
 The Licensee must not sell, resell, rent, lease, lend, sublicense, publish, share, redistribute, transfer, or otherwise make the Software or any license credentials available to another person or organization. The Licensee must not remove proprietary notices, bypass technical controls, reverse engineer the Software except to the extent applicable law does not permit that restriction, or use the Software to provide a hosted or managed service to third parties.
+
+Nothing in this Agreement restricts rights the Licensee has under the GNU Lesser General Public License version 3 (or any later version) for the PySide6, Shiboken6, and Qt components distributed with the Software, including the right to modify those components and to reverse engineer them for debugging such modifications. Those components remain subject to their own license terms, listed in `THIRD_PARTY_NOTICES.md`.
 
 ## 3. Licensee content, voices, and output
 
@@ -30,6 +34,14 @@ TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE OWNER DISCLAIMS ALL LIABILITY FOR TH
 
 Nothing in this Agreement excludes liability that cannot lawfully be excluded or limited.
 
+### 3A. Acceptable use for voice cloning
+
+The Licensee must not use the Software to create, clone, or synthesize a person's voice, or to generate audio that imitates a real person, unless that person has given informed, specific consent to that use. The Licensee must not use the Software to impersonate any person, deceive any listener, commit fraud, make political or defamatory statements attributed to a real person, or produce non-consensual sexual or abusive content. The Owner may refuse or terminate support or updates for any use it reasonably believes violates this section.
+
+### 3B. Watermarks and attribution
+
+If the Software writes a watermark, provenance tag, or attribution notice into Output, the Licensee must not remove, disable, or obscure it, and must not represent Output as a human recording where the Software's marking says otherwise.
+
 ## 6. Privacy and local processing
 
 The Software's data practices are described in `PRIVACY.md`. The Licensee is responsible for providing any notices and obtaining any consents required for its use of voices, personal data, and generated content.
@@ -38,13 +50,17 @@ The Software's data practices are described in `PRIVACY.md`. The Licensee is res
 
 This Agreement terminates automatically if the Licensee materially breaches it. On termination, the Licensee must stop using the Software and delete all copies, except where retention is required by law. Sections concerning restrictions, ownership, disclaimers, limitations, and dispute terms survive termination.
 
+## 7A. Refunds
+
+All sales are final. The Licensor does not offer refunds, and a purchased license is not refundable once it is issued. Nothing in this section limits any refund right that applicable consumer law gives the Licensee.
+
 ## 8. Updates and support
 
 The Owner may provide updates at its discretion. Updates may change features or compatibility. Support requests may be sent to codysa90@gmail.com; support is not guaranteed unless an order or support agreement says otherwise.
 
 ## 9. Governing law and venue
 
-The Owner must complete this section before approval and distribution: **[insert governing jurisdiction and exclusive venue after legal review]**.
+This Agreement is governed by the laws of the State of Washington, United States, without regard to its conflict-of-laws rules. The state and federal courts located in Washington State have exclusive jurisdiction and venue over any dispute arising from this Agreement, and the parties consent to that jurisdiction. Counsel must review this section before approval and distribution.
 
 ## 10. Entire agreement
 
@@ -52,4 +68,4 @@ This Agreement and the applicable order or invoice are the entire agreement abou
 
 ## 11. Acceptance
 
-By installing, accessing, or using the Software, the Licensee confirms that it has read and accepts this Agreement. If the Licensee does not accept it, it must not install or use the Software.
+The Licensee accepts this Agreement by clicking "I Accept" in the Software's first-run license screen, which shows the full text of this Agreement. The Software does not open its main window until that acceptance is given. The acceptance is recorded locally, against the exact text accepted, so a changed Agreement asks again. If the Licensee does not accept it, it must not use the Software, and must delete its copies.

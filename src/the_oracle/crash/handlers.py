@@ -60,7 +60,6 @@ def _capture(
             traceback_frames=traceback_frames,
             log_tail=log_tail,
             thread_name=thread_name,
-            edition=_edition(),
         )
         return bundle.write_record(root, record)
     except Exception:  # noqa: BLE001 - a failing crash handler must stay silent
@@ -139,15 +138,6 @@ def _log_file() -> Path:
     from the_oracle.utils.logging import default_log_file
 
     return default_log_file()
-
-
-def _edition() -> str | None:
-    try:
-        from the_oracle.licensing import current_license
-
-        return current_license().edition
-    except Exception:  # noqa: BLE001 - diagnostics never block diagnostics
-        return None
 
 
 def enable_faulthandler_catch(root: str | Path) -> bool:

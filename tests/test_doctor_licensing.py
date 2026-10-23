@@ -37,10 +37,9 @@ pytestmark = pytest.mark.usefixtures("test_license_registry")
 SEED = TEST_SEED
 
 PAYLOAD = {
-    "v": 1,
+    "v": 2,
     "key_id": TEST_KEY_ID,
     "lic_id": "55555555-5555-4555-8555-555555555555",
-    "edition": "studio",
     "licensee": "Cody",
     "machine_hash": "",
     "iat": 1700000000,
@@ -79,7 +78,7 @@ def test_real_repo_has_no_license_and_reports_valid(tmp_path: Path) -> None:
     status = doctor._licensing_status(tmp_path)
     assert status["ok"] is True
     assert status["state"] == "no_token"
-    assert status["edition"] == "community"
+    assert status["state"] == "no_token"
 
 
 def test_unlicensed_install_is_a_valid_state(tmp_path: Path) -> None:
@@ -96,7 +95,7 @@ def test_valid_license_reports_edition_and_licensee(tmp_path: Path) -> None:
     status = doctor._licensing_status(tmp_path)
     assert status["ok"] is True
     assert status["state"] == "valid"
-    assert status["edition"] == "studio"
+    assert status["state"] == "valid"
     assert status["licensee"] == "Cody"
     assert status["key_id"] == TEST_KEY_ID
 

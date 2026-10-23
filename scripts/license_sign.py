@@ -11,7 +11,7 @@ accident — tests pin that.
 
 Usage:
   ORACLE_LICENSE_SIGNING_KEY=<64 hex> python scripts/license_sign.py mint \
-      --edition studio --licensee "name or email" [--key-id k1] \
+      --licensee "name or email" [--key-id k2] \
       [--expires 2027-12-31T00:00:00Z] [--machine-hash <sha256-32hex>]
   python scripts/license_sign.py keygen
 """
@@ -94,10 +94,9 @@ def cmd_mint(args: argparse.Namespace) -> int:
         print("error: --machine-hash must be 32 lowercase hex chars (SHA-256 prefix).", file=sys.stderr)
         return 1
     payload = {
-        "v": 1,
+        "v": 2,
         "key_id": args.key_id,
         "lic_id": str(uuid.uuid4()),
-        "edition": args.edition,
         "licensee": args.licensee or "",
         "machine_hash": (args.machine_hash or "").lower(),
         "iat": int(time.time()),
@@ -115,7 +114,6 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("keygen", help="Generate a signing seed + its verify key. Never commit either output's seed.")
 
     mint_parser = sub.add_parser("mint", help="Mint one signed license token.")
-    mint_parser.add_argument("--edition", required=True, choices=["community", "studio", "trial"])
     mint_parser.add_argument("--licensee", default="")
     # A default key id is how the compromised commissioning key got used for
     # every minted token without anyone choosing it. The operator must name the

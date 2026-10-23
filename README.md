@@ -15,8 +15,9 @@ Chatterbox outputs include built-in Perth watermarking by design. This project d
 
 ## Alpha Soft Launch (1.4.1)
 
-The 1.4.1 release is a narrow, paid alpha: Linux is supported and Windows is
-**experimental**. Read [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md) for the
+The 1.4.1 release is a narrow, paid alpha: Linux is supported. Windows is
+**unsupported** for this alpha; the native-crash certifier failure (0xC0000005)
+is still open. Read [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md) for the
 install path, the purchase and offline activation flow, the platform scope,
 and the owner go-live checklist. Commercial distribution is gated by
 `python scripts/soft_launch.py --check`; the EULA is the remaining blocker,
@@ -83,7 +84,7 @@ settings untouched. The underlying per-action scripts
 ## Platform Support
 
 - Supported Python: `3.11` or `3.12`
-- Supported operating systems: Linux and Windows (Windows is **experimental** in the 1.4.1 alpha; see [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md))
+- Supported operating systems: Linux (supported) and Windows (**beta**; see [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md))
 - Default execution path: CPU (PyTorch Chatterbox in-process); CUDA is available when a CUDA-enabled PyTorch wheel and a suitable NVIDIA GPU are detected
 - Vulkan is available as an opt-in inference backend via audio.cpp (`--inference-backend vulkan`); see "Vulkan Backend (audio.cpp)" below
 

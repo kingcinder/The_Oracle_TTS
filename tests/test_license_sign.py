@@ -63,14 +63,14 @@ def test_mint_refuses_without_signing_key(monkeypatch, capsys) -> None:
     monkeypatch.delenv("ORACLE_LICENSE_SIGNING_KEY", raising=False)
     module = _load_script()
     with pytest.raises(SystemExit):
-        module.main(["mint", "--edition", "studio", "--key-id", TEST_KEY_ID])
+        module.main(["mint", "--key-id", TEST_KEY_ID])
 
 
 def test_mint_rejects_a_malformed_seed(monkeypatch, capsys) -> None:
     monkeypatch.setenv("ORACLE_LICENSE_SIGNING_KEY", "not-hex")
     module = _load_script()
     with pytest.raises(SystemExit):
-        module.main(["mint", "--edition", "studio", "--key-id", TEST_KEY_ID])
+        module.main(["mint", "--key-id", TEST_KEY_ID])
 
 
 def test_mint_refuses_to_silently_default_the_key_id(monkeypatch, capsys) -> None:
@@ -86,13 +86,13 @@ def test_mint_refuses_to_silently_default_the_key_id(monkeypatch, capsys) -> Non
     monkeypatch.setenv("ORACLE_LICENSE_SIGNING_KEY", SEED_HEX)
     module = _load_script()
     with pytest.raises(SystemExit):
-        module.main(["mint", "--edition", "studio"])
+        module.main(["mint"])
 
 
 def test_minted_payload_carries_the_key_id_it_was_given(monkeypatch, capsys) -> None:
     monkeypatch.setenv("ORACLE_LICENSE_SIGNING_KEY", SEED_HEX)
     module = _load_script()
-    assert module.main(["mint", "--edition", "studio", "--key-id", TEST_KEY_ID]) == 0
+    assert module.main(["mint", "--key-id", TEST_KEY_ID]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["payload"]["key_id"] == TEST_KEY_ID
 
@@ -105,8 +105,6 @@ def test_minted_token_verifies_and_carries_the_payload(monkeypatch) -> None:
     token = module.main(
         [
             "mint",
-            "--edition",
-            "trial",
             "--licensee",
             "Tester",
             "--key-id",
@@ -121,10 +119,9 @@ def test_minted_token_verifies_and_carries_the_payload(monkeypatch) -> None:
     # injected test registry. Extract it from the script's own mint machinery
     # rather than stdout, since main() prints JSON for the operator.
     payload = {
-        "v": 1,
+        "v": 2,
         "key_id": TEST_KEY_ID,
         "lic_id": "77777777-7777-4777-8777-777777777777",
-        "edition": "trial",
         "licensee": "Tester",
         "machine_hash": "",
         "iat": 1700000000,
@@ -132,7 +129,7 @@ def test_minted_token_verifies_and_carries_the_payload(monkeypatch) -> None:
     }
     client_token = tokens.mint(payload, bytes.fromhex(SEED_HEX))
     status = tokens.verify_token(client_token, now=1700000001.0)
-    assert status.ok and status.state == "valid" and status.edition == "trial"
+    assert status.ok and status.state == "valid"
 
 
 def test_production_registry_holds_no_key_derived_from_this_seed() -> None:
