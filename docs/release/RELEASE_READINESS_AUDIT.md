@@ -9,11 +9,11 @@ Status: **in progress; not a release approval**. Evidence in this audit is tied 
 - **Severity:** P0 — release blocker
 - **Component:** CI suite-count gate
 - **User consequence:** CI cannot establish that the current release tree has a known, stable test-suite count.
-- **Evidence:** The initial availability check exited 2 for `8f08151cd161`; a clean worktree measurement then recorded **2,077 passed, 3 skipped, 0 failed, 0 errors** and a subsequent availability check passed. That baseline measures committed HEAD before this run's source/test edits. The modified source tree then passed **2,088 tests, 0 skipped, 0 failed** after dependency follow-up, but this count is not yet keyed to a committed candidate. The workflow run `39913481331` also failed its “Suite counts recorded or inheritable” job at `b21caa452736`.
+- **Evidence:** The initial availability check exited 2 for `8f08151cd161`; its baseline was then recorded. The packaging-corrected candidate commit `65fb0b5bd5ac` measured **2,086 passed, 3 skipped, 0 failed, 0 errors** in a fresh detached worktree. Baseline-only commit `b03a667f9390` inherits that record. The local release run passed **2,089 tests, 0 skipped, 0 failed** with its native Vulkan build available. The workflow run `39913481331` failed its “Suite counts recorded or inheritable” job at `b21caa452736`.
 - **Reproduction:** `.venv/bin/python scripts/certify_suite_counts.py HEAD --availability`.
-- **Correction:** The committed base is recorded. The 1.4.2 candidate's final changes need a certified baseline attached to its final source revision.
-- **Validation:** Base revision availability passed. The corrected modified working tree completed the full suite: **2,088 passed, 0 skipped, 0 failed, 0 errors** in 6m31s. Candidate certification remains outstanding until commit.
-- **Release blocker:** Yes, pending candidate certification.
+- **Correction:** Record suite counts for the candidate commit and use the existing baseline-only inheritance mechanism for its follow-up metadata commit.
+- **Validation:** `scripts/certify_suite_counts.py --availability` passes for `b03a667f9390`, inheriting the measured `65fb0b5bd5ac` record. The certified fresh tree skipped the device-gated Vulkan smoke; the local release run had the native build and passed it.
+- **Release blocker:** No for local suite-count qualification. Hosted CI for the local candidate remains open under RCI-002.
 
 ### RCI-002 — Remote release branch and CI do not qualify local candidate
 
@@ -95,11 +95,11 @@ Status: **in progress; not a release approval**. Evidence in this audit is tied 
 - **Severity:** P0 — release blocker for candidate distribution
 - **Component:** Packaging and artifact provenance
 - **User consequence:** Existing checksums do not prove the current local source can recreate the package.
-- **Evidence:** `release_artifacts/` contains 1.4.1 wheel and sdist with recorded hashes. The current source is now version 1.4.2 and its candidate packages/checksum manifest do not yet exist.
+- **Evidence:** Existing 1.4.1 outputs remain separately checksummed. The release builder produced the 1.4.2 wheel and sdist from clean commit `b03a667f93900ee7ea9704f50719e328604d85e1`; the tracked manifest is `release_checksums/checksums-1.4.2.sha256`.
 - **Reproduction:** `.venv/bin/python scripts/release.py --skip-tests`.
-- **Correction:** The source version is 1.4.2 to avoid colliding with the tracked 1.4.1 checksums. Commit the reviewed source, rebuild through the established release script, inspect contents, and generate checksums without publishing.
-- **Validation:** Rebuild both package formats; verify hashes, version, notices, resource inclusion, and absence of secrets.
-- **Release blocker:** Yes.
+- **Correction:** The source version is 1.4.2 to avoid colliding with the tracked 1.4.1 checksums. The release script built both formats after a clean-tree test run.
+- **Validation:** `sha256sum -c` passes for both archives. Both report version 1.4.2 and include notices/resources. `detect-secrets` found zero items; the corrected sdist contains zero `tests/` entries. Nothing was published.
+- **Release blocker:** No for local artifact preparation; hosted CI and human/commercial gates remain separate blockers.
 
 ### RPKG-002 — Source archive included the development test suite
 
@@ -108,8 +108,8 @@ Status: **in progress; not a release approval**. Evidence in this audit is tied 
 - **User consequence:** The first local 1.4.2 source archive contained 163 test files that users do not need to install or run the application.
 - **Evidence:** `tar -tzf release_artifacts/the_oracle-1.4.2.tar.gz | rg '^the_oracle-1.4.2/tests/' | wc -l` returned 163. No `tests` directive existed in `MANIFEST.in`; setuptools included the tracked tree by default. The wheel contained no test suite.
 - **Correction:** Add `prune tests` to `MANIFEST.in` and a regression in `tests/test_release_hygiene.py` that requires the exclusion.
-- **Validation:** Regression was observed failing before the manifest change. After the change, `pytest tests/test_release_hygiene.py -q` passed (6 tests). Rebuild the sdist and verify it contains no `tests/` entries before accepting the artifact.
-- **Release blocker:** Yes until a corrected sdist is rebuilt and inspected.
+- **Validation:** Regression was observed failing before the manifest change. After the change, `pytest tests/test_release_hygiene.py -q` passed (6 tests); the final clean release build contains zero `tests/` entries and its checksum verifies.
+- **Release blocker:** No; corrected archive was rebuilt and inspected.
 
 ### RINST-001 — Managed install selected mutually incompatible NumPy requirements
 
@@ -118,8 +118,8 @@ Status: **in progress; not a release approval**. Evidence in this audit is tied 
 - **User consequence:** A fresh install could provision NumPy 2.4.6 even though Chatterbox 0.1.7 requires NumPy `<2`; after downgrading NumPy, `ml-dtypes 0.6.0` still required NumPy `>=2`. `pip check` therefore reported broken requirements and the environment was not internally consistent.
 - **Evidence:** Reproduced in the isolated managed install at `/media/cody/Data/oracle-clean-install-YvsR8r/tree`. `pip check` first reported the Chatterbox/NumPy conflict, then the `ml-dtypes`/NumPy conflict. Dry-run resolution selected `ml-dtypes 0.5.4` for the compatible closure.
 - **Correction:** Constrain the project to `numpy>=1.26,<2`, pin the managed Chatterbox runtime to `ml-dtypes<0.6`, and add `tests/test_release_dependency_constraints.py`.
-- **Validation:** Reinstalled in the isolated tree: NumPy 1.26.4, ml-dtypes 0.5.4, `pip check` clean, and normal doctor exited 0. Targeted install/offline/metadata regression set: 40 passed. Full modified working-tree suite: **2,088 passed, 0 skipped, 0 failed**; final clean-commit release build still must rerun it.
-- **Release blocker:** Corrected locally; final candidate suite and artifact build remain required.
+- **Validation:** Reinstalled in the isolated tree: NumPy 1.26.4, ml-dtypes 0.5.4, `pip check` clean, and normal doctor exited 0. Targeted install/offline/metadata regression set: 40 passed. The corrected full working-tree suite passed **2,089 tests**, and the clean release build repeated that result.
+- **Release blocker:** No for managed dependency consistency; cold download and first-user workflow remain unverified.
 
 ## Prioritized implementation plan
 

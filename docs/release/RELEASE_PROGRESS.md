@@ -80,6 +80,18 @@
   1.4.2 checksum was generated locally and was not published; it was removed
   before rebuilding from the corrected manifest. The initial sdist must not be
   distributed.
+- Corrected release build from clean commit
+  `b03a667f93900ee7ea9704f50719e328604d85e1` passed **2,089 tests, 0 skipped,
+  6 warnings, 0 failed** in 392.34 seconds. Final artifacts are
+  `release_artifacts/the_oracle-1.4.2.tar.gz` and
+  `release_artifacts/the_oracle-1.4.2-py3-none-any.whl`; `sha256sum -c` passed
+  for both. The corrected sdist contains **0** `tests/` paths. `detect-secrets`
+  reported zero findings in each archive. The tracked manifest is
+  `release_checksums/checksums-1.4.2.sha256`.
+- Final `soft_launch.py --check --json` reports one blocker, the draft EULA,
+  plus an LGPL source/replacement-obligations warning. Version, production
+  verify key, third-party notices, voice inventory, checksums, artifacts, and
+  support workflow all pass. No publication occurred.
 
 - Clean committed-base suite-count certification for `8f08151`: **2077 passed, 3 skipped, 0 failed, 0 errors**. Availability check passed. This measures committed base, not the modified candidate tree.
 - Real standard Chatterbox CPU inference with the 12-utterance two-speaker corpus and bundled speech references completed with default `light` loudness in **213.62 seconds**. Output root: `/tmp/oracle-release-acceptance-default`.
@@ -96,11 +108,10 @@
 
 ## Remaining blockers and next actions
 
-1. Establish a certified suite-count baseline for the final committed candidate; the full working-tree run is not keyed to a source commit.
+1. Obtain hosted CI evidence for the final candidate SHA; no run for these local commits exists and no push was made.
 2. Obtain human listening/intelligibility review for the real output.
 3. Complete cold model-download, project save/reopen, update/rollback/uninstall, and first-user workflow acceptance; the isolated managed install and first real render passed, but these steps remain untested.
-4. Certify suite counts for the packaging-corrected candidate commit, run hosted CI when an authorized route is available, and rebuild/inspect versioned artifacts from a clean candidate with non-conflicting checksum provenance.
-5. Have the owner and qualified counsel approve the EULA, third-party obligations, voice rights, and offer before any commercial distribution.
+4. Have the owner and qualified counsel approve the EULA, third-party obligations, voice rights, and offer before any commercial distribution.
 
 ## Owner-controlled actions
 
