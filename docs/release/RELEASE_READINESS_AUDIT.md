@@ -101,6 +101,16 @@ Status: **in progress; not a release approval**. Evidence in this audit is tied 
 - **Validation:** Rebuild both package formats; verify hashes, version, notices, resource inclusion, and absence of secrets.
 - **Release blocker:** Yes.
 
+### RPKG-002 — Source archive included the development test suite
+
+- **Severity:** P1 — distribution hygiene requirement
+- **Component:** Source distribution manifest
+- **User consequence:** The first local 1.4.2 source archive contained 163 test files that users do not need to install or run the application.
+- **Evidence:** `tar -tzf release_artifacts/the_oracle-1.4.2.tar.gz | rg '^the_oracle-1.4.2/tests/' | wc -l` returned 163. No `tests` directive existed in `MANIFEST.in`; setuptools included the tracked tree by default. The wheel contained no test suite.
+- **Correction:** Add `prune tests` to `MANIFEST.in` and a regression in `tests/test_release_hygiene.py` that requires the exclusion.
+- **Validation:** Regression was observed failing before the manifest change. After the change, `pytest tests/test_release_hygiene.py -q` passed (6 tests). Rebuild the sdist and verify it contains no `tests/` entries before accepting the artifact.
+- **Release blocker:** Yes until a corrected sdist is rebuilt and inspected.
+
 ### RINST-001 — Managed install selected mutually incompatible NumPy requirements
 
 - **Severity:** P0 — clean-install blocker, corrected in the working tree

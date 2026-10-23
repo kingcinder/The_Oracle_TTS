@@ -9,6 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INVENTORY = REPO_ROOT / "Seashells" / "ASSETS.md"
+MANIFEST = REPO_ROOT / "MANIFEST.in"
 
 
 def _tracked_voice_assets() -> set[str]:
@@ -67,3 +68,8 @@ def test_root_level_recordings_are_documented_as_owner_owned() -> None:
     for row in root_rows:
         assert "Owner-owned" in row
         assert "all rights reserved" in row.lower()
+
+
+def test_source_archive_excludes_development_test_suite() -> None:
+    directives = MANIFEST.read_text(encoding="utf-8").splitlines()
+    assert "prune tests" in directives

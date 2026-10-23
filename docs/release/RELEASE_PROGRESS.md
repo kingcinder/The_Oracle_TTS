@@ -72,6 +72,14 @@
   suite's skip ledger was incomplete because `tests/test_skip_audit.py`
   clears it during the run. This count is distinct from the working-tree run,
   where the local native build made the Vulkan test pass.
+- The release builder then passed all **2,088 tests** and generated the 1.4.2
+  sdist and wheel. Archive inspection found 163 development test files in the
+  sdist, even though no tests were explicitly listed in `MANIFEST.in`. Added
+  `prune tests` plus a regression check; red/green verification was **1
+  failing**, then **6 passed** for `tests/test_release_hygiene.py`. The initial
+  1.4.2 checksum was generated locally and was not published; it was removed
+  before rebuilding from the corrected manifest. The initial sdist must not be
+  distributed.
 
 - Clean committed-base suite-count certification for `8f08151`: **2077 passed, 3 skipped, 0 failed, 0 errors**. Availability check passed. This measures committed base, not the modified candidate tree.
 - Real standard Chatterbox CPU inference with the 12-utterance two-speaker corpus and bundled speech references completed with default `light` loudness in **213.62 seconds**. Output root: `/tmp/oracle-release-acceptance-default`.
@@ -91,7 +99,7 @@
 1. Establish a certified suite-count baseline for the final committed candidate; the full working-tree run is not keyed to a source commit.
 2. Obtain human listening/intelligibility review for the real output.
 3. Complete cold model-download, project save/reopen, update/rollback/uninstall, and first-user workflow acceptance; the isolated managed install and first real render passed, but these steps remain untested.
-4. Certify suite counts for the final candidate commit, run hosted CI when an authorized route is available, and build/inspect versioned artifacts from a clean candidate with non-conflicting checksum provenance.
+4. Certify suite counts for the packaging-corrected candidate commit, run hosted CI when an authorized route is available, and rebuild/inspect versioned artifacts from a clean candidate with non-conflicting checksum provenance.
 5. Have the owner and qualified counsel approve the EULA, third-party obligations, voice rights, and offer before any commercial distribution.
 
 ## Owner-controlled actions

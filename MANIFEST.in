@@ -11,3 +11,4 @@ include docs/LICENSING_OPS.md
 include docs/LICENSING_THREAT_MODEL.md
 include Seashells/ASSETS.md
 include Seashells/generic/ATTRIBUTION.md
+prune tests

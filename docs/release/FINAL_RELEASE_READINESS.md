@@ -27,7 +27,7 @@ owner decisions.
 | B — Installation | **PARTIAL / UNVERIFIED** | Isolated managed Linux install, `pip check`, doctor, and first CPU render pass. Cold model download, restart/project save and reopen, update, rollback, uninstall, and complete customer walkthrough remain untested. |
 | C — Quality | **UNVERIFIED** | Working-tree pytest after dependency correction: 2,088 passed, 0 skipped, 6 warnings. Fresh-worktree suite-count certification of candidate commit `06e6881`: 2,085 passed, 3 skipped, 0 failed. The skip was the hardware-gated Vulkan smoke. No hosted CI result for this candidate; GUI usability and human audio review are incomplete. |
 | D — Privacy and security | **UNVERIFIED** | Support packages are user-initiated and redacted, with tests covering their privacy boundary; no telemetry/upload path was introduced. `pip-audit` reports zero findings in its auditable installed set. Non-PyPI components are excluded, and the 1.4.2 artifact secret scan is pending. |
-| E — Distribution | **BLOCKED** | Versioned 1.4.2 artifacts have not yet been built from a clean candidate revision. Existing 1.4.1 artifacts/checksums are not evidence for this candidate. |
+| E — Distribution | **BLOCKED** | The first 1.4.2 sdist was built but inspection found 163 development test files in it. `MANIFEST.in` now prunes `tests/`; the corrected candidate must be recertified and rebuilt before artifact acceptance. Existing 1.4.1 artifacts/checksums are not evidence for this candidate. |
 | F — Commercial approval | **BLOCKED** | Draft EULA, counsel review, owner offer/pricing decision, voice-rights confirmation, and publication authorization are absent. |
 
 ## Verification record
