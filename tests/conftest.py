@@ -19,6 +19,7 @@ import ast
 import inspect
 import io
 import os
+import sys
 import tokenize
 from pathlib import Path
 
@@ -47,6 +48,7 @@ def _licensed_gui_operations_for_functional_tests(request, monkeypatch):
         "test_licensing_offline",
         "test_licensing_policy_enforcement",
         "test_licensing_store",
+        "test_doctor_licensing",
         "test_render_report",
         "test_serial_gate_product",
         "test_serial_vendor_workflow",
@@ -56,8 +58,11 @@ def _licensed_gui_operations_for_functional_tests(request, monkeypatch):
     from the_oracle.licensing.tokens import LicenseStatus
 
     monkeypatch.setattr(
-        "the_oracle.licensing.current_license",
-        lambda: LicenseStatus(ok=True, state="valid", licensee="GUI test", key_id="ktest"),
+        sys.modules["the_oracle.licensing"],
+        "current_license",
+        lambda *_args, **_kwargs: LicenseStatus(
+            ok=True, state="valid", licensee="GUI test", key_id="ktest"
+        ),
     )
 
 _ORACLE_ENV_PREFIX = "ORACLE_"

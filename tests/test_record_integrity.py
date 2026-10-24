@@ -52,6 +52,14 @@ _NON_HASH_TOKENS = frozenset(
         "aaaaaaaa",  # the placeholder stem of that same synthetic filename
         "5bb1f6ee",  # model revision hash (ResembleAI/chatterbox) — not a commit citation
         "345e80ad",  # model revision hash (oliverguhr/fullstop-punctuation-multilang-large) — not a commit citation
+        "749d1c1a",  # model revision hash (ResembleAI/chatterbox-turbo) — not a commit citation
+        "d7504834",  # model revision hash (SamLowe/roberta-base-go_emotions) — not a commit citation
+        "748c5e28",  # pinned upstream audio.cpp revision — not a local commit
+        "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18",  # external model revision
+        "345e80adc07e761d3a35feafd20f2f44a151f453",  # external model revision
+        "749d1c1a46eb10492095d68fbcf55691ccf137cd",  # external model revision
+        "d75048347613a25d77de8cf6412eaae9fa7b26be",  # external model revision
+        "748c5e28f6a7228b8f38ad7142ca97d29584544b",  # external audio.cpp revision
     }
 )
 

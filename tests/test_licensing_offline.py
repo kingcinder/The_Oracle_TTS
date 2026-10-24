@@ -137,6 +137,9 @@ def test_importing_licensing_never_imports_ml_dependencies(monkeypatch) -> None:
         for name, module in sys.modules.items()
         if name.startswith("the_oracle.licensing")
     }
+    import the_oracle as oracle_package
+
+    saved_parent = getattr(oracle_package, "licensing", None)
     for name in saved:
         del sys.modules[name]
     try:
@@ -156,6 +159,8 @@ def test_importing_licensing_never_imports_ml_dependencies(monkeypatch) -> None:
         for name in [n for n in sys.modules if n.startswith("the_oracle.licensing")]:
             del sys.modules[name]
         sys.modules.update(saved)
+        if saved_parent is not None:
+            oracle_package.licensing = saved_parent
 
 
 def test_package_imports_no_network_modules() -> None:

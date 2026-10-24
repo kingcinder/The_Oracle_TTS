@@ -5,6 +5,7 @@ from __future__ import annotations
 import json  # noqa: F401 - preloaded: _load_previous_plan ran this lazily inside worker threads (U4.2 import-safety)
 import multiprocessing
 import os
+import sys
 from dataclasses import dataclass, field, replace
 from datetime import date
 from importlib.metadata import PackageNotFoundError, version
@@ -62,6 +63,12 @@ _DEFAULT_SEGMENT_SECONDS = {"vulkan": 3.0, "pytorch": 20.0}
 _PROGRESS_TAIL_SECONDS = 3.0
 # EWMA smoothing factor for the measured per-segment wall time.
 _PROGRESS_AVG_ALPHA = 0.3
+
+
+def _require_license(entitlement: str) -> None:
+    """Resolve the lightweight gate module at call time after offline reloads."""
+    license_module = sys.modules["the_oracle.licensing"]
+    license_module.require(license_module.current_license(), entitlement)
 
 
 def _time_weighted_progress(render_state: dict[str, Any], elapsed: float, stage: str) -> tuple[float, float | None]:
@@ -1096,9 +1103,7 @@ class OraclePipeline:
         speaker_settings: dict[str, SpeakerSettings],
         settings: RenderSettings,
     ) -> RenderPlan:
-        from the_oracle.licensing import current_license, require
-
-        require(current_license(), "analyze a project")
+        _require_license("analyze a project")
         document = self.ingestor.ingest(input_path)
         # Directives are author hints written in the source, so they must be
         # parsed before text repair: the repair pipeline may normalise or
@@ -1312,9 +1317,7 @@ class OraclePipeline:
         render_click_wall: float | None = None,
         force_sequential: bool = False,
     ) -> Path:
-        from the_oracle.licensing import current_license, require
-
-        require(current_license(), "render")
+        _require_license("render")
         start_time = perf_counter()
         start_wall = time()
         # Hiccup-retry notes are drained by whichever synthesis produced them;
@@ -2290,9 +2293,7 @@ class OraclePipeline:
         seed: int | None = None,
         progress_callback=None,
     ) -> Path:
-        from the_oracle.licensing import current_license, require
-
-        require(current_license(), "preview audio")
+        _require_license("preview audio")
         start_time = perf_counter()
 
         def emit_preview_progress(stage: str, detail: str, current_step: int, total_steps: int = 4) -> None:
