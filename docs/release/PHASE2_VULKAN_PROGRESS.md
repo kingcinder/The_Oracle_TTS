@@ -11,6 +11,9 @@
 - `the_oracle.vulkan_prebuilt.install_from_manifest` verifies the archive hash,
   rejects path traversal and symlinks, and installs the executable only after
   verification. A changed archive is refused.
+- `download_and_install` and `scripts/install_vulkan_prebuilt.py` fetch the
+  static manifest before the archive, require the URL filename to be listed,
+  and verify size plus SHA-256 before replacing the target binary.
 - The non-PR Vulkan CI job now uploads the unsigned binary and manifest after
   its pinned build and no-skip smoke.
 

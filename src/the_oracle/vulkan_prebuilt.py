@@ -8,8 +8,11 @@ import os
 import shutil
 import stat
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import urlretrieve
 
 
 class PrebuiltArtifactError(ValueError):
@@ -76,3 +79,33 @@ def install_from_manifest(manifest: Path, archive: Path, destination: Path) -> P
     destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     shutil.rmtree(staging, ignore_errors=True)
     return destination
+
+
+def download_and_install(
+    manifest_url: str,
+    archive_url: str,
+    destination: Path,
+    *,
+    cache_dir: Path | None = None,
+    fetch: Callable[[str, Path], None] | None = None,
+) -> Path:
+    """Download a static manifest and archive, then install after verification.
+
+    The manifest is fetched first and the archive is accepted only when its
+    listed filename, size, and SHA-256 match. ``fetch`` is injectable for
+    hermetic tests; production uses urllib and has no telemetry or updater.
+    """
+    downloader = fetch or (lambda url, target: urlretrieve(url, target))
+    root = cache_dir or destination.parent / ".prebuilt-cache"
+    root.mkdir(parents=True, exist_ok=True)
+    manifest_path = root / "update-manifest.json"
+    archive_name = Path(urlparse(archive_url).path).name
+    if not archive_name:
+        raise PrebuiltArtifactError("prebuilt archive URL has no filename")
+    archive_path = root / archive_name
+    downloader(manifest_url, manifest_path)
+    payload = _load_manifest(manifest_path)
+    if not any(item.get("name") == archive_name for item in payload["artifacts"]):
+        raise PrebuiltArtifactError(f"archive URL is not listed in manifest: {archive_name}")
+    downloader(archive_url, archive_path)
+    return install_from_manifest(manifest_path, archive_path, destination)

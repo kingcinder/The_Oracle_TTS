@@ -64,3 +64,24 @@ def test_prebuilt_install_refuses_changed_archive(tmp_path: Path) -> None:
         vulkan_prebuilt.install_from_manifest(
             artifacts.manifest, artifacts.archive, tmp_path / "installed" / "audiocpp_cli"
         )
+
+
+def test_prebuilt_download_verifies_manifest_before_install(tmp_path: Path) -> None:
+    packager = _load_packager()
+    binary = tmp_path / "audiocpp_cli"
+    binary.write_bytes(b"vulkan binary")
+    binary.chmod(0o755)
+    artifacts = packager.package(binary, tmp_path / "out", version="1.5.0")
+    files = {"manifest.json": artifacts.manifest.read_bytes(), artifacts.archive.name: artifacts.archive.read_bytes()}
+
+    def fetch(url: str, target: Path) -> None:
+        target.write_bytes(files[Path(url).name])
+
+    destination = tmp_path / "installed" / "audiocpp_cli"
+    assert vulkan_prebuilt.download_and_install(
+        "https://updates.example/manifest.json",
+        f"https://updates.example/{artifacts.archive.name}",
+        destination,
+        cache_dir=tmp_path / "cache",
+        fetch=fetch,
+    ) == destination
