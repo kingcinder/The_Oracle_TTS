@@ -21,6 +21,9 @@
   activation, then the main window. A remembered Vulkan backend is ignored while
   unlicensed, so it cannot start a model download before activation; canceling
   activation still opens the visible but inert window.
+- `scripts/check_update_manifest.py` validates the static manifest, artifact
+  size, and SHA-256 without downloading, replacing, or sending telemetry. A
+  previous verified artifact is the documented manual rollback path.
 
 ## Evidence
 

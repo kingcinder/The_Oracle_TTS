@@ -12,6 +12,14 @@ unsigned AppImage, an unsigned amd64 `.deb`, `checksums-<version>.sha256`, and
 manual check; no background update or telemetry is implemented. Rollback is a
 manual reinstall of a previously verified artifact.
 
+To inspect or verify a downloaded artifact without replacing the installation:
+
+```sh
+python scripts/check_update_manifest.py update-manifest.json \
+  --current-version 1.4.2 \
+  --artifact-dir . --artifact the-oracle-1.5.0-x86_64.AppImage
+```
+
 The PyInstaller output contains the application runtime and CPU dependencies.
 It does not contain model weights, license signing material, or user data.
 The application must show the EULA first; model acquisition remains behind the
