@@ -146,6 +146,21 @@ Revoking a leaked or abused license means **rotation plus expiry**:
   features refuse with an activation message; help and status remain usable.
 - Removing the token file moves the seat; there is no server to tell.
 
+## 6a. Throwaway-key lifecycle evidence
+
+The vendor lifecycle is pinned with test-only keys and never uses the
+production signing seed:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest tests/test_serial_vendor_workflow.py -q
+```
+
+The test mints a `k2` serial number, activates it, reads status again after a
+fresh lookup, clears the local store, mints and activates a replacement, then
+adds a throwaway `k3` key for an overlap check. Both keys verify during the
+overlap; after `k2` is removed, the old serial reports `unknown_key` while the
+`k3` serial remains valid. The observed result on 2026-10-23 was **1 passed**.
+
 ## 7. Sales-side decisions still open (owner: you)
 
 - Confirm the proposed serial scope in the counsel packet: one named

@@ -33,6 +33,9 @@ Date: 2026-10-23
   `torchvision`, and `transformers`; one weak-copyleft warning remains.
 - `rg -n -i '(community|trial)'` over the Phase 4 code/UI and named release
   documents → no matches.
+- `PYTHONPATH=src /tmp/oracle-baseline-uV4W9R/bin/python -m pytest tests/test_serial_vendor_workflow.py -q`
+  → **1 passed** using throwaway `k2`/`k3` test keys only; no production seed
+  was read or written.
 
 ## Remaining or unverified
 
@@ -40,8 +43,9 @@ Date: 2026-10-23
   clean installed-artifact acceptance, and Windows recipe remain incomplete.
 - Phase 2 prebuilt Vulkan binaries and end-to-end checksum download remain
   incomplete.
-- The vendor mint/activate/reissue/rotation workflow still needs a fresh
-  throwaway-key run and evidence capture in `docs/LICENSING_OPS.md`.
+- The production vendor workflow still needs an owner-run confirmation using
+  the production seed held outside the repository; the throwaway lifecycle is
+  covered above.
 - Full-suite compatibility after the gate change, Windows behavior, and
   installed-artifact GUI behavior are not yet verified.
 
