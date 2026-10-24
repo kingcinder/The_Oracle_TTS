@@ -128,6 +128,7 @@ from the_oracle.gui_vulkan import (
     _vulkan_preflight_report as _vulkan_preflight_report_impl,
     _vulkan_prerequisite_missing as _vulkan_prerequisite_missing_impl,
 )
+from the_oracle.vulkan_setup import model_download_plan
 # find_audiocpp_binary is this module's PATCH SEAM: ~12 test sites monkeypatch
 # it here by name, and the delegates below resolve it at call time. It is also
 # a deliberate re-export (window-fixture tests patch app_gui.AudioCppVulkanEngine).
@@ -1529,6 +1530,24 @@ class MainWindow(QMainWindow):
             self.error_panel.append(message)
             QMessageBox.warning(self, "Vulkan Model Download Unavailable", message)
             return
+        try:
+            plan = model_download_plan(script)
+            if plan.total_bytes is not None:
+                free = plan.free_bytes
+                self.error_panel.append(
+                    f"Vulkan model download size: {plan.total_bytes:,} bytes; "
+                    f"free space: {free:,} bytes."
+                )
+                if not plan.has_space:
+                    message = "Not enough free disk space for the Vulkan model download."
+                    self.error_panel.append(message)
+                    QMessageBox.warning(self, "Vulkan Model Download Refused", message)
+                    return
+        except Exception as exc:
+            # A remote HEAD check can be unavailable while the actual manager
+            # still has a valid cached/offline path; keep the failure visible
+            # and let the download worker report its authoritative result.
+            self.error_panel.append(f"Could not preflight Vulkan model size: {exc}")
         self.download_vulkan_model_action.setEnabled(False)
         self.error_panel.append("Downloading the Vulkan Chatterbox model in the background...")
         # Parented to the window; on close the subprocess is cancelled and the

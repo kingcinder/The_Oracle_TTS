@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 import signal
+import shutil
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from the_oracle.tts_engines.vulkan_backend import find_audiocpp_binary, find_aud
 # The export line scripts/download_audio_cpp_model.sh prints; parse the
 # installed model path out of the captured output.
 _EXPORT_MODEL_LINE = re.compile(r'export\s+ORACLE_AUDIOCPP_MODEL="([^"]+)"')
+_SIZE_LINE = re.compile(r"\bsize=(\d+)\b")
 
 
 def _repo_root() -> Path:
@@ -85,6 +87,42 @@ def vulkan_setup_needed(
 
 class VulkanSetupCancelled(Exception):
     """Raised internally when the caller cancels a running setup script."""
+
+
+@dataclass(frozen=True, slots=True)
+class ModelDownloadPlan:
+    """Remote size and local free-space facts shown before model download."""
+
+    total_bytes: int | None
+    file_count: int
+    free_bytes: int
+
+    @property
+    def has_space(self) -> bool:
+        return self.total_bytes is None or self.free_bytes >= self.total_bytes
+
+
+def model_download_plan(
+    script: Path,
+    *,
+    models_root: Path | None = None,
+    package: str | None = None,
+) -> ModelDownloadPlan:
+    """Run the model manager's HEAD-only check and measure local free space."""
+    command = ["bash", str(script), "--check"]
+    env = os.environ.copy()
+    if models_root is not None:
+        env["AUDIOCPP_MODELS_ROOT"] = str(models_root)
+    if package is not None:
+        env["AUDIOCPP_MODEL_PACKAGE"] = package
+    result = subprocess.run(command, capture_output=True, text=True, env=env, timeout=120, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "model size check failed")
+    sizes = [int(match.group(1)) for match in _SIZE_LINE.finditer(result.stdout)]
+    root = Path(models_root or env.get("AUDIOCPP_MODELS_ROOT", script.parent.parent / "audio.cpp" / "models"))
+    probe = root if root.exists() else root.parent
+    free_bytes = shutil.disk_usage(probe).free
+    return ModelDownloadPlan(sum(sizes) if sizes else None, len(sizes), free_bytes)
 
 
 @dataclass(slots=True)

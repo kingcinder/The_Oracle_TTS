@@ -24,6 +24,9 @@
 - `scripts/check_update_manifest.py` validates the static manifest, artifact
   size, and SHA-256 without downloading, replacing, or sending telemetry. A
   previous verified artifact is the documented manual rollback path.
+- Vulkan model download preflight now runs the manager's HEAD-only check,
+  reports total bytes and free space in the GUI, and refuses a known
+  insufficient-disk download before starting the worker.
 
 ## Evidence
 
@@ -41,7 +44,9 @@
   Ubuntu 24.04 installed-artifact acceptance are still required.
 - The model acquisition path still requires an explicit user action after
   activation; total-size/progress/cancel/resume and offline-bundle acceptance
-  remain unverified for the frozen installed artifacts.
+  remain unverified for the frozen installed artifacts. Closing the GUI cancels
+  the current worker, but a resumable interrupted-download proof is still
+  pending.
 - Clean-machine installed-artifact acceptance, rollback, uninstall retention,
   GPU wheel download, and Windows experimental installer CI remain unverified
   or unimplemented.

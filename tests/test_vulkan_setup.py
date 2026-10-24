@@ -14,6 +14,7 @@ vulkan`` auto-runs the setup (unless ``--no-audio-cpp-setup``), and the
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 import threading
 from pathlib import Path
 
@@ -67,6 +68,32 @@ def test_parse_model_export_extracts_path() -> None:
     )
     assert vulkan_setup.parse_model_export(sample) == "/tmp/x.gguf"
     assert vulkan_setup.parse_model_export("no export line here") == ""
+
+
+def test_model_download_plan_reports_total_and_free_space(tmp_path: Path, monkeypatch) -> None:
+    script = tmp_path / "download.sh"
+    script.write_text("#!/bin/sh\nprintf 'check file size=120\\ncheck other size=80\\n'\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setattr(vulkan_setup.shutil, "disk_usage", lambda _path: SimpleNamespace(free=600))
+
+    plan = vulkan_setup.model_download_plan(script, models_root=tmp_path / "models")
+
+    assert plan.total_bytes == 200
+    assert plan.file_count == 2
+    assert plan.free_bytes == 600
+    assert plan.has_space is True
+
+
+def test_model_download_plan_refuses_when_free_space_is_insufficient(tmp_path: Path, monkeypatch) -> None:
+    script = tmp_path / "download.sh"
+    script.write_text("#!/bin/sh\nprintf 'check file size=1200\\n'\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setattr(vulkan_setup.shutil, "disk_usage", lambda _path: SimpleNamespace(free=100))
+
+    plan = vulkan_setup.model_download_plan(script, models_root=tmp_path / "models")
+
+    assert plan.total_bytes == 1200
+    assert plan.has_space is False
 
 
 def test_vulkan_setup_needed_when_configured(monkeypatch, tmp_path: Path) -> None:
