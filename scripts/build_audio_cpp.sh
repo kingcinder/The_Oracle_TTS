@@ -18,6 +18,9 @@ set -Eeuo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AUDIOCPP_DIR="${AUDIOCPP_DIR:-$REPO_ROOT/audio.cpp}"
 AUDIOCPP_REPO="${AUDIOCPP_REPO:-https://github.com/0xShug0/audio.cpp}"
+# The vendored ggml patches were validated against this exact upstream tree.
+# Do not silently build a moving branch or tag.
+AUDIOCPP_PINNED_COMMIT="748c5e28f6a7228b8f38ad7142ca97d29584544b"
 
 # Build only the chatterbox family by default (a full build is much slower).
 # Override with AUDIOCPP_MODEL_SET=full (or AUDIOCPP_MODELS="a,b").
@@ -68,10 +71,31 @@ if ! command -v cmake >/dev/null 2>&1; then
 fi
 
 if [[ ! -d "$AUDIOCPP_DIR/.git" ]]; then
-  echo "[1/4] Cloning audio.cpp into $AUDIOCPP_DIR (ggml is vendored in-tree)"
-  git clone --depth 1 "$AUDIOCPP_REPO" "$AUDIOCPP_DIR"
+  echo "[1/4] Cloning pinned audio.cpp tree into $AUDIOCPP_DIR (ggml is vendored in-tree)"
+  git clone "$AUDIOCPP_REPO" "$AUDIOCPP_DIR"
 else
   echo "[1/4] audio.cpp already present at $AUDIOCPP_DIR"
+fi
+
+if [[ "${AUDIOCPP_SKIP_PIN_VERIFY:-0}" != "1" ]]; then
+  if ! git -C "$AUDIOCPP_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+    echo "ERROR: audio.cpp is not a valid Git checkout; refusing an unpinned build." >&2
+    exit 1
+  fi
+  actual_commit="$(git -C "$AUDIOCPP_DIR" rev-parse HEAD)"
+  if [[ "$actual_commit" != "$AUDIOCPP_PINNED_COMMIT" ]]; then
+    echo "[1/4] Fetching pinned audio.cpp commit $AUDIOCPP_PINNED_COMMIT"
+    git -C "$AUDIOCPP_DIR" fetch --quiet origin "$AUDIOCPP_PINNED_COMMIT"
+    git -C "$AUDIOCPP_DIR" checkout --quiet --detach "$AUDIOCPP_PINNED_COMMIT"
+  fi
+  actual_commit="$(git -C "$AUDIOCPP_DIR" rev-parse HEAD)"
+  if [[ "$actual_commit" != "$AUDIOCPP_PINNED_COMMIT" ]]; then
+    echo "ERROR: audio.cpp commit mismatch: expected $AUDIOCPP_PINNED_COMMIT, got $actual_commit" >&2
+    exit 1
+  fi
+  echo "[1/4] Verified audio.cpp commit $actual_commit"
+else
+  echo "[1/4] WARNING: AUDIOCPP_SKIP_PIN_VERIFY=1; pin verification disabled for a test harness" >&2
 fi
 
 echo "[2/4] Applying The Oracle's vendored RDNA1 ggml fix (idempotent)"

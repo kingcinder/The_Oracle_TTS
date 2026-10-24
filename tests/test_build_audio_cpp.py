@@ -93,6 +93,7 @@ def _run_script(
         # model downloads to its runner cache.
         "AUDIOCPP_MODELS_ROOT": str(audio_cpp / "models"),
         "PATCH_AUDIOCPP_GGML_SH": str(patch),
+        "AUDIOCPP_SKIP_PIN_VERIFY": "1",
         **(extra_env or {}),
     }
     return subprocess.run(
@@ -122,6 +123,7 @@ def test_default_build_skips_model_download(fake_audio_cpp: tuple[Path, Path]) -
     # No model was fetched unless --with-model is passed.
     assert not _expected_model(audio_cpp).exists()
     assert "download_audio_cpp_model.sh" in result.stdout  # next-steps pointer
+    assert "748c5e28f6a7228b8f38ad7142ca97d29584544b" in SCRIPT.read_text(encoding="utf-8")
 
 
 def test_with_model_builds_and_downloads_model(fake_audio_cpp: tuple[Path, Path]) -> None:

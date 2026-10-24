@@ -32,3 +32,13 @@
 - Clean-machine installed-artifact acceptance, rollback, uninstall retention,
   static update manifest, GPU wheel download, and Windows experimental installer
   CI remain unverified or unimplemented.
+
+## Phase 2 progress started
+
+- `scripts/build_audio_cpp.sh` now names the exact validated upstream commit
+  `748c5e28f6a7228b8f38ad7142ca97d29584544b`, fetches/checks out that commit,
+  and refuses an invalid or mismatched checkout. The test harness must opt in
+  to `AUDIOCPP_SKIP_PIN_VERIFY=1`; production builds do not.
+- The existing notices already list audio.cpp and ggml attribution and their
+  license files. Prebuilt Vulkan binaries and end-to-end checksum download
+  verification remain unimplemented.
