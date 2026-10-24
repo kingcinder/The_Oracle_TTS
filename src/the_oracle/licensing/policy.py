@@ -6,7 +6,7 @@ from the_oracle.licensing.tokens import LicenseStatus
 
 
 class LicenseRequired(Exception):
-    """Raised when a requested feature is outside this install's edition."""
+    """Raised when a requested feature needs a valid serial number."""
 
 
 def is_licensed(status: LicenseStatus) -> bool:

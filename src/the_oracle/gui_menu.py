@@ -202,14 +202,14 @@ def build_menu(main_window, *, themes: Mapping[str, ThemeTokens]) -> None:
     )
     main_window.privacy_action.triggered.connect(main_window._open_crash_privacy_dialog)
     help_menu.addAction(main_window.privacy_action)
-    main_window.activate_license_action = QAction("Activate License…", main_window)
+    main_window.activate_license_action = QAction("Activate Serial Number…", main_window)
     main_window.activate_license_action.setToolTip(
-        "Paste your license token (offline activation — no server is contacted)."
+        "Paste your serial number (offline activation — no server is contacted)."
     )
     main_window.activate_license_action.triggered.connect(main_window._open_license_activation)
     help_menu.addAction(main_window.activate_license_action)
     main_window.about_action = QAction("About The Oracle…", main_window)
-    main_window.about_action.setToolTip("Which edition this install runs, and the privacy posture in one glance.")
+    main_window.about_action.setToolTip("Whether this install is licensed, and the privacy posture in one glance.")
     main_window.about_action.triggered.connect(main_window._open_about_panel)
     help_menu.addAction(main_window.about_action)
 
@@ -219,12 +219,12 @@ def build_menu(main_window, *, themes: Mapping[str, ThemeTokens]) -> None:
     main_window.open_action = open_action
     main_window.save_action = save_action
     main_window.save_as_action = save_as_action
+    main_window.save_profile_action = save_profile_action
+    main_window.load_profile_action = load_profile_action
     main_window.reset_defaults_action = reset_defaults_action
     main_window.save_settings_action = save_settings_action
     main_window.load_settings_action = load_settings_action
     main_window.save_template_action = save_template_action
-    main_window.save_profile_action = save_profile_action
-    main_window.load_profile_action = load_profile_action
 
     # Theme menu: six built-in looks; the choice is persisted immediately.
     theme_menu = main_window.menuBar().addMenu("Theme")

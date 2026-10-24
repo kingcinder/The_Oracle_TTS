@@ -8,7 +8,7 @@ This End User License Agreement ("Agreement") is between the person or organizat
 
 ## 1. Grant of license
 
-Subject to this Agreement and the applicable order or invoice, the Owner grants the Licensee a limited, personal, non-exclusive, non-transferable, non-sublicensable license to install and use the Software for the Licensee's own internal purposes. The license is provided as a one-time purchase of a serial number. There is no subscription, Community Edition, or trial edition. Until a valid serial number is entered, the Software may open so the Licensee can view the application and its documentation, but its functional features remain unavailable.
+Subject to this Agreement and the applicable order or invoice, the Owner grants the Licensee a limited, personal, non-exclusive, non-transferable, non-sublicensable license to install and use the Software for the Licensee's own internal purposes. The license is provided as a one-time purchase of a serial number. There is no subscription. Until a valid serial number is entered, the Software may open so the Licensee can view the application and its documentation, but its functional features remain unavailable.
 
 The following commercial terms are proposals for owner and counsel review, not approved terms: one named Licensee may use the serial number on the Licensee's own machines; the serial number is not machine-bound by default; the serial number covers releases in the current major version by default; and the serial number is non-transferable unless the applicable order says otherwise.
 

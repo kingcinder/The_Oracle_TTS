@@ -309,7 +309,7 @@ def collect_diagnostics(
         "environment": _environment(),
         "doctor": doctor,
         "redaction": (
-            "Absolute paths, usernames, license tokens, credentials, email "
+            "Absolute paths, usernames, serial numbers, credentials, email "
             "addresses, and environment-variable values are excluded. Log "
             "contents, manuscripts, audio, and recordings are never included "
             "in diagnostics."

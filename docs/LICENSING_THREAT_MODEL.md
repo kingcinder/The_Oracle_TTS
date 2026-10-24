@@ -37,27 +37,28 @@ Ed25519 over the canonical bytes. Failures are typed (`malformed`,
   revocation list, no analytics. Deliberate: it is what lets `PRIVACY.md` say
   activation never contacts a server, and what keeps the offline guarantee
   (`.oracle_offline`) true.
-- **Not uncopyable.** A copied install without a token runs as `community`.
+- **Not uncopyable.** A copied install without a valid serial number remains
+  visible but its functional features are inert.
 
 The realistic value, in order, is: a clean offline purchase path; casual-copy
-friction; an edition the doctor and About panel can report; and entitlement
-scaffolding so a future paid feature needs no re-architecture.
+friction; a licensed/unlicensed state the doctor and About panel can report;
+and a single gate around functional features.
 
 ## 4. Clock rollback
 
 `exp` is compared against `time.time()` at verification. A user who moves the
-system clock backwards can extend a trial or an expired token's life, and one
-who sets it forwards can expire a valid licence early.
+system clock backwards can extend an expired serial number's life, and one who
+sets it forwards can expire a valid licence early.
 
 - **Accepted:** the forward case is *user-hostile to no one but its owner*, and
   the schema, not the clock, is the contract with the customer.
 - **Not mitigated:** no "last seen time" is persisted, because persisting one
   creates a write on every verification, breaks the doctor's read-only and
   idempotence pins, and can itself be rolled back.
-- **Consequence for trials:** `trial` is a courtesy edition, not a security
-  boundary. A determined trial user can extend one by changing the clock. The
-  entitlement gate it drives is a purchase path with friction, not an
-  enforcement mechanism.
+- **Consequence for expiry:** expiry is an activation boundary, not a security
+  boundary. A determined user can extend an expired serial number by changing
+  the clock. The gate is a purchase path with friction, not an enforcement
+  mechanism.
 
 ## 5. Machine binding (opt-in, currently unused)
 
@@ -95,7 +96,7 @@ on is a **vendor-side token field**, with no client release.
 2. **No revocation.** A leaked token cannot be revoked without dropping the key
    id it was minted under (a rotation), which also invalidates legitimate
    tokens under that id.
-3. **Edition naming** (`community` / `studio` / `trial`) is a sales decision
-   still open in `docs/LICENSING_DESIGN.md` §9.
-4. **The first Studio-gated feature** is the owner's choice; see
-   `docs/LICENSING_OPS.md` for the current placeholder gate and how to move it.
+3. **Serial scope.** The default proposal is one named licensee, own machines,
+   no machine binding, current-major-version scope, and no transfer.
+4. **Key rotation.** The owner must run the documented overlap release before
+   retiring a production verification key.

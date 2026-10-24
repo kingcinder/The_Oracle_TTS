@@ -358,7 +358,7 @@ def run_problem_report_dialog(
     intro = QLabel(
         "Describe what happened. The report is saved on this machine and is\n"
         "only shared when you choose to share it. Manuscripts, audio, voice\n"
-        "recordings, tokens, and home-directory paths are never included."
+        "recordings, serial numbers, and home-directory paths are never included."
     )
     intro.setWordWrap(True)
     layout.addWidget(intro)
@@ -418,7 +418,7 @@ def run_problem_report_dialog(
     diagnostics_check.setChecked(True)
     diagnostics_check.setToolTip(
         "Version, platform, CPU/memory/disk, engine availability, settings "
-        "summary, and the doctor verdict. No paths, usernames, tokens, or "
+        "summary, and the doctor verdict. No paths, usernames, serial numbers, or "
         "file contents."
     )
     layout.addWidget(crash_check)

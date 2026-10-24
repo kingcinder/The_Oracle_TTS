@@ -24,6 +24,12 @@ from pathlib import Path
 from the_oracle.gui_settings import drop_next_format_backup, next_format_backup, save_app_settings
 
 
+def _require_serial(feature: str) -> None:
+    from the_oracle.licensing import current_license, require
+
+    require(current_license(), feature)
+
+
 def run_ingest_transformer_check(window, *, message_box_cls: type) -> bool:
     """Check the input file's formatting with the ingestion transformer.
 
@@ -35,6 +41,7 @@ def run_ingest_transformer_check(window, *, message_box_cls: type) -> bool:
     file, or user chose to continue anyway); False when the user wants to
     stop and fix the file themselves.
     """
+    _require_serial("check input formatting")
     from the_oracle.gui_ingest import format_warning_choice
     from the_oracle.ingest_transformer import analyze_input_file, fix_input_file, preview_fixed_text
 
@@ -113,6 +120,7 @@ def batch_fix_input_folder(window, *, message_box_cls: type, file_dialog_cls: ty
     rewrite, then a single Apply that writes every accepted file (each
     original backed up) and reports per-file results in the status panel.
     """
+    _require_serial("fix input files")
     from the_oracle.ingest_transformer import analyze_folder, apply_folder_fixes, preview_folder_fixes
 
     folder = file_dialog_cls.getExistingDirectory(window, "Choose Folder of Input Scripts", "")
@@ -172,6 +180,7 @@ def batch_fix_input_folder(window, *, message_box_cls: type, file_dialog_cls: ty
 
 def restore_most_recent_format_backup(window, *, message_box_cls: type) -> None:
     """Settings action: undo the most recent input-file fix from its backup."""
+    _require_serial("restore an input file")
     record = next_format_backup(window._app_settings)
     if record is None:
         message_box_cls.information(

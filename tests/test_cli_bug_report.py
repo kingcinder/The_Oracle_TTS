@@ -17,6 +17,10 @@ import pytest
 import the_oracle.cli as cli
 import the_oracle.offline as offline
 from the_oracle import crash, support
+from the_oracle.licensing import store, tokens
+from tests.licensing_fixtures import TEST_SEED, payload
+
+pytestmark = pytest.mark.usefixtures("test_license_registry")
 
 
 @pytest.fixture()
@@ -24,6 +28,8 @@ def root(tmp_path: Path, monkeypatch) -> Path:
     install = tmp_path / "install"
     install.mkdir()
     monkeypatch.setattr(offline, "repo_root", lambda: install)
+    token = tokens.mint(payload(), TEST_SEED)
+    assert store.save_token(install, token, verify_before_save=tokens.verify_token).state == "saved"
     return install
 
 

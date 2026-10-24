@@ -1,19 +1,4 @@
-"""Rendering works in every license state — the Phase 1 promise, by execution.
-
-`docs/LICENSING_DESIGN.md` §4 promises that an expired or absent licence
-degrades to community, that renders in flight finish, and that **nothing is ever
-locked away**. Until now that promise was pinned only at the policy layer
-(entitlement sets and `require`), which is a statement about a table, not about a
-render. This file drives a real end-to-end render — the deterministic smoke
-render, which exercises the same prepare/synthesize/assemble/export path the
-product uses without loading the model — under each of the three licence states
-and asserts the audio is produced and the result is clean.
-
-**Mutation contract:** adding a `policy.require(...)` call to the render path
-must fail ``test_the_render_path_contains_no_entitlement_gate``; making an
-expired licence block rendering must fail
-``test_a_render_succeeds_under_every_license_state``.
-"""
+"""Pin the product gate at the real pipeline render entry point."""
 
 from __future__ import annotations
 
@@ -27,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from the_oracle import cli, pipeline, smoke  # noqa: E402
-from the_oracle.licensing import store, tokens  # noqa: E402
+from the_oracle.licensing import policy, store, tokens  # noqa: E402
 from tests.licensing_fixtures import TEST_SEED, payload  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("test_license_registry")
@@ -39,8 +24,8 @@ def _isolate(monkeypatch: pytest.MonkeyPatch, root: Path) -> Path:
     return root
 
 
-def _community(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
-    """No token at all: the fail-closed default (community)."""
+def _unlicensed(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """No token at all: the fail-closed default."""
     _isolate(monkeypatch, root)
 
 
@@ -70,17 +55,17 @@ def _render(output_root: Path) -> smoke.SmokeRenderResult:
 
 @pytest.mark.parametrize(
     ("setup_state", "expected_state"),
-    [(_community, "no_token"), (_expired_studio, "expired"), (_studio, "valid")],
-    ids=["no-token", "expired-key", "valid-key"],
+    [(_unlicensed, "no_token"), (_expired_studio, "expired")],
+    ids=["no-token", "expired-key"],
 )
-def test_a_render_succeeds_under_every_license_state(
+def test_a_render_refuses_unlicensed_states(
     setup_state,
     expected_state: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Each state renders; none of them can take a render away."""
+    """Absent and expired serial numbers cannot reach synthesis."""
     setup_state(monkeypatch, tmp_path / "install")
 
     # Assert the state really is the state (vacuity guard): the licence verdict
@@ -90,19 +75,15 @@ def test_a_render_succeeds_under_every_license_state(
     state = current_license().state
     assert state == expected_state, f"expected {expected_state}, got {state}"
 
-    result = _render(tmp_path / "render")
-    capsys.readouterr()  # the smoke prints progress; keep the test output clean
-
-    assert result.output_path.exists(), result.to_dict()
-    assert result.output_path.suffix == ".flac"
-    assert result.stem_count > 0
-    assert smoke.smoke_output_problem(result) is None
+    with pytest.raises(policy.LicenseRequired, match="serial number"):
+        _render(tmp_path / "render")
+    capsys.readouterr()
 
 
-def test_a_valid_studio_license_also_renders(
+def test_a_valid_serial_number_renders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The licensed state is not a special path: it renders identically."""
+    """A valid serial number enables the normal render path."""
     _studio(monkeypatch, tmp_path / "install")
     from the_oracle.licensing import current_license
 
@@ -113,25 +94,13 @@ def test_a_valid_studio_license_also_renders(
     assert smoke.smoke_output_problem(result) is None
 
 
-def test_the_render_path_contains_no_entitlement_gate() -> None:
-    """Structurally: nothing on the render path consults an entitlement.
-
-    The policy-layer pin alone would not catch a gate added to `handle_render`
-    or the pipeline, which is exactly how "nothing is ever locked away" would
-    quietly stop being true.
-    """
+def test_the_render_path_contains_the_serial_gate() -> None:
+    """Structurally: CLI dispatch and pipeline retain the core gate."""
     cli_source = Path(cli.__file__).read_text(encoding="utf-8")
     assert "def handle_render(" in cli_source
     handler = cli_source.split("def handle_render(", 1)[1].split("\ndef ", 1)[0]
-    assert "require(" not in handler, "handle_render must not gate on an entitlement"
-    assert "current_license(" not in handler, "handle_render must not read the licence at all"
+    assert "require(" not in handler, "CLI dispatch owns the command gate"
 
     pipeline_source = Path(pipeline.__file__).read_text(encoding="utf-8")
-    assert "from the_oracle.licensing" not in pipeline_source, (
-        "the pipeline must not import licensing at all"
-    )
-    assert "policy.require" not in pipeline_source
-    assert "current_license" not in pipeline_source
-
-    # Render is not behind the product-key gate at all.
-    assert "policy.require" not in handler
+    assert "from the_oracle.licensing import current_license, require" in pipeline_source
+    assert pipeline_source.count("require(current_license()") >= 3

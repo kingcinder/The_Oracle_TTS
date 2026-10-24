@@ -40,7 +40,7 @@ you press the button. There is no transport code in the support layer.
 
 *Mechanism:* the support package is source-pinned to stdlib plus the suite's
 own modules (`tests/test_offline_guarantee.py`); the diagnostics snapshot is
-pinned against home-directory, token, and environment-value leakage
+pinned against home-directory, serial-number, and environment-value leakage
 (`tests/test_support_diagnostics.py`); drafts are capped at 25 and deleting
 one needs an explicit `--yes` (`tests/test_support_store.py`,
 `tests/test_cli_bug_report.py`). The full workflow and the exact
@@ -58,15 +58,15 @@ your words.
 ("no output may contain the input path prefix")
 (`tests/test_crash_sanitize.py`).
 
-## Activation, if you license the suite
+## Serial-number activation
 
-Activation never contacts a server — it is a paste-a-token flow that
+Activation never contacts a server — it is a paste-a-serial-number flow that
 works fully offline. The license file contains no personal data unless you
 typed it into the licensee field. Machine fingerprints, where a vendor
 opts to use them, are stored only as SHA-256 hashes and never leave your
 machine.
 
-*Mechanism:* verification is a pure function of the stored token and
+*Mechanism:* verification is a pure function of the stored serial number and
 embedded keys (`tests/test_licensing_offline.py`); the fingerprint is
 hash-only with a fail-open skip when unavailable
 (`tests/test_licensing_keys.py`).

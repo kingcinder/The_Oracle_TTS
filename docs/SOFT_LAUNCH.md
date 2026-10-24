@@ -17,9 +17,9 @@ crash certification remains open, and the EULA is awaiting the owner's
 governing-law decision and counsel review. The three strong-copyleft runtime
 dependencies from the 1.4.0 candidate are gone.
 
-Community remains everything that shipped before 1.4.0. A missing or expired
-license never locks a workflow; it reports the community edition and keeps
-working.
+The product uses one-time serial numbers. A missing, malformed, or expired
+serial number leaves the application visible but disables functional features;
+activation, status, help, documentation, and quit remain available.
 
 ## System requirements
 
@@ -61,22 +61,22 @@ The soft launch is sold directly while the storefront is being set up:
 
 1. Email **codysa90@gmail.com** with the subject **"Oracle alpha license"** and
    the name you want recorded on the license (optional).
-2. You receive a single `ORACLE1.…` token. The token is the license; there is no
+2. You receive a single `ORACLE1.…` serial number. It is the license; there is no
    account and no activation server.
 3. Activate offline:
 
    ```bash
-   the-oracle activate "<token>"
+   the-oracle activate "<serial-number>"
    the-oracle license-status
    ```
 
-   Or use **Help → Activate License…** in the GUI.
+   Or use **Help → Activate Serial Number…** in the GUI.
 
 The license file contains no personal data unless you typed a licensee name.
-Activation never contacts a server. Removing the local token file moves the
-seat; support can re-issue a token from the purchase record.
+Activation never contacts a server. Removing the local serial-number file
+moves the seat; support can re-issue a serial number from the purchase record.
 
-The vendor mints tokens with `scripts/license_sign.py mint --key-id k2`. The
+The vendor mints serial numbers with `scripts/license_sign.py mint --key-id k2`. The
 signing seed never leaves the owner's secret manager. See
 [LICENSING_OPS.md](LICENSING_OPS.md) for the custody and rotation procedure.
 
@@ -104,13 +104,13 @@ the-oracle support-bundle
 
 The bundle is written under `Output/` and is never uploaded. It contains the
 app version and platform, whether `ORACLE_*` variables are present (not their
-values), the license state (never the token or licensee), redacted settings,
+values), the license state (never the serial number or licensee), redacted settings,
 the newest redacted logs, and a doctor report. Crash reports are included only
 with `--include-crash-reports` **and** when local crash-reporting consent is
 on.
 
 The bundle never includes dialogue files, manuscripts, rendered audio, voice
-recordings, reference clips, license tokens, or home-directory paths. The
+recordings, reference clips, serial numbers, or home-directory paths. The
 report package adds `report.md`, `report.json`, and `diagnostics.json` to the
 same bundle. Read the zip before sending it; redaction is best-effort.
 
@@ -155,8 +155,9 @@ changed.
 - **The EULA is a draft.** `EULA-DRAFT.md` still needs a governing-law/venue
   section and counsel review. The gate refuses distribution until it is
   renamed to `EULA.md` and finalized.
-- **Studio features are additive.** `render-report` is the first Studio-gated
-  command; community keeps every workflow that existed before it.
+- **A serial number gates functional features.** `render-report` and every
+  other render or editing workflow require activation; help and status remain
+  available without one.
 
 ## Owner go-live checklist
 

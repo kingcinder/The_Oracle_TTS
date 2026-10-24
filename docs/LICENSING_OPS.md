@@ -73,7 +73,6 @@ signing seed or the minting environment in the reply.
 
 ```bash
 ORACLE_LICENSE_SIGNING_KEY=<seed_hex> python scripts/license_sign.py mint \
-  --edition studio \
   --licensee "customer name or email (their choice)" \
   --key-id k2 \  # required: a defaulted key id is how k1 got used
   [--expires 2027-01-31T00:00:00Z] \
@@ -81,8 +80,6 @@ ORACLE_LICENSE_SIGNING_KEY=<seed_hex> python scripts/license_sign.py mint \
 ```
 
 - Omit `--expires` for a **perpetual** license (`exp: null`).
-- `--edition trial` tokens behave as studio until `exp` passes, then
-  degrade to community (LICENSING §4 — degrade, never lock).
 - `--machine-hash` is optional (v1 licenses are not machine-locked, D2);
   if used, take the hash from the *customer's* run of
   `the-oracle machine-id` — the client stores and reports the hash only,
@@ -104,8 +101,8 @@ print(tokens.verify_token(open('token.txt').read().strip()))"
 (or activate it with `the-oracle activate <token>` in a scratch checkout
 and read `the-oracle license-status` there.)
 
-A token must verify with state `valid` and the intended edition before it
-goes to a customer. Any tampering — one flipped payload byte — fails as
+A serial number must verify with state `valid` before it goes to a customer.
+Any tampering — one flipped payload byte — fails as
 the typed `bad_signature` status, not an exception at the call site.
 
 ## 4. Key rotation (planned change of key, zero customer disruption)
@@ -130,66 +127,56 @@ There is no revocation endpoint by design (LICENSING §1 non-goals).
 Revoking a leaked or abused license means **rotation plus expiry**:
 
 - Rotate to a new key id (§4) and drop the old one in the next release:
-  every token signed under the dropped key reports unknown-key and the
-  install degrades to community.
+  every serial number signed under the dropped key reports unknown-key and the
+  install becomes unlicensed.
 - For time-boxed abuse, mint replacements with `--expires` so the seat
   self-degrades at the expiry boundary instead of requiring a client
   release.
 
 ## 6. What the customer experiences (so support can say it precisely)
 
-- Activation: paste the token (or `the-oracle activate <token>`), fully
+- Activation: paste the serial number (or `the-oracle activate <token>`), fully
   offline; a failure is a typed status with an inline remedy, and a bad
   token writes nothing.
-- `the-oracle license-status` prints the edition, licensee, key id, expiry
+- `the-oracle license-status` prints the licensed state, licensee, key id, expiry
   (if any), and machine-locked state as JSON.
 - `the-oracle machine-id` prints the SHA-256 hash of the machine id —
   safe to share; the raw id is never stored, logged, or sent anywhere.
-- An expired or removed license degrades to community — everything that
-  ships today keeps working (LICENSING §4). Nothing is ever locked away.
+- An expired or removed license makes the application unlicensed. Functional
+  features refuse with an activation message; help and status remain usable.
 - Removing the token file moves the seat; there is no server to tell.
 
 ## 7. Sales-side decisions still open (owner: you)
 
-- Final edition names (`community` / `studio` are code placeholders —
-  renaming is one table in `policy.py` plus docs, LICENSING §9.3).
+- Confirm the proposed serial scope in the counsel packet: one named
+  licensee, own machines, no machine binding, current-major-version scope,
+  and non-transferable.
 
 ## 8. The first gated feature (`render-report`) — and how to move it
 
-Until 1.4.0 nothing was gated: `studio_features` existed in `policy.py`
-and no code ever called `require(...)` for it, so the app advertised a
-licensing system that enforced nothing. Phase 1 of the 1.4.0 release work
-closed that with the **least destructive** option available, because the
-other branch of the requirement — "or remove the license UI and the studio
-edition" — destroys work that already shipped.
+Every functional workflow is gated by the serial-number policy. The report is
+read-only but follows the same gate as rendering and editing.
 
 **The gated capability:** `the-oracle render-report PROJECT_DIR` — a
 machine-readable technical conformance report for a finished render
 (peak/RMS level, clipping, silence ratio, sample rate, channels, frames,
 utterance and speaker counts, and whether the plan's declared durations
-agree with the audio). It is **additive**: nothing that shipped before it
-is gated, so community keeps every existing workflow, which is what
-`LICENSING_DESIGN.md` §4 requires.
+agree with the audio). It is read-only and requires a valid serial number.
 
 - Implementation: `src/the_oracle/render_report.py` (measurement) and
   `handle_render_report` in `cli.py` (the gate).
-- `cli.main()` checks `require(current_license(), "studio_features")`
-  only before the `render-report` command; normal CLI and GUI workflows run
-  in Community without activation. This boundary is pinned by
+- `cli.main()` checks `require(current_license(), "render-report")` before
+  the command. This boundary is pinned by
   `tests/test_render_report.py::test_render_report_uses_the_studio_entitlement_gate`.
 - Behaviour under each license state is pinned end to end in that file:
-  community refuses the Studio report and writes nothing;
-  studio produces the report; an **expired** studio token degrades to
-  community, refuses, and leaves the render byte-identical.
+  an unlicensed install refuses and writes nothing; a licensed install
+  produces the report; an expired serial number refuses and leaves the render
+  byte-identical.
 - The command never writes to the project it measures (read-only, pinned).
 
-**To move or change the gate** (owner decision, still open — the feature
-was chosen as a defensible default, not as final product strategy):
+**To change the gate** (owner decision):
 
-1. If a different capability should be Studio, change the single
-   `require(status, ...)` line in `handle_render_report` to that
-   capability's own entitlement, and add its own entitlement name to
-   `policy.EDITIONS["studio"]` (community must keep everything that
-   shipped before).
+1. Keep a single `require(status, ...)` call at every functional entry point
+   and update the feature description and tests together.
 2. The honest threat model is in
    `docs/LICENSING_THREAT_MODEL.md`; do not promise more than it says.

@@ -26,6 +26,23 @@ _UNLICENSED_ALLOWED_COMMANDS = frozenset({
     "uninstall",
 })
 
+_SERIAL_REQUIRED_COMMANDS = frozenset({
+    "gui",
+    "machine-id",
+    "privacy-status",
+    "privacy-opt-in",
+    "privacy-opt-out",
+    "support-bundle",
+    "bug-report",
+    "setup-vulkan",
+    "check-input",
+    "voices",
+    "fix-folder",
+    "sweep-cache",
+    "render-report",
+    "render",
+})
+
 
 def _require_cli_serial_number(command: str) -> int | None:
     """Return a refusal code for every command outside the unlicensed allow-list."""
@@ -74,17 +91,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser(
         "license-status",
-        help="Show this install's license state: edition, key, expiry. Never contacts a server.",
+        help="Show this install's serial-number status and expiry. Never contacts a server.",
     )
 
     license_activate = subparsers.add_parser(
         "activate",
-        help="Activate the suite with a license token. Offline by construction: no server is contacted.",
+        help="Activate the suite with a serial number. Offline by construction: no server is contacted.",
     )
     license_activate.add_argument(
         "token",
         nargs="?",
-        help="The ORACLE1 token. Omit it to read the token from stdin (piping works).",
+        help="The ORACLE1 serial number. Omit it to read it from stdin (piping works).",
     )
 
     subparsers.add_parser(
@@ -1409,15 +1426,15 @@ def _folder_json_document(
 
 
 def handle_activate(args: argparse.Namespace) -> int:
-    """Store a license token after full offline verification. Refusal before
-    any bytes are written keeps the store unable to hold a bad token."""
+    """Store a serial number after full offline verification. Refusal before
+    any bytes are written keeps the store unable to hold a bad value."""
     from the_oracle.licensing import save_token, verify_token
     from the_oracle.licensing.machine import machine_hash
     from the_oracle.offline import repo_root
 
     token = (args.token or sys.stdin.read()).strip()
     if not token:
-        print("error: no token given. Pass it as an argument or pipe it to stdin.", file=sys.stderr)
+        print("error: no serial number given. Pass it as an argument or pipe it to stdin.", file=sys.stderr)
         return 2
     verdict = verify_token(token, machine_hash=machine_hash())
     if not verdict.ok:
@@ -1432,7 +1449,7 @@ def handle_activate(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "state": result.state, "detail": result.detail}, indent=2))
         return 1
     licensee = verdict.licensee or "(no licensee recorded)"
-    print(f"Activated: product key for {licensee}.")
+    print(f"Activated: serial number for {licensee}.")
     print("Offline activation — no server was contacted.")
     return 0
 
@@ -1770,7 +1787,7 @@ def _handle_bug_report_diagnose(args: argparse.Namespace) -> int:
     doctor = compact.get("doctor", {})
     print(f"  doctor:   {doctor.get('ok') if doctor.get('ran') else doctor.get('detail')}")
     print()
-    print("No paths, usernames, tokens, or environment values are included.")
+    print("No paths, usernames, serial numbers, or environment values are included.")
     return 0
 
 
@@ -1813,7 +1830,7 @@ def handle_license_status() -> int:
 def handle_render_report(args) -> int:
     """Measure a finished render and report its conformance.
 
-    This is a Studio-only report; existing Community workflows remain ungated.
+    This report requires a valid serial number and never changes the project.
 
     Nothing here writes to the project: the render and its plan are read only.
     """
@@ -1928,7 +1945,7 @@ def main(argv: list[str] | None = None) -> int:
         from the_oracle.licensing import LicenseRequired, current_license, require
 
         try:
-            require(current_license(), "studio_features")
+            require(current_license(), "render-report")
         except LicenseRequired as exc:
             print(f"{exc}", file=sys.stderr)
             return 1

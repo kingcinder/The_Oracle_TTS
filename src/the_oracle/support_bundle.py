@@ -1,7 +1,7 @@
 """User-initiated, redacted support bundle.
 
 A support bundle is the one artifact an alpha user can hand to support without
-also handing over their manuscript, audio, recordings, license token, or home
+also handing over their manuscript, audio, recordings, serial number, or home
 directory. Everything is collected locally, redacted before it is written, and
 placed in a zip the user chooses to send; The Oracle never uploads it.
 
@@ -298,14 +298,14 @@ def _readme_text() -> str:
         "anywhere. Review it before sharing it with support.\n\n"
         "Included: the app version and platform, whether ORACLE_* environment\n"
         "variables are present (not their values), the license state (never the\n"
-        "token or licensee), redacted application settings, the newest redacted\n"
+        "serial number or licensee), redacted application settings, the newest redacted\n"
         "log files, and a doctor report when available. Crash reports are included\n"
         "only when you pass --include-crash-reports and local crash-reporting\n"
         "consent is on.\n\n"
         "Not included: dialogue files, manuscripts, rendered audio, voice\n"
-        "recordings, reference clips, license tokens, licensees, home-directory\n"
+        "recordings, reference clips, serial numbers, licensees, home-directory\n"
         "paths, or environment-variable values.\n\n"
-        "Redaction removes ORACLE1 license tokens, common API-key shapes, email\n"
+        "Redaction removes ORACLE1 serial numbers, common API-key shapes, email\n"
         "addresses, and home-directory prefixes. It is best-effort: read the zip\n"
         "before sending it.\n"
     )
@@ -411,7 +411,7 @@ def build_support_bundle(
         "attachments": sorted(attachments),
         "skipped": sorted(skipped),
         "redaction": (
-            "License tokens, API-key shapes, email addresses, and home-directory "
+            "Serial numbers, API-key shapes, email addresses, and home-directory "
             "prefixes are removed. Environment-variable values and licensee data "
             "are never included."
         ),

@@ -406,16 +406,15 @@ def _licensing_status(repo_root: Path) -> dict[str, Any]:
     """Report the install's license state (docs/LICENSING_DESIGN.md §5).
 
     Unlicensed is a valid state: ``ok=true`` with state ``no_token`` — the
-    doctor never fails an install for lacking a license and never suggests
-    purchasing as a "problem". Verification is a pure function of the stored
+    doctor never fails an install for lacking a serial number and never
+    suggests purchasing as a "problem". Verification is a pure function of the stored
     token bytes, the embedded public keys, and the wall clock, so this check
     is idempotent and history-independent like the rest; the clock is the
     only external input, exactly like any time-derived check.
 
     Deliberately NOT part of ``overall_ready``: an expired or mismatched
-    license is a billing state, not a broken install — the suite still runs,
-    degraded to community entitlements (licensing/policy.py). The check's own
-    verdict and the human-readable line carry the signal instead.
+    serial number is an activation state, not a broken install. The check's
+    own verdict and the human-readable line carry the signal instead.
     """
     try:
         from the_oracle.licensing import current_license
@@ -1601,11 +1600,11 @@ def _print_human_report(report: dict[str, Any]) -> None:
 
     lic = report.get("licensing") or {"ok": True, "state": "no_token"}
     if lic["ok"] and lic.get("state") == "no_token":
-        print(f"{_status(True)} License: not activated — community edition")
+        print(f"{_status(True)} License: not activated — serial number required for features")
     elif lic["ok"]:
         expiry = f", expires epoch {lic['exp']}" if lic.get("exp") else ", perpetual"
         licensee = lic.get("licensee") or "no licensee recorded"
-        print(f"{_status(True)} License: {lic.get('edition')} edition for {licensee} ({expiry})")
+        print(f"{_status(True)} License: activated for {licensee} ({expiry})")
     else:
         print(f"{_status(False)} License: {lic.get('state')} — {lic.get('detail')}")
 

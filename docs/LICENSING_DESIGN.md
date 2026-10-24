@@ -1,10 +1,8 @@
 # Licensing & Anti-Piracy — Feature Scope
 
-Status: **steps 1–5 implemented** (2026-09-25): the crypto decision, core
-package, vendor script, CLI surface, doctor check, and offline pins have
-landed with mutation-proven tests (61 new; six mutations M1–M6 caught live).
-Remaining: step 6 (GUI activation slice) and step 7 (privacy policy unit).
-This document remains the design contract.
+Status: **serial-number product gate adopted** (2026-10-23). This document
+describes the offline verification contract and the licensed/unlicensed
+behavior.
 
 ---
 
@@ -15,16 +13,14 @@ client-side license check in readable Python can be bypassed by a determined
 user editing one file. **This design does not pretend otherwise.** What it
 delivers, in order of value:
 
-1. **A clean purchase path** — activation is paste-a-token, works fully
+1. **A clean purchase path** — activation is paste-a-serial-number, works fully
    offline, and says so in the privacy policy truthfully.
-2. **Casual-copy friction** — a copied install without its token runs as the
-   free/community edition, which is a real deterrent for the target audience
-   (home studios), not for crackers.
+2. **Casual-copy friction** — a copied install without a valid serial number
+   remains visible but its functional features are inert.
 3. **An audit trail** — every install reports its license state through the
-   doctor, and support can identify a customer's edition from the About
-   panel.
-4. **A foundation for paid tiers** — entitlement gates exist from day one so
-   future paid features bolt on without re-architecture.
+   doctor and About panel.
+4. **One product gate** — every functional entry point uses the same
+   licensed/unlicensed check.
 
 Non-goals: DRM, obfuscation, tamper-resistance, network license servers,
 phone-home validation. A phone-home check would contradict the suite's
@@ -42,7 +38,7 @@ src/the_oracle/licensing/
 ├── tokens.py       # token parse/verify over a versioned, canonical-payload envelope
 ├── machine.py      # machine fingerprint: SHA-256 of OS machine id — hash only, never raw
 ├── store.py        # token persistence, repo-local (no XDG user dir exists); atomic write
-└── policy.py       # editions → entitlements; grace/downgrade semantics; single source
+└── policy.py       # licensed/unlicensed gate; single source
 ```
 
 Release-side (repo-only; `scripts/` is not packaged into the wheel):
@@ -93,7 +89,6 @@ signature is byte-stable across platforms:
   "v": 1,
   "key_id": "k1",
   "lic_id": "UUID",
-  "edition": "studio",
   "licensee": "optional name or email — the customer's own choice",
   "machine_hash": "optional sha256 — present only for machine-locked seats",
   "iat": 1780000000,
@@ -102,9 +97,9 @@ signature is byte-stable across platforms:
 ```
 
 `exp: null` is a perpetual license. Verification order: envelope shape →
-key_id known → signature over canonical payload → `exp` → machine binding →
-edition policy. Any failure yields a typed `LicenseStatus`, never an
-exception at the call site.
+key_id known → signature over canonical payload → `exp` → machine binding.
+Any failure yields a typed `LicenseStatus`, never an exception at the call
+site.
 
 **Key rotation:** `keys.py` holds an ordered registry of `(key_id, verify_key)`.
 Tokens carry their key_id. Rotation = embed the new key, keep the old one
@@ -123,23 +118,18 @@ client releases. Store only the hash: this is a deliberate privacy
 decision, and it is what lets the privacy policy say the license contains
 no personal data unless the customer typed some in.
 
-## 4. Editions and entitlements
+## 4. Licensed and unlicensed states
 
-`policy.py` maps editions to entitlements — the single source the GUI,
-CLI, and doctor all read:
+`policy.py` is the single source the GUI, CLI, pipeline, and doctor read:
 
-| Edition    | Who gets it                       | Entitlements                                    |
-|------------|-----------------------------------|-------------------------------------------------|
-| community  | default when no token is present  | **everything that ships today**                 |
-| studio     | purchasers                        | everything in community + future paid features  |
-| trial      | evaluation tokens, `exp`-bounded  | studio features until `exp` + grace, then community |
+| State | Behavior |
+|---|---|
+| unlicensed | The application is visible but functional features refuse with a serial-number message. Activation, status, help, documentation, and quit remain available. |
+| licensed | A verified, unexpired serial number enables the full product. |
 
-The critical rollout rule: **community = the current feature set.** Nobody's
-existing workflow is gated at any point in this unit. Entitlement gates are
-wired and tested from the start, but the first gated feature is a *future*
-one. Downgrade semantics: an expired trial/studio token degrades to
-community entitlements with a visible notice — renders in flight finish,
-no data is ever locked away.
+Serial numbers are perpetual by default. Expired, malformed, unknown-key,
+tampered, and machine-mismatched values are unlicensed. No workflow silently
+downgrades to a usable state.
 
 Enforcement surface is deliberately soft: `policy.require(entitlement)`
 raises a typed `LicenseRequired` that the CLI and GUI catch and render as a
@@ -154,10 +144,10 @@ every other check (read-only, idempotent, history-independent — pinned by
 `test_doctor_report_is_history_independent.py`):
 
 - **No token installed** → `ok=true`, informational: "not activated —
-  community edition". Unlicensed is a *valid state*; the doctor never fails
+  serial number required for features". Unlicensed is a *valid state*; the doctor never fails
   an install for lacking a license and never suggests purchasing as a
   "problem".
-- **Valid token** → `ok=true`, informational: edition, licensee (as the
+- **Valid token** → `ok=true`, informational: licensed, licensee (as the
   customer entered it), key_id, expiry if any, machine-locked yes/no.
 - **Failure states** → `ok=false` with the remedy inline: malformed token
   (`re-enter the activation token`), signature invalid or unknown key_id
@@ -183,8 +173,8 @@ guarantee test file (`tests/test_offline_guarantee.py`) gains these pins:
    offline policy already enforces elsewhere (`offline.py` owns the marker;
    licensing reads it, never writes it, never triggers a download).
 3. **Doctor licensing check runs on offline installs** and its failure
-   remedies never instruct a network action — an expired subscription's
-   remedy is a renewal contact, stated as such.
+   remedies never instruct a network action — an expired serial number's
+   remedy is a reissue contact, stated as such.
 4. **Deactivation is local**: removing the token file moves the seat; there
    is no server to tell. (Machine-locked re-issue is a vendor email action,
    out of client scope.)
@@ -234,8 +224,9 @@ this unit, not a later promise to retrofit.
 2. ~~Machine-locked seats in v1~~ **resolved by implementation**: tokens are
    not machine-locked in v1 (the `machine_hash` field and `machine.py` ship,
    so opting in later is a vendor-side token field — zero client releases).
-3. Edition naming: `community` / `studio` / `trial` are placeholders —
-   final names are a sales decision, not an engineering one.
-4. Whether trial tokens mint at purchase time or ship as a generic
-   eval token — affects only `license_sign.py` UX (which already takes
-   `--expires`), nothing structural.
+3. Serial scope defaults are proposed in the EULA counsel packet: one named
+   licensee, own machines, no machine binding, current-major-version scope,
+   and non-transferable.
+4. Only one-time serial numbers exist; subscriptions are not supported.
+   Perpetual serial numbers are the default; an expiry is used only when the
+   owner deliberately mints one.

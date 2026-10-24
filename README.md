@@ -311,8 +311,8 @@ the-oracle gui
 Text repair uses the built-in, deterministic local grammar and punctuation
 fixes. The optional LanguageTool client was removed in 1.4.1 because its
 Python wrapper is GPL-3.0; there is no grammar download, background helper,
-network call, or thread to wait on. The community edition keeps the same
-local repair workflow.
+network call, or thread to wait on. A valid serial number is required before
+the local repair workflow can be used.
 
 ### First-run inference setup and tutorial
 
@@ -716,10 +716,11 @@ name again replaces the entry.
 
 This project is publicly visible for inspection and evaluation, but it is not open-source. All rights are reserved.
 
-Alpha licenses are sold directly while the storefront is being set up. Email
+One-time serial numbers are issued directly while the storefront is being set up. Email
 **codysa90@gmail.com** with the subject **"Oracle alpha license"** to request a
-Studio token; activation is offline and takes one paste. The community edition
-keeps every workflow that shipped before 1.4.0. See
+serial number; activation is offline and takes one paste. Without a valid
+serial number the application remains visible but functional features are
+disabled. See
 [docs/SOFT_LAUNCH.md](docs/SOFT_LAUNCH.md) for the activation and support
 procedure, and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the
 third-party inventory.

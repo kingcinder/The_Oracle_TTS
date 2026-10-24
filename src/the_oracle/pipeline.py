@@ -1096,6 +1096,9 @@ class OraclePipeline:
         speaker_settings: dict[str, SpeakerSettings],
         settings: RenderSettings,
     ) -> RenderPlan:
+        from the_oracle.licensing import current_license, require
+
+        require(current_license(), "analyze a project")
         document = self.ingestor.ingest(input_path)
         # Directives are author hints written in the source, so they must be
         # parsed before text repair: the repair pipeline may normalise or
@@ -2287,6 +2290,9 @@ class OraclePipeline:
         seed: int | None = None,
         progress_callback=None,
     ) -> Path:
+        from the_oracle.licensing import current_license, require
+
+        require(current_license(), "preview audio")
         start_time = perf_counter()
 
         def emit_preview_progress(stage: str, detail: str, current_step: int, total_steps: int = 4) -> None:

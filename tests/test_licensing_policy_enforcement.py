@@ -1,4 +1,4 @@
-"""Pin the Community default and the one gated Studio entitlement."""
+"""Pin the licensed/unlicensed product gate."""
 
 from __future__ import annotations
 
@@ -50,23 +50,22 @@ def _status(
 # --- require(): the single enforcement gate ---------------------------------
 
 
-def test_a_valid_key_is_licensed_and_passes_studio_entitlement() -> None:
+def test_a_valid_key_is_licensed_and_passes_functional_features() -> None:
     status = _status()
     assert is_licensed(status) is True
-    require(status, "studio_features")
+    require(status, "render")
 
 
 @pytest.mark.parametrize(
     ("ok", "state"),
     [(False, "no_token"), (False, "expired"), (False, "bad_signature"), (True, "store_error")],
 )
-def test_community_keeps_existing_entitlements_but_not_studio_features(ok: bool, state: str) -> None:
+def test_every_invalid_state_refuses_every_functional_feature(ok: bool, state: str) -> None:
     status = _status(ok=ok, state=state)
     assert is_licensed(status) is False
-    require(status, "render")
     with pytest.raises(LicenseRequired) as excinfo:
-        require(status, "studio_features")
-    assert "Studio" in str(excinfo.value)
+        require(status, "render")
+    assert "serial number" in str(excinfo.value)
 
 
 # --- verified statuses: the real verifier decides ---------------------------
@@ -81,18 +80,17 @@ def test_a_real_minted_key_unlocks_the_program() -> None:
     valid = tokens.verify_token(_minted_token(), now=1700000001.0)
     assert valid.ok is True and valid.state == "valid"
     assert is_licensed(valid) is True
-    require(valid, "studio_features")
+    require(valid, "render")
 
 
-def test_a_real_expired_key_degrades_to_community() -> None:
-    """An expired token loses Studio-only entitlements while Community works."""
+def test_a_real_expired_key_is_unlicensed() -> None:
+    """An expired token cannot use functional features."""
     exp = 1_700_000_500
     expired = tokens.verify_token(_minted_token(exp=exp), now=float(exp + 60))
     assert expired.ok is False
     assert expired.state == "expired"
-    require(expired, "render")
     with pytest.raises(LicenseRequired):
-        require(expired, "studio_features")
+        require(expired, "render")
 
 
 # --- the CLI surface: license-status -----------------------------------------
@@ -124,7 +122,7 @@ def test_license_status_reports_no_token_when_nothing_is_activated(sandbox_root:
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["state"] == "no_token"
-    assert payload["edition"] == "community"
+    assert payload["licensed"] is False
 
 
 def test_license_status_reports_the_valid_stored_license(sandbox_root: Path, capsys) -> None:
@@ -148,16 +146,13 @@ def test_license_status_fails_closed_on_a_corrupted_store(sandbox_root: Path, ca
     assert payload["detail"], "a corrupted store must explain itself"
 
 
-def test_community_can_use_existing_cli_commands_without_activation(monkeypatch) -> None:
+def test_unlicensed_cli_commands_require_activation(monkeypatch, capsys) -> None:
     from the_oracle import licensing
 
-    calls: list[str] = []
     monkeypatch.setattr(
         licensing,
         "current_license",
         lambda: LicenseStatus(ok=False, state="no_token", detail="No key."),
     )
-    monkeypatch.setattr(cli, "handle_voices", lambda _args: calls.append("voices") or 0)
-
-    assert cli.main(["voices"]) == 0
-    assert calls == ["voices"]
+    assert cli.main(["voices"]) == 1
+    assert "serial number" in capsys.readouterr().err

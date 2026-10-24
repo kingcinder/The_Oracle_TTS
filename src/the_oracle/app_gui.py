@@ -138,6 +138,42 @@ from the_oracle.tts_engines.vulkan_backend import AudioCppVulkanEngine, find_aud
 # it can be updated in one place if a verified GPU path is added later.
 _DEVICE_MODE: str = "cpu"
 
+# Every menu action is classified here so adding a new action cannot silently
+# create an unlicensed escape hatch. Theme and template actions are dynamic
+# groups; their parent group is classified as serial-required.
+UNLICENSED_GUI_ACTIONS = frozenset({
+    "activate_license_action",
+    "about_action",
+    "report_problem_action",
+    "privacy_action",
+})
+SERIAL_REQUIRED_GUI_ACTIONS = frozenset({
+    "new_action",
+    "open_action",
+    "save_action",
+    "save_as_action",
+    "save_profile_action",
+    "load_profile_action",
+    "batch_fix_action",
+    "reset_defaults_action",
+    "save_settings_action",
+    "load_settings_action",
+    "save_template_action",
+    "replay_full_wizard_action",
+    "replay_discovery_wizard_action",
+    "replay_main_wizard_action",
+    "recording_wizard_action",
+    "output_filename_warning_action",
+    "confirmation_action",
+    "clear_trust_action",
+    "restore_backup_action",
+    "remember_backend_action",
+    "download_vulkan_model_action",
+    "recording_studio_action",
+    "_theme_actions",
+    "templates_menu",
+})
+
 #: One bullet style for every speaker-ref hint line. A dialog list has no way to
 #: make a warning look different from a suggestion, so unlike the CLI's terminal
 #: output it does not try; the sentences themselves come from
@@ -1480,6 +1516,8 @@ class MainWindow(QMainWindow):
         warning clears and renders are ready; the exact export line is shown
         for users who want to persist it in their shell.
         """
+        if not self._require_serial("download a model"):
+            return
         if self._model_download_thread is not None:
             self.error_panel.append("A Vulkan model download is already in progress.")
             return
@@ -2181,6 +2219,8 @@ class MainWindow(QMainWindow):
         completion handler, so opening several keeps each one's worker and
         saved take instead of orphaning the earlier ones.
         """
+        if not self._require_serial("record a voice"):
+            return
         dialog = RecordingStudioDialog(
             repo_root=self.repo_root,
             voice_dir=self.paths.voice_dir,
@@ -2333,6 +2373,8 @@ class MainWindow(QMainWindow):
         weight, and mode always produce the same wav), then the voice appears
         under 'Saved Blends' in every speaker panel's pickers.
         """
+        if not self._require_serial("save a blended voice"):
+            return
         base = group.reference_path.text().strip()
         target = group.blend_target_path()
         if not base or not target:
@@ -2370,6 +2412,8 @@ class MainWindow(QMainWindow):
 
     def _process_selected_voice(self, group: SpeakerGroup, save_as: bool) -> None:
         """Apply the recorded-audio controls to the selected Seashell."""
+        if not self._require_serial("process a voice recording"):
+            return
         source = Path(group.reference_path.text().strip()).expanduser()
         if not source.is_file():
             QMessageBox.information(
@@ -3323,6 +3367,8 @@ class MainWindow(QMainWindow):
         clips, voice settings, render settings, output folder).  This mirrors
         the expected workflow: load a new script into an already-configured
         session without having to re-enter reference paths every time."""
+        if not self._require_serial("start a new project"):
+            return
         self.current_project_path = None
         self.plan = None
         preserved_output_name = self.output_name.text()
@@ -3384,6 +3430,8 @@ class MainWindow(QMainWindow):
 
     def _batch_fix_input_folder(self) -> None:
         """Delegate to the gui_ingest_tools flow body (extraction slice 10)."""
+        if not self._require_serial("fix input files"):
+            return
         from the_oracle.gui_ingest_tools import batch_fix_input_folder
 
         # INJECTION seam: the bare QMessageBox/QFileDialog names resolve from
@@ -3410,6 +3458,8 @@ class MainWindow(QMainWindow):
 
     def _run_ingest_transformer_check(self) -> bool:
         """Delegate to the gui_ingest_tools flow body (extraction slice 10)."""
+        if not self._require_serial("check input formatting"):
+            return False
         from the_oracle.gui_ingest_tools import run_ingest_transformer_check
 
         # INJECTION seam: the bare QMessageBox name resolves from THIS
@@ -3520,6 +3570,8 @@ class MainWindow(QMainWindow):
         return result.accepted
 
     def prepare_project(self) -> None:
+        if not self._require_serial("analyze a project"):
+            return
         with self._prewarm_lock:
             if self._prewarm_state == "warming":
                 self.error_panel.append("Background warmup still running; please wait a moment before analyzing.")
@@ -3724,6 +3776,8 @@ class MainWindow(QMainWindow):
         self.plan.update_hashes()
 
     def preview_utterance(self, row: int) -> None:
+        if not self._require_serial("preview audio"):
+            return
         if not self.plan:
             return
         if self.render_worker is not None:

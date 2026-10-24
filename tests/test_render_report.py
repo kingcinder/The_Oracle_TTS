@@ -1,25 +1,21 @@
-"""The Studio render report: the first real entitlement gate, and its degrade path.
+"""The serial-number-gated render report and its refusal path.
 
-Phase 1 item 5 of the 1.4.0 release work. The requirement was "gate at least one
-real feature behind the studio entitlement, or stop advertising a licensing
-system that enforces nothing". This is the first branch, chosen as the *least
-destructive* default: the capability is NEW in 1.4.0, so community loses no
-workflow, and the gate is one call site (``render_report.STUDIO_ENTITLEMENT``).
+The report is a real functional feature and must require a valid serial number.
 
 What these tests pin, in both directions:
 
-1. **Unlicensed (community)** — the command refuses with the offline purchase
+1. **Unlicensed** — the command refuses with the offline activation
    path, exits 1, prints nothing to stdout, and **writes nothing**: no report
    file, and the project directory is byte-identical afterwards.
-2. **Licensed (studio)** — the same command produces a report whose numbers
+2. **Licensed** — the same command produces a report whose numbers
    match the real artifacts (sample rate/channels/frames read back from the
    file, peak/clipping measured from samples, utterance and speaker counts from
    ``render_plan.json``).
-3. **Expired studio** — degrades to community: refuses, and still destroys
+3. **Expired serial number** — refuses, and still destroys
    nothing (the render is untouched).
 
 **Mutation contract:** removing ``policy.require`` from ``handle_render_report``
-must fail ``test_community_install_refuses_and_writes_nothing``; making the
+must fail ``test_unlicensed_install_refuses_and_writes_nothing``; making the
 degrade path write the report anyway must fail
 ``test_expired_license_degrades_without_destroying_work``.
 """
@@ -112,32 +108,32 @@ def _run(project_dir: Path, *extra: str) -> int:
     return cli.main(["render-report", str(project_dir), *extra])
 
 
-# --- community: refuses, and writes nothing ----------------------------------
+# --- unlicensed: refuses, and writes nothing ----------------------------------
 
 
-def test_community_install_refuses_and_writes_nothing(
+def test_unlicensed_install_refuses_and_writes_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Community refuses only the Studio report, without writing anything."""
+    """An unlicensed install refuses the report without writing anything."""
     project = tmp_path / "project"
     _make_render(project)
     before = {path.name: path.read_bytes() for path in project.iterdir()}
 
-    # No token anywhere: the install IS community (fail-closed default).
+    # No token anywhere: the install is unlicensed (fail-closed default).
     _isolate(monkeypatch, tmp_path / "no-token-here")
     status = _run(project, "--json", "--out", str(tmp_path / "report.json"))
 
     captured = capsys.readouterr()
     assert status == 1
     assert captured.out.strip() == "", "a refused report must not print a document"
-    assert "Studio license" in captured.err
+    assert "serial number" in captured.err
     assert not (tmp_path / "report.json").exists(), "a refused report must write nothing"
     assert {path.name: path.read_bytes() for path in project.iterdir()} == before, (
         "the project directory must be untouched"
     )
 
 
-def test_community_message_never_asks_for_a_network_action(
+def test_unlicensed_message_never_asks_for_a_network_action(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = tmp_path / "project"
@@ -149,10 +145,10 @@ def test_community_message_never_asks_for_a_network_action(
         assert forbidden not in err, forbidden
 
 
-# --- studio: it works, and the numbers are real ------------------------------
+# --- licensed: it works, and the numbers are real ----------------------------
 
 
-def test_studio_install_produces_a_report_matching_the_artifacts(
+def test_licensed_install_produces_a_report_matching_the_artifacts(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = tmp_path / "project"
@@ -216,13 +212,13 @@ def test_detector_availability_is_reported_not_assumed(
     assert "does not run detection" in watermark["note"]
 
 
-# --- expired: degrades, destroys nothing -------------------------------------
+# --- expired: refuses, destroys nothing --------------------------------------
 
 
 def test_expired_license_degrades_without_destroying_work(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The Phase 1 promise, at the feature boundary: expired means community."""
+    """An expired serial number refuses without mutating the project."""
     project = tmp_path / "project"
     _make_render(project)
     before = {path.name: path.read_bytes() for path in project.iterdir()}
@@ -280,8 +276,8 @@ def test_the_report_is_read_only(tmp_path: Path) -> None:
     assert after == before
 
 
-def test_render_report_uses_the_studio_entitlement_gate() -> None:
-    """Only the new Studio report feature is gated in Community."""
+def test_render_report_uses_the_serial_number_gate() -> None:
+    """The report dispatch keeps the serial-number gate."""
     cli_source = Path(cli.__file__).read_text(encoding="utf-8")
-    assert 'require(current_license(), "studio_features")' in cli_source
+    assert 'require(current_license(), "render-report")' in cli_source
     assert "UNLOCKED_COMMANDS" not in cli_source

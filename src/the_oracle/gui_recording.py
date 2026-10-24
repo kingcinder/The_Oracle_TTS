@@ -433,6 +433,14 @@ class RecordingStudioDialog(QDialog):
             self._stop_recording()
 
     def _start_recording(self) -> None:
+        from the_oracle.licensing import LicenseRequired, current_license, require
+
+        try:
+            require(current_license(), "record a voice")
+        except LicenseRequired as exc:
+            self.status.setText(str(exc))
+            QMessageBox.information(self, "Serial Number Required", str(exc))
+            return
         if self.mic_combo.currentData() is None:
             self.status.setText("Pick a microphone first.")
             return

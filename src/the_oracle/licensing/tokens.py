@@ -4,7 +4,7 @@ Canonical JSON (sorted keys, compact separators, UTF-8) makes the signed
 payload byte-stable across platforms and key-order shuffles — the signature
 covers bytes, so the bytes must be deterministic. Verification order per
 docs/LICENSING_DESIGN.md §3: envelope shape, key_id known, signature, expiry,
-machine binding, edition policy. Every failure is a typed status, never an
+machine binding, and expiry. Every failure is a typed status, never an
 exception at the call site.
 """
 
@@ -119,22 +119,22 @@ def verify_token(
     depends on exactly that."""
     parsed = parse(token)
     if parsed is None:
-        return LicenseStatus(ok=False, state="malformed", detail="The activation token is malformed. Re-enter it exactly as issued.")
+        return LicenseStatus(ok=False, state="malformed", detail="The serial number is malformed. Re-enter it exactly as issued.")
     payload_dict, signature = parsed
     if payload_dict.get("v") == 1:
         return LicenseStatus(
             ok=False,
             state="reissue_required",
-            detail="This license was issued in the old format and no longer activates. Contact support for a reissued token.",
+            detail="This serial number uses an old format and no longer activates. Contact support for a reissued serial number.",
         )
 
     key_id = payload_dict.get("key_id")
     if not isinstance(key_id, str) or keys.key_for(key_id) is None:
-        return LicenseStatus(ok=False, state="unknown_key", detail="The token was issued under a key this install does not know. Upgrade the suite, or contact support with the token.")
+        return LicenseStatus(ok=False, state="unknown_key", detail="The serial number was issued under a key this install does not know. Upgrade the suite, or contact support with the serial number.")
 
     body = canonical_payload_bytes(payload_dict)
     if not keys.verify_signature(key_id, body, signature):
-        return LicenseStatus(ok=False, state="bad_signature", detail="The token is not a genuine Oracle license. Check for truncation; if it matches what you received, contact support.")
+        return LicenseStatus(ok=False, state="bad_signature", detail="The serial number is not a genuine Oracle license. Check for truncation; if it matches what you received, contact support.")
 
     try:
         payload = TokenPayload(
@@ -146,7 +146,7 @@ def verify_token(
             exp=None if payload_dict.get("exp") is None else int(payload_dict["exp"]),
         )
     except (KeyError, TypeError, ValueError):
-        return LicenseStatus(ok=False, state="malformed", detail="The token payload is malformed. Re-enter it exactly as issued.")
+        return LicenseStatus(ok=False, state="malformed", detail="The serial number payload is malformed. Re-enter it exactly as issued.")
 
     current_time = time.time() if now is None else now
     if payload.exp is not None and current_time >= payload.exp:

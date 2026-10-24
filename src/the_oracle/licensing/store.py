@@ -4,11 +4,11 @@ No XDG user-data dir exists in this suite (app_paths is repo-local by design),
 so the license store is repo-local too, consistent with app_settings.json and
 the design doc's correction (docs/LICENSING_DESIGN.md, store.py note). The
 write is atomic (temp file + os.replace) so a crash mid-write can never leave
-a half-written token that would masquerade as corruption.
+a half-written serial number that would masquerade as corruption.
 
 Load failures are typed, never raised: corrupted_content (parseable JSON but
 wrong shape), unreadable (permission/OS error). A missing file is simply
-"no license" — the valid, unlicensed community state.
+"no_token" — the valid unlicensed state.
 """
 
 from __future__ import annotations
@@ -77,12 +77,12 @@ def load_token(repo_root: str | Path) -> LoadResult:
     except ValueError:
         return LoadResult(
             state="corrupted_content",
-            detail=f"{path} is not valid JSON. Re-run `the-oracle activate` with your token to restore it.",
+            detail=f"{path} is not valid JSON. Re-run `the-oracle activate` with your serial number to restore it.",
         )
     if not isinstance(data, dict) or not isinstance(data.get("token"), str) or not data["token"]:
         return LoadResult(
             state="corrupted_content",
-            detail=f"{path} does not contain a license token. Re-run `the-oracle activate`.",
+            detail=f"{path} does not contain a serial number. Re-run `the-oracle activate`.",
         )
     return LoadResult(state="loaded", stored=StoredToken(token=data["token"]))
 

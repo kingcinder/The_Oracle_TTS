@@ -22,8 +22,8 @@ logs it, and never passes it to a test; losing it means rotating keys, not
 losing the product.
 
 An empty registry still fails closed — every token reports ``unknown_key``, so an
-unactivated install runs as the community edition and no forged token is ever
-accepted. Two nets keep the compromised key from coming back: the production
+unactivated install remains unusable and no forged token is ever accepted. Two
+nets keep the compromised key from coming back: the production
 registry is scanned for RFC 8032 test-vector keys
 (tests/test_licensing_registry_hygiene.py), and tests inject their own
 test-only registry (tests/licensing_fixtures.py) instead of relying on this
@@ -73,8 +73,8 @@ def key_for(key_id: str) -> VerifyKey | None:
 def registry_is_configured() -> bool:
     """True once at least one production verify key is registered.
 
-    False means the install fails closed (community edition for everyone) and
-    that no license can be minted *for* it yet — a distribution blocker, not a
+    False means the install fails closed (unlicensed for everyone) and that no
+    license can be minted *for* it yet — a distribution blocker, not a
     user-visible defect. scripts/release.py and the doctor surface it.
     """
     return bool(KEYS)

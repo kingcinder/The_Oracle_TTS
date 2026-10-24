@@ -1,9 +1,8 @@
-"""Studio render report — a machine-readable conformance summary of a render.
+"""Serial-number-gated render report — a machine-readable conformance summary.
 
 This is the first **real** Studio-gated capability, added in 1.4.0 and
-deliberately **additive**: nothing that shipped before is gated, so the
-Community edition retains every existing workflow. The report is a new
-capability and requires the Studio entitlement in ``cli.main()``.
+deliberately read-only: it measures an existing render and requires a valid
+serial number in ``cli.main()``.
 
 The report is derived entirely from artifacts the render already produced: the
 assembled FLAC and its ``render_plan.json``. It measures, it does not re-render,

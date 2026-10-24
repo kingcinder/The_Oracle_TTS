@@ -12,7 +12,7 @@ Status: draft for owner and qualified counsel. No legal approval is claimed.
 ## Product terms reflected in the draft
 
 - One-time purchase of a serial number; no subscription.
-- No Community edition and no trial edition.
+- One product is offered under a one-time serial number; there is no subscription.
 - Without a valid serial number the application may be viewed, but functional
   features are unavailable.
 - Offline activation and no telemetry.

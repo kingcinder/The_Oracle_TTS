@@ -1,8 +1,8 @@
-"""License activation and About dialogs (GUI presentation layer).
+"""Serial-number activation and About dialogs (GUI presentation layer).
 
 The GUI half of the licensing unit's step 6 (LICENSING_DESIGN §8): paste-a-
-token activation with the typed verification states surfaced readably, and
-an About panel that shows which edition this install runs.
+serial-number activation with the typed verification states surfaced readably,
+and an About panel that shows whether this install is licensed.
 
 Injection discipline (the ``gui_ingest`` pattern): the caller passes
 ``dialog_cls``/``message_box_cls``; everything else is plain arguments. No
@@ -31,10 +31,10 @@ RootPath = Union[str, Path]
 
 
 def run_activation_dialog(parent: QWidget, root: RootPath, *, dialog_cls: type, message_box_cls: type) -> bool:
-    """Paste-a-token activation. Returns True when the store now holds a
+    """Paste-a-serial-number activation. Returns True when the store now holds a
     valid license.
 
-    A bad token never writes anything (the store's verify-before-save gate)
+    A bad serial number never writes anything (the store's verify-before-save gate)
     and the typed state is shown verbatim — the same words the CLI and the
     doctor use, so support can ask for exactly this line.
     """
@@ -45,8 +45,8 @@ def run_activation_dialog(parent: QWidget, root: RootPath, *, dialog_cls: type, 
     layout = QVBoxLayout(dialog)
 
     summary = QLabel(
-        "Paste the license token you received after purchase.\n\n"
-        "Activation is offline: the token is verified against keys embedded\n"
+        "Paste the serial number you received after purchase.\n\n"
+        "Activation is offline: the serial number is verified against keys embedded\n"
         "in this install — no server is contacted, and nothing is sent\n"
         "anywhere."
     )
@@ -61,9 +61,9 @@ def run_activation_dialog(parent: QWidget, root: RootPath, *, dialog_cls: type, 
     activate_button = buttons.addButton("Activate", QDialogButtonBox.AcceptRole)
     cancel_button = buttons.addButton(QDialogButtonBox.Cancel)
     if activate_button is not None:
-        activate_button.setToolTip("Verify the token and store it locally (offline; nothing is sent).")
+        activate_button.setToolTip("Verify the serial number and store it locally (offline; nothing is sent).")
     if cancel_button is not None:
-        cancel_button.setToolTip("Leave the install as it is — the community edition keeps everything it ships with.")
+        cancel_button.setToolTip("Leave the install unlicensed; functional features remain unavailable.")
     layout.addWidget(buttons)
 
     outcome = {"activated": False}
@@ -90,7 +90,7 @@ def run_activation_dialog(parent: QWidget, root: RootPath, *, dialog_cls: type, 
                 return
             _show(message_box_cls, dialog, "Could Not Save License", saved.detail or f"unexpected store state: {saved.state}")
             return
-        _show(message_box_cls, dialog, f"Token Not Valid ({verdict.state})", verdict.detail)
+        _show(message_box_cls, dialog, f"Serial Number Not Valid ({verdict.state})", verdict.detail)
 
     activate_button.clicked.connect(_try_activate)
     cancel_button.clicked.connect(dialog.reject)
@@ -145,7 +145,7 @@ def _show(message_box_cls, parent, title: str, text: str) -> None:  # noqa: ANN0
 def run_about_panel(parent: QWidget, *, dialog_cls: type) -> None:
     """The About panel: what this install runs, license first.
 
-    Edition/licensee/key_id/expiry come from the same typed status the CLI
+    License status, licensee, key_id, and expiry come from the same typed status the CLI
     and the doctor read — one source of truth, no GUI-specific parsing.
     """
     status = current_license()
@@ -159,8 +159,8 @@ def run_about_panel(parent: QWidget, *, dialog_cls: type) -> None:
             lines.append(f"License expires: {status.exp}")
         lines.append(f"License key: {status.key_id}")
     else:
-        lines.append("Community edition — all existing workflows are available.")
-        lines.append("Studio activation is optional.")
+        lines.append("Unlicensed — enter a serial number to use the application.")
+        lines.append("Activation is offline and preserves your local data.")
         if status.state not in ("no_token", ""):
             lines.append(f"(Stored license state: {status.state})")
     lines.append("")

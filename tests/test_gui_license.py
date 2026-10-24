@@ -220,7 +220,7 @@ def test_activation_bad_token_writes_nothing_and_names_the_state(root: Path, par
     assert gui_license.run_activation_dialog(parent, root, dialog_cls=factory, message_box_cls=message_factory) is False
     assert store.load_token(root).state == "no_token", "a bad token must never be stored"
     assert shown, "the typed failure state must be surfaced"
-    assert shown[0][0].startswith("Token Not Valid")
+    assert shown[0][0].startswith("Serial Number Not Valid")
 
 
 def test_activation_empty_token_refuses_to_activate(root: Path, parent, monkeypatch) -> None:
@@ -248,7 +248,7 @@ def test_activation_cancel_writes_nothing(root: Path, parent, monkeypatch) -> No
     assert store.load_token(root).state == "no_token"
 
 
-def test_about_panel_names_edition_and_privacy(root: Path, parent, monkeypatch) -> None:
+def test_about_panel_names_license_state_and_privacy(root: Path, parent, monkeypatch) -> None:
     labels: list[str] = []
     real_label = gui_license.QLabel
 
@@ -264,12 +264,12 @@ def test_about_panel_names_edition_and_privacy(root: Path, parent, monkeypatch) 
         dialog.programmed = ["OK"]
         return dialog
 
-    # An unactivated install remains usable as Community.
+    # An unactivated install remains visible but inert.
     gui_license.run_about_panel(parent, dialog_cls=factory)
-    assert any("Community" in text for text in labels), labels
+    assert any("Unlicensed" in text and "serial number" in text for text in labels), labels
     assert any("PRIVACY.md" in text for text in labels), labels
 
-    # Activated install: names the edition and the licensee.
+    # Activated install: names the licensed state and the licensee.
     labels.clear()
     store.save_token(root, _good_token(), verify_before_save=tokens.verify_token)
     from the_oracle.licensing import current_license as _real_current

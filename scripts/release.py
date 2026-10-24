@@ -195,7 +195,7 @@ def licensing_key_problems(repo_root: Path) -> list[str]:
     Two release blockers live here. A registry holding a published test vector
     key means anyone can mint licences (the historical ``k1`` defect), and an
     EMPTY registry means no customer can ever activate — the client fails
-    closed, so shipping it silently produces an install that reports community
+    closed, so shipping it silently produces an install that stays unlicensed
     for every token. Both refuse the build instead.
 
     The registry is read **from the tree under release**, as source, rather than
