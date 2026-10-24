@@ -331,6 +331,7 @@ class MainWindow(QMainWindow):
         # deliver construction-time event wrappers through the hover filter.
         self._ctrl_help = install_ctrl_hover_help(self)
         self._register_ctrl_help_descriptions()
+        self._apply_serial_gate()
         self._mark_startup("mainwindow_init_end")
         self._write_startup_timeline()
         # Arm the deferred startup callbacks from single-shot children of the
@@ -1623,7 +1624,54 @@ class MainWindow(QMainWindow):
         from the_oracle.gui_license import run_activation_dialog
 
         if run_activation_dialog(self, self._consent_root(), dialog_cls=QDialog, message_box_cls=QMessageBox):
-            self.error_panel.append("License activated — see About for the new edition.")
+            self.error_panel.append("Serial number activated — the application is now licensed.")
+            self._apply_serial_gate()
+
+    def _require_serial(self, feature: str) -> bool:
+        from the_oracle.licensing import LicenseRequired, current_license, require
+
+        try:
+            require(current_license(), feature)
+        except LicenseRequired as exc:
+            self.error_panel.append(str(exc))
+            QMessageBox.information(self, "Serial Number Required", str(exc))
+            return False
+        return True
+
+    def _apply_serial_gate(self) -> None:
+        """Keep an unlicensed window visible but functionally inert."""
+        from the_oracle.licensing import current_license, is_licensed
+
+        licensed = is_licensed(current_license())
+        if not hasattr(self, "_serial_gate_widget_states"):
+            central = self.centralWidget()
+            self._serial_gate_widget_states = {
+                widget: widget.isEnabled() for widget in central.findChildren(QWidget)
+            } if central is not None else {}
+            self._serial_gate_action_states = {
+                action: action.isEnabled() for action in self.menuBar().findChildren(QAction)
+            }
+        if licensed:
+            if self.centralWidget() is not None:
+                self.centralWidget().setEnabled(True)
+            for widget, enabled in self._serial_gate_widget_states.items():
+                widget.setEnabled(enabled)
+            for action, enabled in self._serial_gate_action_states.items():
+                action.setEnabled(enabled)
+            return
+
+        if hasattr(self, "error_panel"):
+            self.error_panel.append("Enter a serial number to use the application. Help, About, and activation remain available.")
+        if self.centralWidget() is not None:
+            self.centralWidget().setEnabled(False)
+        allowed = {
+            getattr(self, "activate_license_action", None),
+            getattr(self, "about_action", None),
+            getattr(self, "report_problem_action", None),
+            getattr(self, "privacy_action", None),
+        }
+        for action in self.menuBar().findChildren(QAction):
+            action.setEnabled(action in allowed)
 
     def _open_about_panel(self) -> None:
         from the_oracle.gui_license import run_about_panel
@@ -3287,6 +3335,8 @@ class MainWindow(QMainWindow):
         self._refresh_reference_pickers()
 
     def open_project(self) -> None:
+        if not self._require_serial("open a project"):
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Open Project", "", "Project Files (*.json)")
         if not path:
             return
@@ -3304,12 +3354,16 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open Project Failed", str(exc))
 
     def save_project(self) -> None:
+        if not self._require_serial("save a project"):
+            return
         if self.current_project_path is None:
             self.save_project_as()
             return
         self._save_project_to_path(self.current_project_path)
 
     def save_project_as(self) -> None:
+        if not self._require_serial("save a project"):
+            return
         path, _ = QFileDialog.getSaveFileName(self, "Save Project As", "", "Project Files (*.json)")
         if not path:
             return
@@ -3779,6 +3833,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Preview Failed", str(exc))
 
     def render_project(self) -> None:
+        if not self._require_serial("render audio"):
+            return
         with self._prewarm_lock:
             if self._prewarm_state == "warming":
                 self.error_panel.append("Background warmup still running; render will be available shortly.")

@@ -18,6 +18,29 @@ from the_oracle.utils.logging import configure_logging
 from the_oracle.voice_catalog import default_voice_choices
 
 
+_UNLICENSED_ALLOWED_COMMANDS = frozenset({
+    "activate",
+    "license-status",
+    "doctor",
+    "install",
+    "uninstall",
+})
+
+
+def _require_cli_serial_number(command: str) -> int | None:
+    """Return a refusal code for every command outside the unlicensed allow-list."""
+    if command in _UNLICENSED_ALLOWED_COMMANDS:
+        return None
+    from the_oracle.licensing import LicenseRequired, current_license, require
+
+    try:
+        require(current_license(), command)
+    except LicenseRequired as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    return None
+
+
 def _nonnegative_int(value: str) -> int:
     """argparse type: a non-negative integer (Vulkan device indexes start at 0)."""
     parsed = int(value)
@@ -1769,13 +1792,13 @@ def handle_bug_report(args: argparse.Namespace) -> int:
 def handle_license_status() -> int:
     """Print the install's license status as JSON. Offline by construction:
     verification is a pure function of the stored token and embedded keys."""
-    from the_oracle.licensing import current_edition, current_license
+    from the_oracle.licensing import current_license
 
     status = current_license()
     payload = {
         "ok": status.ok,
+        "licensed": status.ok,
         "state": status.state,
-        "edition": current_edition(status),
         "licensee": status.licensee,
         "lic_id": status.lic_id,
         "key_id": status.key_id,
@@ -1882,6 +1905,9 @@ def main(argv: list[str] | None = None) -> int:
     crash_handlers.arm_native_capture()
     parser = build_parser()
     args = parser.parse_args(argv)
+    refusal = _require_cli_serial_number(args.command)
+    if refusal is not None:
+        return refusal
     if args.command == "gui":
         from the_oracle.app_gui import launch_gui
 

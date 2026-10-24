@@ -1309,6 +1309,9 @@ class OraclePipeline:
         render_click_wall: float | None = None,
         force_sequential: bool = False,
     ) -> Path:
+        from the_oracle.licensing import current_license, require
+
+        require(current_license(), "render")
         start_time = perf_counter()
         start_wall = time()
         # Hiccup-retry notes are drained by whichever synthesis produced them;
