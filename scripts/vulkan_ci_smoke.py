@@ -121,6 +121,15 @@ def check_gates() -> dict[str, object]:
     return gates
 
 
+def _cached_model_available() -> bool:
+    """Return whether the CI-provided model cache already contains a GGUF."""
+    raw_root = os.environ.get("AUDIOCPP_MODELS_ROOT")
+    if not raw_root:
+        return False
+    root = Path(raw_root)
+    return root.is_dir() and any(root.rglob("*.gguf"))
+
+
 def run_suite(*, strict: bool, extra_args: Sequence[str]) -> None:
     """Run the suite, demanding that no test skip when ``strict``."""
     env = dict(os.environ)
@@ -156,7 +165,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if not args.skip_build:
             _run([str(SCRIPTS_DIR / "build_audio_cpp.sh")], description="build audio.cpp (Vulkan backend)")
-        if not args.skip_model:
+        if not args.skip_model and _cached_model_available():
+            print("Reusing the cached Chatterbox GGUF model.")
+        elif not args.skip_model:
             _run(
                 [str(SCRIPTS_DIR / "download_audio_cpp_model.sh")],
                 description="fetch the Chatterbox ggml model",

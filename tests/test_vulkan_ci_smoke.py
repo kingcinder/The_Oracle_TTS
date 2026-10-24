@@ -197,6 +197,18 @@ def test_main_builds_then_fetches_then_runs_strictly(smoke, monkeypatch) -> None
     assert suite == [True]
 
 
+def test_main_reuses_a_cached_model_instead_of_overwriting_it(smoke, monkeypatch, tmp_path: Path) -> None:
+    steps, suite = _stub_pipeline(smoke, monkeypatch)
+    cache = tmp_path / "models" / "Chatterbox-GGUF"
+    cache.mkdir(parents=True)
+    (cache / "chatterbox-q8_0.gguf").write_bytes(b"cached")
+    monkeypatch.setenv("AUDIOCPP_MODELS_ROOT", str(tmp_path / "models"))
+
+    assert smoke.main([]) == 0
+    assert [Path(step[0]).name for step in steps] == ["build_audio_cpp.sh"]
+    assert suite == [True]
+
+
 def test_main_can_reuse_an_existing_build_and_model(smoke, monkeypatch) -> None:
     steps, suite = _stub_pipeline(smoke, monkeypatch)
 
