@@ -162,7 +162,18 @@ def offline_wheels_dir(offline_bundle: Path) -> Path:
 def _pip_base_args(offline_bundle: Path | None) -> list[str]:
     if offline_bundle is None:
         return []
-    return ["--no-index", "--find-links", str(offline_wheels_dir(offline_bundle))]
+    platform_dir = "windows" if is_windows() else "linux"
+    lock = offline_bundle / "locks" / f"{platform_dir}-py{sys.version_info[0]}.{sys.version_info[1]}.txt"
+    args = ["--no-index", "--find-links", str(offline_wheels_dir(offline_bundle))]
+    if lock.is_file():
+        args.append("--require-hashes")
+    return args
+
+
+def _offline_lock_path(offline_bundle: Path) -> Path | None:
+    platform_dir = "windows" if is_windows() else "linux"
+    lock = offline_bundle / "locks" / f"{platform_dir}-py{sys.version_info[0]}.{sys.version_info[1]}.txt"
+    return lock if lock.is_file() else None
 
 
 def install_dependencies(
@@ -176,6 +187,22 @@ def install_dependencies(
     info(f"Installing PyTorch runtime: {runtime_label}" + (" (offline bundle)" if offline_bundle else ""))
     env = build_env()
     pip_base = _pip_base_args(offline_bundle)
+    if offline_bundle is not None:
+        lock = _offline_lock_path(offline_bundle)
+        if lock is not None:
+            if include_dev:
+                raise SystemExit(fail("Offline lock files contain runtime dependencies only; rebuild with development wheels."))
+            run_command(
+                [str(venv_python), "-m", "pip", "install", *pip_base, "-r", str(lock)],
+                env=env,
+            )
+            run_command(
+                [str(venv_python), "-m", "pip", "install", "--no-deps", "-e", "."],
+                env=env,
+            )
+            run_command([str(venv_python), str(REPO_ROOT / "scripts" / "patch_chatterbox_metadata.py")], env=env)
+            passed("Installed The Oracle runtime bundle into the project venv")
+            return
     run_command([str(venv_python), "-m", "pip", "install", *pip_base, "--upgrade", *BOOTSTRAP_PACKAGES], env=env)
 
     torch_args = [str(venv_python), "-m", "pip", "install", *pip_base]

@@ -62,6 +62,7 @@ from the_oracle.models.pins import (  # noqa: E402
 )
 
 import manage_install  # noqa: E402
+from distribution_locks import build_lock  # noqa: E402
 
 #: Torch's unconditional runtime dependencies. The torch wheels are downloaded
 #: with ``--no-deps``: pip evaluates torch's ``platform_system == "Linux"``
@@ -576,6 +577,18 @@ def main(argv: list[str] | None = None) -> int:
                       f"The bundle cannot be fully offline for {platform}.", file=sys.stderr)
                 return 1
 
+    lock_manifest = bundle_dir / "locks" / "manifest.json"
+    for platform in platforms:
+        wheels_dir = bundle_dir / "wheels" / platform
+        if wheels_dir.is_dir():
+            build_lock(
+                wheels_dir,
+                bundle_dir / "locks" / f"{platform}-py{args.python_version}.txt",
+                lock_manifest,
+                platform=platform,
+                python_version=args.python_version,
+            )
+
     write_launchers(bundle_dir)
 
     manifest = {
@@ -591,6 +604,7 @@ def main(argv: list[str] | None = None) -> int:
             platform: len(list((bundle_dir / "wheels" / platform).glob("*.whl")))
             for platform in platforms if (bundle_dir / "wheels" / platform).is_dir()
         },
+        "dependency_locks": json.loads(lock_manifest.read_text(encoding="utf-8")) if lock_manifest.exists() else {},
     }
     (bundle_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     log(f"bundle complete: {bundle_dir}")

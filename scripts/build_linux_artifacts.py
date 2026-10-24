@@ -23,15 +23,28 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _write_sbom(repo: Path, output: Path) -> None:
+    """Write a CycloneDX JSON SBOM from the exact build environment."""
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip_audit",
+            "--format",
+            "cyclonedx-json",
+            "--output",
+            str(output),
+        ],
+        cwd=repo,
+        check=True,
+    )
+
+
 def build(repo: Path, outdir: Path) -> list[Path]:
     outdir.mkdir(parents=True, exist_ok=True)
     version = release.read_version(repo)
     artifacts = release.build_artifacts(repo, outdir, version)
-    subprocess.run(
-        [sys.executable, "-m", "piplicenses", "--format=json", "--with-urls", "--output-file", str(outdir / "sbom.json")],
-        cwd=repo,
-        check=True,
-    )
+    _write_sbom(repo, outdir / "sbom.json")
     manifest = outdir / f"checksums-{version}.sha256"
     manifest.write_text(
         "".join(f"{_sha256(path)}  {path.name}\n" for path in [*artifacts, outdir / "sbom.json"]),

@@ -144,9 +144,13 @@ def test_pip_base_args_offline_uses_no_index_find_links(manage_install, tmp_path
     platform_dir = "windows" if sys.platform == "win32" else "linux"
     wheels = tmp_path / "bundle" / "wheels" / platform_dir
     wheels.mkdir(parents=True)
-    args = manage_install._pip_base_args(tmp_path / "bundle")
+    bundle = tmp_path / "bundle"
+    (bundle / "locks").mkdir()
+    (bundle / "locks" / f"{platform_dir}-py3.12.txt").write_text("--require-hashes\n", encoding="utf-8")
+    args = manage_install._pip_base_args(bundle)
     assert args[:2] == ["--no-index", "--find-links"]
     assert args[2] == str(wheels)
+    assert "--require-hashes" in args
 
 
 def test_offline_wheels_dir_missing_platform_fails(manage_install, tmp_path: Path) -> None:
