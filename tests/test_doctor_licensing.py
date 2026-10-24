@@ -163,7 +163,8 @@ def test_doctor_wiring_pins() -> None:
     full build_report call cannot reach in a unit test without running the
     heavy checks). Removing the wiring flips this test."""
     source = DOCTOR_PATH.read_text(encoding="utf-8")
-    assert '"licensing": _licensing_status(repo_root)' in source
+    assert 'license_status = _licensing_status(repo_root)' in source
+    assert '"licensing": license_status' in source
     assert 'License issue' in source  # next_steps entry
     assert "License: not activated" in source  # human-report line
 

@@ -102,5 +102,5 @@ def test_the_render_path_contains_the_serial_gate() -> None:
     assert "require(" not in handler, "CLI dispatch owns the command gate"
 
     pipeline_source = Path(pipeline.__file__).read_text(encoding="utf-8")
-    assert 'sys.modules["the_oracle.licensing"]' in pipeline_source
+    assert 'importlib.import_module("the_oracle.licensing")' in pipeline_source
     assert pipeline_source.count("_require_license(") >= 4

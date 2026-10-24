@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json  # noqa: F401 - preloaded: _load_previous_plan ran this lazily inside worker threads (U4.2 import-safety)
+import importlib
 import multiprocessing
 import os
-import sys
 from dataclasses import dataclass, field, replace
 from datetime import date
 from importlib.metadata import PackageNotFoundError, version
@@ -67,7 +67,7 @@ _PROGRESS_AVG_ALPHA = 0.3
 
 def _require_license(entitlement: str) -> None:
     """Resolve the lightweight gate module at call time after offline reloads."""
-    license_module = sys.modules["the_oracle.licensing"]
+    license_module = importlib.import_module("the_oracle.licensing")
     license_module.require(license_module.current_license(), entitlement)
 
 

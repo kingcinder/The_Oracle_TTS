@@ -1041,7 +1041,16 @@ print({JSON_PREFIX!r} + json.dumps(payload))
     }
 
 
-def _deterministic_smoke_status(repo_root: Path) -> dict[str, Any]:
+def _deterministic_smoke_status(repo_root: Path, *, licensed: bool = True) -> dict[str, Any]:
+    if not licensed:
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "Functional smoke is skipped until a serial number is activated.",
+            "output_path": "",
+            "project_dir": "",
+            "cache_reused_on_second_pass": False,
+        }
     _prepend_repo_src(repo_root)
     try:
         from unittest.mock import patch
@@ -1077,6 +1086,20 @@ def _deterministic_smoke_status(repo_root: Path) -> dict[str, Any]:
         "project_dir": str(result.project_dir),
         "cache_reused_on_second_pass": result.cache_reused_on_second_pass,
     }
+
+
+def _deterministic_smoke_for_report(repo_root: Path, license_status: dict[str, Any]) -> dict[str, Any]:
+    """Keep unlicensed doctor runs inert without changing the probe seam."""
+    if license_status["state"] != "valid":
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "Functional smoke is skipped until a serial number is activated.",
+            "output_path": "",
+            "project_dir": "",
+            "cache_reused_on_second_pass": False,
+        }
+    return _deterministic_smoke_status(repo_root)
 
 
 def _real_engine_smoke_status(repo_root: Path) -> dict[str, Any]:
@@ -1527,6 +1550,7 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
     from the_oracle.voice_catalog import voice_catalog_audit
 
     chatterbox_probe = _chatterbox_probe(repo_root, timeout=model_timeout, skip_model_init=skip_model_init)
+    license_status = _licensing_status(repo_root)
     report: dict[str, Any] = {
         "repo_root": str(repo_root),
         "platform": platform.platform(),
@@ -1558,14 +1582,14 @@ def run(repo_root: Path, *, model_timeout: float, qt_timeout: float, skip_model_
         "cuda_backend": _cuda_backend_status(repo_root),
         "qt": _qt_status(repo_root, timeout=qt_timeout),
         "voice_sources": voice_catalog_audit(repo_root),
-        "deterministic_smoke": _deterministic_smoke_status(repo_root),
+        "deterministic_smoke": _deterministic_smoke_for_report(repo_root, license_status),
         "real_engine_smoke": _real_engine_smoke_status(repo_root),
         "vulkan_backend": _vulkan_backend_status(repo_root),
         "dependency_pins": _dependency_pin_status(repo_root, include_dev=ci_mode),
         "input_subtitles": _input_subtitles_status(repo_root),
         "preview_writers": _preview_writers_status(repo_root),
         "release_metadata": _release_metadata_status(repo_root),
-        "licensing": _licensing_status(repo_root),
+        "licensing": license_status,
         "crash_reports": _crash_reports_status(repo_root),
         "resolved_records": _resolved_records_status(repo_root),
     }
@@ -1690,7 +1714,9 @@ def _print_human_report(report: dict[str, Any]) -> None:
             print(f"Suggested packages: {' '.join(qt['suggested_packages'])}")
 
     deterministic = report["deterministic_smoke"]
-    if deterministic["ok"]:
+    if deterministic.get("skipped"):
+        print(f"{_status(True)} Deterministic smoke readiness: {deterministic['reason']}")
+    elif deterministic["ok"]:
         print(f"{_status(True)} Deterministic smoke readiness: {deterministic['output_path']}")
     else:
         print(f"{_status(False)} Deterministic smoke readiness: {deterministic['error']}")

@@ -344,6 +344,13 @@ def test_deterministic_smoke_ok_when_output_present(
     assert status["output_path"] == str(real)
 
 
+def test_deterministic_smoke_is_skipped_until_serial_activation(doctor_module, tmp_path: Path) -> None:
+    status = doctor_module._deterministic_smoke_status(tmp_path, licensed=False)
+    assert status["ok"] is True
+    assert status["skipped"] is True
+    assert "serial number" in status["reason"]
+
+
 # --- oracle.ps1: static regression checks ---------------------------------------
 # PowerShell cannot execute in this Linux runtime; these assertions guard the
 # source against reintroducing Invoke-Expression / dropped arguments. The
