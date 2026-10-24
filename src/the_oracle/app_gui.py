@@ -2005,6 +2005,14 @@ class MainWindow(QMainWindow):
         there is nothing left to do (zero setup across sessions); if they are
         stale the automatic setup re-runs on its own.
         """
+        # A remembered Vulkan selection can otherwise trigger the prerequisite
+        # path from `_on_gui_shown`, including a model download, before the
+        # serial-number gate has been satisfied. Keep first-run ordering
+        # explicit: EULA, serial activation, then any model work.
+        from the_oracle.licensing import current_license, is_licensed
+
+        if not is_licensed(current_license()):
+            return
         if not self._app_settings.get("remember_backend", True):
             return
         cli_path = self._app_settings.get("audio_cpp_cli", "")
@@ -4174,12 +4182,24 @@ def launch_gui() -> None:
     # First-run license click-through: the window does not open until the
     # current EULA text is accepted. Declining exits without recording.
     from the_oracle import eula_acceptance
-    from the_oracle.gui_license import run_eula_acceptance
+    from the_oracle.gui_license import run_activation_dialog, run_eula_acceptance
 
     eula_root = MainWindow._consent_root()
     if not eula_acceptance.is_accepted(eula_root):
         if not run_eula_acceptance(None, eula_root, dialog_cls=QDialog):
             return
+        # The activation dialog is deliberately optional: Cancel leaves the
+        # visible window unlicensed and inert, but no model/backend work can
+        # begin until this serial-number step has been completed.
+        from the_oracle.licensing import current_license, is_licensed
+
+        if not is_licensed(current_license()):
+            run_activation_dialog(
+                None,
+                eula_root,
+                dialog_cls=QDialog,
+                message_box_cls=QMessageBox,
+            )
     window = MainWindow()
     launch_marks.append(("mainwindow_built", perf_counter() - launch_t0))
     window.show()

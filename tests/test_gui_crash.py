@@ -352,6 +352,16 @@ def test_launch_gui_arms_before_mainwindow_is_built() -> None:
     )
 
 
+def test_first_run_gui_order_is_eula_then_activation_then_window() -> None:
+    from the_oracle import app_gui
+
+    source = Path(app_gui.__file__).read_text(encoding="utf-8")
+    eula = source.index("run_eula_acceptance(None, eula_root")
+    activation = source.index("run_activation_dialog(", eula)
+    window = source.index("window = MainWindow()")
+    assert eula < activation < window
+
+
 # --- the Qt message handler --------------------------------------------------------
 
 

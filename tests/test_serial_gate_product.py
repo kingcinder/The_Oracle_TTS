@@ -263,3 +263,34 @@ def test_unlicensed_gui_leaves_only_help_and_activation_actions_enabled(
     assert all(action.enabled for action in actions[:4])
     assert actions[4].enabled is False
     assert cli._UNLICENSED_ALLOWED_COMMANDS.isdisjoint(cli._SERIAL_REQUIRED_COMMANDS)
+
+
+def test_unlicensed_startup_does_not_restore_backend_or_start_model_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from the_oracle.app_gui import MainWindow
+
+    class Panel:
+        def append(self, _message: str) -> None:
+            return None
+
+    called = False
+    fake = MainWindow.__new__(MainWindow)
+    fake._app_settings = {
+        "remember_backend": True,
+        "inference_backend": "vulkan",
+        "audio_cpp_cli": "/stale/audiocpp_cli",
+        "audio_cpp_model": "/stale/model.gguf",
+    }
+    fake.error_panel = Panel()
+
+    def restore_widgets() -> None:
+        nonlocal called
+        called = True
+
+    fake._section_content_built = lambda _name: True
+    fake._apply_remembered_backend_widgets = restore_widgets
+    monkeypatch.setattr("the_oracle.licensing.current_license", _unlicensed)
+    MainWindow._apply_remembered_backend(fake)  # type: ignore[arg-type]
+
+    assert called is False

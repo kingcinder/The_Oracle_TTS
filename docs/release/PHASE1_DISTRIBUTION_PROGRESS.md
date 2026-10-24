@@ -17,6 +17,10 @@
   desktop entry/icon staging, unsigned SHA-256 output, and a static update
   manifest with manual rollback instructions. The Windows recipe is present in
   `packaging/windows/` and is labeled EXPERIMENTAL.
+- GUI first-run ordering is now explicit: EULA acceptance, optional serial
+  activation, then the main window. A remembered Vulkan backend is ignored while
+  unlicensed, so it cannot start a model download before activation; canceling
+  activation still opens the visible but inert window.
 
 ## Evidence
 
@@ -32,9 +36,9 @@
 - The frozen recipe has not run in this checkout: `pyinstaller` and
   `appimagetool` are not installed locally. The CI build job and a clean
   Ubuntu 24.04 installed-artifact acceptance are still required.
-- The current first-run flow accepts the EULA before opening the window, but
-  activation is optional and model download ordering is not yet the required
-  EULA → serial activation → model download sequence.
+- The model acquisition path still requires an explicit user action after
+  activation; total-size/progress/cancel/resume and offline-bundle acceptance
+  remain unverified for the frozen installed artifacts.
 - Clean-machine installed-artifact acceptance, rollback, uninstall retention,
   GPU wheel download, and Windows experimental installer CI remain unverified
   or unimplemented.
