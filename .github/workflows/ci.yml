@@ -420,6 +420,26 @@ jobs:
           AUDIOCPP_MODELS_ROOT: ${{ runner.temp }}/oracle-vulkan-models
         run: ./.venv/bin/python scripts/vulkan_ci_smoke.py
 
+      - name: Package The Pinned Vulkan Binary
+        shell: bash
+        env:
+          AUDIOCPP_MODELS_ROOT: ${{ runner.temp }}/oracle-vulkan-models
+        run: |
+          set -Eeuo pipefail
+          version="$(./.venv/bin/python -c 'from scripts.release import read_version; print(read_version("."))')"
+          ./.venv/bin/python scripts/package_vulkan_binary.py \
+            --binary "$PWD/audio.cpp/build/linux-vulkan-release/bin/audiocpp_cli" \
+            --outdir release_artifacts/vulkan \
+            --version "$version"
+
+      - name: Upload Unsigned Vulkan Binary And Manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: the-oracle-vulkan-${{ github.sha }}
+          path: release_artifacts/vulkan/
+          if-no-files-found: error
+          retention-days: 14
+
   windows-install-smoke:
     name: Windows installer end to end (temp profile, launchers, GUI)
     runs-on: windows-latest
