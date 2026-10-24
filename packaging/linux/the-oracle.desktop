@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=The Oracle
+GenericName=Local text-to-speech renderer
+Comment=Render dialogue locally with The Oracle
+Icon=the-oracle
+Exec=the-oracle
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+Keywords=tts;text to speech;voice;audio;
+StartupNotify=true

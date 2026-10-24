@@ -12,6 +12,11 @@
 - Linux unsigned build SBOM generation now uses pip-audit's CycloneDX JSON
   output instead of a pip-licenses inventory. The output remains included in
   the SHA-256 manifest.
+- `scripts/build_frozen_linux.py` now provides a PyInstaller one-folder recipe,
+  AppImage and amd64 `.deb` staging, explicit model/signing-material exclusion,
+  desktop entry/icon staging, unsigned SHA-256 output, and a static update
+  manifest with manual rollback instructions. The Windows recipe is present in
+  `packaging/windows/` and is labeled EXPERIMENTAL.
 
 ## Evidence
 
@@ -24,14 +29,15 @@
 
 ## Remaining Phase 1 work
 
-- The repository has no PyInstaller/AppImage/deb build path; `dpkg-deb` exists,
-  but PyInstaller, AppImage tooling, and a frozen runtime recipe are absent.
+- The frozen recipe has not run in this checkout: `pyinstaller` and
+  `appimagetool` are not installed locally. The CI build job and a clean
+  Ubuntu 24.04 installed-artifact acceptance are still required.
 - The current first-run flow accepts the EULA before opening the window, but
   activation is optional and model download ordering is not yet the required
   EULA → serial activation → model download sequence.
 - Clean-machine installed-artifact acceptance, rollback, uninstall retention,
-  static update manifest, GPU wheel download, and Windows experimental installer
-  CI remain unverified or unimplemented.
+  GPU wheel download, and Windows experimental installer CI remain unverified
+  or unimplemented.
 
 ## Phase 2 progress started
 

@@ -468,6 +468,69 @@ jobs:
             --hf-home "${{ runner.temp }}\oracle-smoke\hf" `
             --pip-cache "${{ runner.temp }}\oracle-smoke\pip-cache"
 
+  linux-frozen-artifacts:
+    name: Linux frozen AppImage and deb (unsigned rehearsal)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout clean tree
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Refuse dirty checkout
+        shell: bash
+        run: git diff --exit-code
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install native packaging tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dpkg-dev fuse3
+
+      - name: Bootstrap runtime and PyInstaller
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python scripts/manage_install.py bootstrap --skip-doctor
+          ./.venv/bin/pip install "pyinstaller==6.16.0"
+
+      # appimagetool is an unsigned build utility, not a product artifact. The
+      # URL is kept in one step so the owner can replace the floating upstream
+      # rehearsal download with a checksummed internal copy before release.
+      - name: Install AppImage tooling
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$HOME/.local/bin"
+          curl --fail --location --silent --show-error \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" \
+            --output "$HOME/.local/bin/appimagetool"
+          chmod +x "$HOME/.local/bin/appimagetool"
+          "$HOME/.local/bin/appimagetool" --version || true
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build unsigned frozen artifacts
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: ./.venv/bin/python scripts/build_frozen_linux.py --outdir release_artifacts/linux-frozen
+
+      - name: Upload unsigned frozen artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: the-oracle-linux-frozen-${{ github.sha }}
+          path: release_artifacts/linux-frozen/
+          if-no-files-found: error
+          retention-days: 14
+
   # The Windows certification steps in the matrix above die on this runner with
   # rc=3221225477 (0xC0000005, access violation) and EMPTY stdout and stderr —
   # no traceback, no aspect progress, no faulting line — so CI contains nothing
