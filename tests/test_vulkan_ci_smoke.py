@@ -191,6 +191,7 @@ def _stub_pipeline(smoke, monkeypatch, *, gates=None, suite_error: Exception | N
 
 def test_main_builds_then_fetches_then_runs_strictly(smoke, monkeypatch) -> None:
     steps, suite = _stub_pipeline(smoke, monkeypatch)
+    monkeypatch.delenv("AUDIOCPP_MODELS_ROOT", raising=False)
 
     assert smoke.main([]) == 0
     assert [Path(step[0]).name for step in steps] == ["build_audio_cpp.sh", "download_audio_cpp_model.sh"]

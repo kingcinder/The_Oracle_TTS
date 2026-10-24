@@ -16,6 +16,7 @@ import platform
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -180,7 +181,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", default=None)
     parser.add_argument("--format", choices=("appimage", "deb", "both"), default="both")
     args = parser.parse_args(argv)
-    from scripts.release import read_version
+    scripts_dir = str(REPO_ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from release import read_version
 
     version = args.version or read_version(REPO_ROOT)
     formats = ("appimage", "deb") if args.format == "both" else (args.format,)
