@@ -133,6 +133,16 @@ jobs:
         shell: pwsh
         run: .\.venv\Scripts\pytest.exe
 
+      - name: Windows Tooltip Lifecycle - 50 real window cycles
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: "offscreen"
+          PYTHONFAULTHANDLER: "1"
+        run: >-
+          .\.venv\Scripts\pytest.exe -q
+          tests/test_gui_tooltips_lifetime.py::test_real_main_window_churn_leaves_no_filters_behind
+
       # The doctor runs the deterministic smoke render inside its report
       # (steps above); this runs the standalone runner directly so the smoke
       # render is a named signal in its own right, on both operating systems,
