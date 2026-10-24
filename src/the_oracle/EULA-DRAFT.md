@@ -2,15 +2,15 @@
 
 **Draft for owner and lawyer review — not approved for distribution.**
 
-_Last updated: 2026-10-15_
+_Last updated: 2026-10-23_
 
 This End User License Agreement ("Agreement") is between the person or organization acquiring The Oracle TTS (the "Licensee") and the owner of The Oracle TTS (the "Owner"). Contact: **codysa90@gmail.com**.
 
 ## 1. Grant of license
 
-Subject to this Agreement and any applicable order or invoice, the Owner grants the Licensee a limited, personal, non-exclusive, non-transferable, non-sublicensable license to install and use the software and documentation (the "Software") for the Licensee's own internal purposes. The license is limited to the scope and term stated in the applicable order or invoice.
+Subject to this Agreement and the applicable order or invoice, the Owner grants the Licensee a limited, personal, non-exclusive, non-transferable, non-sublicensable license to install and use the Software for the Licensee's own internal purposes. The license is provided as a one-time purchase of a serial number. There is no subscription, Community Edition, or trial edition. Until a valid serial number is entered, the Software may open so the Licensee can view the application and its documentation, but its functional features remain unavailable.
 
-Community Edition. Without any order, invoice, or license key, the Owner grants every person the same license, free of charge, to install and use the Community Edition of the Software for the Licensee's own internal purposes. The Community Edition is the Software with no license activation applied. Features that require an activation are available only to Licensees holding an activation issued by the Owner under an order. The Community Edition is subject to every other section of this Agreement.
+The following commercial terms are proposals for owner and counsel review, not approved terms: one named Licensee may use the serial number on the Licensee's own machines; the serial number is not machine-bound by default; the serial number covers releases in the current major version by default; and the serial number is non-transferable unless the applicable order says otherwise.
 
 ## 2. Restrictions
 
@@ -56,7 +56,7 @@ All sales are final. The Licensor does not offer refunds, and a purchased licens
 
 ## 8. Updates and support
 
-The Owner may provide updates at its discretion. Updates may change features or compatibility. Support requests may be sent to codysa90@gmail.com; support is not guaranteed unless an order or support agreement says otherwise.
+The Owner may provide updates at its discretion. Updates may change features or compatibility. A serial number does not promise updates beyond the approved version scope. Support requests may be sent to codysa90@gmail.com; support is not guaranteed unless an order or support agreement says otherwise.
 
 ## 9. Governing law and venue
 
