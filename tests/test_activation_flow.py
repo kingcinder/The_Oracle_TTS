@@ -86,7 +86,7 @@ def test_no_token_at_all_is_a_usage_error(sandbox_root: Path, monkeypatch, capsy
     monkeypatch.setattr("sys.stdin", type("Stdin", (), {"read": lambda self: ""})())
     args = cli.build_parser().parse_args(["activate"])
     assert cli.handle_activate(args) == 2
-    assert "no token" in capsys.readouterr().err
+    assert "no serial number" in capsys.readouterr().err
 
 
 def test_activation_via_stdin_pipe(sandbox_root: Path, monkeypatch) -> None:

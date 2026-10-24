@@ -1672,7 +1672,6 @@ class MainWindow(QMainWindow):
             require(current_license(), feature)
         except LicenseRequired as exc:
             self.error_panel.append(str(exc))
-            QMessageBox.information(self, "Serial Number Required", str(exc))
             return False
         return True
 

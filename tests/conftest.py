@@ -32,6 +32,34 @@ from tests import skip_audit
 # the injection is opt-in per module rather than autouse.
 from tests.licensing_fixtures import test_license_registry  # noqa: F401
 
+
+@pytest.fixture(autouse=True)
+def _licensed_gui_operations_for_functional_tests(request, monkeypatch):
+    """Give GUI workflow tests a valid throwaway serial number.
+
+    Product behavior is tested separately by the serial-gate tests. Existing
+    GUI workflow tests exercise licensed operations and must not accidentally
+    stop at the production install's empty license store.
+    """
+    gate_tests = {
+        "test_gui_license",
+        "test_license_state_render",
+        "test_licensing_offline",
+        "test_licensing_policy_enforcement",
+        "test_licensing_store",
+        "test_render_report",
+        "test_serial_gate_product",
+        "test_serial_vendor_workflow",
+    }
+    if request.module.__name__.rsplit(".", 1)[-1] in gate_tests:
+        return
+    from the_oracle.licensing.tokens import LicenseStatus
+
+    monkeypatch.setattr(
+        "the_oracle.licensing.current_license",
+        lambda: LicenseStatus(ok=True, state="valid", licensee="GUI test", key_id="ktest"),
+    )
+
 _ORACLE_ENV_PREFIX = "ORACLE_"
 
 #: Every skip reported this session, in the order pytest reports them.

@@ -439,7 +439,6 @@ class RecordingStudioDialog(QDialog):
             require(current_license(), "record a voice")
         except LicenseRequired as exc:
             self.status.setText(str(exc))
-            QMessageBox.information(self, "Serial Number Required", str(exc))
             return
         if self.mic_combo.currentData() is None:
             self.status.setText("Pick a microphone first.")
